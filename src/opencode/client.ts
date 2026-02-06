@@ -216,7 +216,7 @@ class OpencodeClientWrapper extends EventEmitter {
       path: { id: sessionId },
       body: {
         parts,
-        ...(messageId ? { messageID: messageId } : {}),
+        // ...(messageId ? { messageID: messageId } : {}), // 已注释：避免传递飞书 MessageID 导致 Opencode 无法处理
         ...(options?.agent ? { agent: options.agent } : {}),
         ...(model ? { model } : {}),
       },
