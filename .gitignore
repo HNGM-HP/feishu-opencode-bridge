@@ -1,0 +1,35 @@
+# 依赖
+node_modules/
+
+# 构建产物
+dist/
+
+# 环境变量和敏感配置
+.env
+*.env.local
+
+# 日志文件
+logs/
+*.log
+
+# 会话数据（用户隐私）
+.session-*.json
+
+# 编辑器配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+
+# TypeScript
+*.tsbuildinfo
