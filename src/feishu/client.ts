@@ -197,11 +197,28 @@ export interface FeishuCardActionEvent {
 
 export type FeishuCardActionResponse = object;
 
+// 机器人菜单点击事件
+export interface BotMenuEvent {
+  eventKey: string;
+  operatorId: string;
+  timestamp: string;
+  rawEvent: unknown;
+}
+
+// 消息撤回事件
+export interface MessageRecalledEvent {
+  messageId: string;
+  chatId: string;
+  recallTime: string;
+  recallType: 'message_owner' | 'group_owner' | 'group_manager' | 'enterprise_manager';
+}
+
 class FeishuClient extends EventEmitter {
   private client: lark.Client;
   private wsClient: lark.WSClient | null = null;
-  private eventDispatcher: lark.EventDispatcher;
+  public eventDispatcher: lark.EventDispatcher;
   private cardActionHandler?: (event: FeishuCardActionEvent) => Promise<FeishuCardActionResponse | void>;
+  private botMenuHandler?: (event: BotMenuEvent) => Promise<void>;
 
   constructor() {
     super();
@@ -228,12 +245,20 @@ class FeishuClient extends EventEmitter {
         this.handleMessage(data as FeishuEventData);
         return { msg: 'ok' };
       },
+      'im.message.recalled_v1': (data) => {
+        this.handleMessageRecalled(data);
+        return { msg: 'ok' };
+      },
     });
 
     // 注册卡片回调事件
     this.eventDispatcher.register({
       'card.action.trigger': async (data: unknown) => {
         return await this.handleCardAction(data);
+      },
+      'application.bot.menu_v6': async (data: unknown) => {
+        await this.handleBotMenuAction(data);
+        return { msg: 'ok' };
       },
     } as unknown as Record<string, (data: unknown) => Promise<FeishuCardActionResponse | { msg: string }>>);
 
@@ -353,9 +378,42 @@ class FeishuClient extends EventEmitter {
     }
   }
 
+  // 处理消息撤回事件
+  private handleMessageRecalled(rawData: unknown): void {
+    try {
+      if (!rawData || typeof rawData !== 'object') return;
+      const data = rawData as Record<string, unknown>;
+      const event = data.event as Record<string, unknown> | undefined;
+      if (!event) return;
+
+      const messageId = (event.message_id as string) ?? '';
+      const chatId = (event.chat_id as string) ?? '';
+      const recallTime = (event.recall_time as string) ?? '';
+      const recallType = (event.recall_type as MessageRecalledEvent['recallType']) ?? 'message_owner';
+
+      if (!messageId) return;
+
+      const recalledEvent: MessageRecalledEvent = {
+        messageId,
+        chatId,
+        recallTime,
+        recallType,
+      };
+
+      this.emit('messageRecalled', recalledEvent);
+    } catch (error) {
+      console.error('[飞书] 解析撤回事件失败:', error);
+    }
+  }
+
   // 设置卡片动作处理器（支持直接返回新卡片）
   setCardActionHandler(handler: (event: FeishuCardActionEvent) => Promise<FeishuCardActionResponse | void>): void {
     this.cardActionHandler = handler;
+  }
+
+  // 注册菜单点击回调
+  onBotMenu(handler: (event: BotMenuEvent) => Promise<void>): void {
+    this.botMenuHandler = handler;
   }
 
   // 处理卡片按钮点击（通过 CardActionHandler 处理，需要单独设置）
@@ -400,6 +458,31 @@ class FeishuClient extends EventEmitter {
     } catch (error) {
       console.error('[飞书] 解析卡片事件失败:', error);
       return { msg: 'ok' };
+    }
+  }
+
+  // 处理菜单点击事件
+  private async handleBotMenuAction(data: unknown): Promise<void> {
+    try {
+      const event = data as {
+        event_key: string;
+        operator: { open_id: string };
+        timestamp: string;
+      };
+
+      const menuEvent: BotMenuEvent = {
+        eventKey: event.event_key,
+        operatorId: event.operator.open_id,
+        timestamp: event.timestamp,
+        rawEvent: data,
+      };
+
+      if (this.botMenuHandler) {
+        await this.botMenuHandler(menuEvent);
+      }
+      this.emit('botMenu', menuEvent);
+    } catch (error) {
+      console.error('[飞书] 解析菜单事件失败:', error);
     }
   }
 
@@ -609,6 +692,78 @@ class FeishuClient extends EventEmitter {
     }
   }
 
+
+  // 创建群聊
+  async createChat(name: string, userIds: string[]): Promise<{ chatId: string; shareLink?: string } | null> {
+    try {
+      const response = await this.client.im.chat.create({
+        params: { 
+          user_id_type: 'open_id',
+          set_bot_manager: true, // 设为管理员
+        },
+        data: {
+          name,
+          user_id_list: userIds,
+          chat_type: 'private', // 私有群
+          join_message_visibility: 'only_owner', // 进群消息仅群主可见
+          leave_message_visibility: 'only_owner', // 退群消息仅群主可见
+          membership_approval: 'no_approval_required', // 无需审批
+        },
+      });
+
+      if (response.code !== 0) {
+        console.error(`[飞书] 创建群失败: code=${response.code}, msg=${response.msg}`);
+        return null;
+      }
+
+      return {
+        chatId: response.data?.chat_id || '',
+      };
+    } catch (error) {
+      const formatted = formatError(error);
+      console.error(`[飞书] 创建群时出错: ${formatted.message}`);
+      return null;
+    }
+  }
+
+  // 解散群
+  async deleteChat(chatId: string): Promise<boolean> {
+    try {
+      const response = await this.client.im.chat.delete({
+        path: { chat_id: chatId },
+      });
+
+      if (response.code !== 0) {
+        console.error(`[飞书] 解散群失败: code=${response.code}, msg=${response.msg}`);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      const formatted = formatError(error);
+      console.error(`[飞书] 解散群时出错: ${formatted.message}`);
+      return false;
+    }
+  }
+
+  // 更新群名
+  async updateChatName(chatId: string, name: string): Promise<boolean> {
+    try {
+      const response = await this.client.im.chat.update({
+        path: { chat_id: chatId },
+        data: { name },
+      });
+
+      if (response.code !== 0) {
+        console.error(`[飞书] 更新群名失败: code=${response.code}, msg=${response.msg}`);
+        return false;
+      }
+      return true;
+    } catch (error) {
+      const formatted = formatError(error);
+      console.error(`[飞书] 更新群名时出错: ${formatted.message}`);
+      return false;
+    }
+  }
 
   // 停止长连接
   stop(): void {

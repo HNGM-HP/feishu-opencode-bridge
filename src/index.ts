@@ -1,17 +1,31 @@
-import { validateConfig, userConfig, modelConfig, outputConfig, attachmentConfig } from './config.js';
-import { feishuClient, type FeishuMessageEvent, type FeishuCardActionEvent, type FeishuCardActionResponse, type FeishuAttachment } from './feishu/client.js';
+import { validateConfig, userConfig, modelConfig, outputConfig, attachmentConfig, opencodeConfig, projectConfig } from './config.js';
+import { feishuClient, type FeishuMessageEvent, type FeishuCardActionEvent, type FeishuCardActionResponse, type FeishuAttachment, type BotMenuEvent, type MessageRecalledEvent } from './feishu/client.js';
 import { opencodeClient, type PermissionRequestEvent } from './opencode/client.js';
 import { userSessionStore } from './store/user-session.js';
+import { sessionGroupStore } from './store/session-group.js';
+import { sessionDirectoryStore } from './store/session-directory.js';
 import { parseCommand, getHelpText, type ParsedCommand } from './commands/parser.js';
 import { permissionHandler } from './permissions/handler.js';
 import { buildPermissionCard, buildControlCard, buildQuestionCardV2, buildQuestionAnsweredCard, QUESTION_OPTION_PAGE_SIZE, type QuestionInfo } from './feishu/cards.js';
 import { outputBuffer } from './opencode/output-buffer.js';
 import { delayedResponseHandler } from './opencode/delayed-handler.js';
 import { questionHandler, type QuestionRequest, type PendingQuestion } from './opencode/question-handler.js';
+import { CardStreamer } from './feishu/streamer.js';
 import type { Part, Message } from '@opencode-ai/sdk';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { promises as fs } from 'fs';
+import { spawn, type ChildProcess } from 'child_process';
+
+// Opencode 子进程实例
+let opencodeProcess: ChildProcess | null = null;
+
+// 活跃任务映射 messageId -> { sessionId, streamer, abortController? }
+// 用于撤回时中断任务
+const activeTasks = new Map<string, {
+  sessionId: string;
+  streamer: CardStreamer;
+}>();
 
 // 当前模型配置（可运行时切换）
 let currentModel: { providerId?: string; modelId?: string } = {
@@ -119,6 +133,30 @@ async function main(): Promise<void> {
   }
 
   console.log('[附件] 使用 data URL 传输附件');
+
+  // 自动启动 Opencode
+  if (opencodeConfig.autoStart) {
+    console.log(`[OpenCode] 正在启动服务器: ${opencodeConfig.command}`);
+    const [cmd, ...args] = opencodeConfig.command.split(' ');
+    opencodeProcess = spawn(cmd, args, {
+      stdio: 'inherit',
+      shell: true,
+    });
+
+    opencodeProcess.on('error', (err) => {
+      console.error('[OpenCode] 启动失败:', err);
+    });
+
+    opencodeProcess.on('exit', (code) => {
+      if (code !== 0 && code !== null) {
+        console.error(`[OpenCode] 服务异常退出，退出码: ${code}`);
+      }
+    });
+
+    // 等待服务启动
+    console.log('[OpenCode] 等待服务就绪...');
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
 
   // 连接OpenCode
   const connected = await opencodeClient.connect();
@@ -312,9 +350,71 @@ async function main(): Promise<void> {
     await handleMessage(event);
   });
 
+  // 监听消息撤回
+  feishuClient.on('messageRecalled', async (event: MessageRecalledEvent) => {
+    console.log(`[撤回] 用户撤回消息: msgId=${event.messageId}`);
+    const task = activeTasks.get(event.messageId);
+    if (task) {
+      console.log(`[撤回] 中断关联任务: session=${task.sessionId}`);
+      try {
+        await opencodeClient.abortSession(task.sessionId);
+        task.streamer.setStatus('failed');
+        task.streamer.updateText('\n\n(用户已撤回消息，任务中断)');
+        activeTasks.delete(event.messageId);
+      } catch (error) {
+        console.error('[撤回] 中断任务失败:', error);
+      }
+    }
+  });
+
+  // 监听群解散事件
+  feishuClient.eventDispatcher.register({
+    'im.chat.disbanded_v1': async (data) => {
+      const event = data as { chat_id: string };
+      const userId = sessionGroupStore.findUserByChatId(event.chat_id);
+      if (userId) {
+        console.log(`[群组] 群 ${event.chat_id} 已解散，清理会话`);
+        sessionGroupStore.removeGroup(userId, event.chat_id);
+        // 清理会话状态
+        const key = `chat:${event.chat_id}`;
+        conversationStates.delete(key);
+      }
+      return { msg: 'ok' };
+    },
+    'im.chat.member.user.deleted_v1': async (data) => {
+      const event = data as { chat_id: string, users: Array<{ user_id: { open_id: string } }> };
+      const leavingUsers = event.users.map(u => u.user_id.open_id);
+      const ownerId = sessionGroupStore.findUserByChatId(event.chat_id);
+      
+      if (ownerId && leavingUsers.includes(ownerId)) {
+        console.log(`[群组] 用户 ${ownerId} 离开群 ${event.chat_id}，清理会话`);
+        sessionGroupStore.removeGroup(ownerId, event.chat_id);
+        const key = `chat:${event.chat_id}`;
+        conversationStates.delete(key);
+        // 尝试解散群（如果是机器人创建的）
+        try {
+          await feishuClient.deleteChat(event.chat_id);
+        } catch {
+          // ignore
+        }
+      }
+      return { msg: 'ok' };
+    }
+  });
+
   // 监听飞书卡片动作（直接返回新卡片）
   feishuClient.setCardActionHandler(async (event: FeishuCardActionEvent) => {
     return await handleCardAction(event);
+  });
+
+  // 监听飞书菜单动作
+  feishuClient.onBotMenu(async (event: BotMenuEvent) => {
+    console.log(`[菜单] 用户点击菜单: key=${event.eventKey}, user=${event.operatorId}`);
+    
+    await feishuClient.sendText(
+      `user:${event.operatorId}`, 
+      `收到菜单点击: ${event.eventKey} (功能开发中)`
+    );
   });
 
   // 启动飞书长连接
@@ -327,6 +427,10 @@ async function main(): Promise<void> {
   // 优雅退出
   process.on('SIGINT', async () => {
     console.log('\n正在关闭...');
+    if (opencodeProcess) {
+      console.log('[OpenCode] 停止服务...');
+      opencodeProcess.kill();
+    }
     feishuClient.stop();
     opencodeClient.disconnect();
     process.exit(0);
@@ -336,14 +440,7 @@ async function main(): Promise<void> {
 // 处理飞书消息
 async function handleMessage(event: FeishuMessageEvent): Promise<void> {
   const { senderId, chatId, content, messageId, threadId, chatType } = event;
-  const conversation = getConversationKey(event);
-  const attachments = event.attachments || [];
-  const hasAttachments = attachments.length > 0;
-
-  // 保存 chatId 到 state，用于后续发送消息
-  const state = getConversationState(conversation.key);
-  state.chatId = chatId;
-
+  
   // 检查白名单（支持用户ID或群ID）
   if (userConfig.isWhitelistEnabled) {
     const isUserAllowed = userConfig.allowedUsers.includes(senderId);
@@ -358,6 +455,62 @@ async function handleMessage(event: FeishuMessageEvent): Promise<void> {
       return;
     }
   }
+
+  // 核心变更：处理私聊消息自动建群逻辑
+  if (chatType === 'p2p') {
+    // 忽略机器人自己的消息（已经在client层过滤，这里双重保险）
+    if (event.senderType === 'bot') return;
+
+    // 检查是否有活跃的群组
+    const activeGroup = sessionGroupStore.getActiveGroup(senderId);
+    
+    if (activeGroup) {
+      // 已有活跃群，引导用户前往
+      // 只有当用户发送的是命令（如 /session new）时才允许在私聊处理，否则引导去群里
+      // 但为了简单，暂时全部引导，或者根据内容判断
+      // 如果用户发的是 "清除" 或 "/clear"，可能想重置状态，这里暂时只做引导
+      await feishuClient.reply(
+        messageId,
+        `👋 您有一个正在进行的会话群，请点击下方链接继续：\nhttps://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=${activeGroup}\n\n（或者输入 /session new 创建新对话）`
+      );
+      return;
+    } else {
+      // 没有活跃群，自动创建
+      console.log(`[群组] 为用户 ${senderId} 创建新会话群...`);
+      try {
+        const result = await feishuClient.createChat('Opencode 会话', [senderId]);
+        if (result && result.chatId) {
+          sessionGroupStore.setActiveGroup(senderId, result.chatId);
+          console.log(`[群组] 创建成功: ${result.chatId}`);
+          
+          await feishuClient.reply(
+            messageId,
+            `✅ 已为您创建专属会话群，请点击进入：\nhttps://applink.feishu.cn/client/chat/chatter/add_by_link?link_token=${result.chatId}`
+          );
+          
+          // 可选：在群里发一条欢迎消息
+          await feishuClient.sendText(result.chatId, `👋 你好！我是 Opencode 助手。\n我们已经在一个独立的会话空间了，请直接告诉我你需要做什么。`);
+          return;
+        } else {
+          console.error('[群组] 创建失败');
+          await feishuClient.reply(messageId, '❌ 创建会话群失败，请稍后重试');
+          return;
+        }
+      } catch (error) {
+        console.error('[群组] 创建异常:', error);
+        await feishuClient.reply(messageId, '❌ 创建会话群时发生错误');
+        return;
+      }
+    }
+  }
+
+  const conversation = getConversationKey(event);
+  const attachments = event.attachments || [];
+  const hasAttachments = attachments.length > 0;
+
+  // 保存 chatId 到 state，用于后续发送消息
+  const state = getConversationState(conversation.key);
+  state.chatId = chatId;
 
   // 忽略空消息（无文本且无附件）
   if (!content && !hasAttachments) {
@@ -444,6 +597,10 @@ async function executeCommand(
   switch (command.type) {
     case 'help':
       await feishuClient.reply(messageId, getHelpText());
+      break;
+
+    case 'command':
+      await handleCommand(command, conversation, messageId);
       break;
 
     case 'stop':
@@ -538,8 +695,12 @@ async function processPrompt(
   state: ConversationState,
   attachments?: FeishuAttachment[]
 ): Promise<void> {
-  // 创建输出缓冲
-  outputBuffer.getOrCreate(conversation.key, chatId, sessionId, messageId);
+  // 使用流式卡片更新
+  const streamer = new CardStreamer(chatId);
+  await streamer.start();
+
+  // 记录活跃任务
+  activeTasks.set(messageId, { sessionId, streamer });
 
   try {
     const startedAt = Date.now();
@@ -569,92 +730,186 @@ async function processPrompt(
 
     if (parts.length === 0) {
       await feishuClient.reply(messageId, '未检测到可处理的文本或附件');
-      outputBuffer.setStatus(conversation.key, 'completed');
+      streamer.setStatus('failed');
       return;
     }
 
-    // 发送消息到OpenCode，带超时
-    const result = await Promise.race([
-      opencodeClient.sendMessageParts(sessionId, parts, {
-        providerId: currentModel.providerId,
-        modelId: currentModel.modelId,
-        agent: state.agent,
-      }, messageId),
-      new Promise<never>((_, reject) => {
-        setTimeout(() => {
-          reject(new Error('OpenCode响应超时'));
-        }, OPENCODE_WAIT_REMINDER_MS);
-      }),
-    ]);
+    // 设置流式事件监听
+    const partHandler = (props: { info: Message; part: Part }) => {
+      const info = props.info;
+      if (info.sessionID !== sessionId) return;
+      if (info.role !== 'assistant') return;
 
-    console.log(`[OpenCode] 返回成功，用时 ${Date.now() - startedAt}ms`);
+      const part = props.part as any;
+      if (part.type === 'text' && 'text' in part) {
+        streamer.updateText(part.text as string);
+      } else if (part.type === 'tool' && 'state' in part) {
+        const toolPart = part as { tool: string; state: { status: string; output?: string } };
+        if (toolPart.state.status === 'running') {
+          streamer.updateToolStatus(toolPart.tool, 'running');
+        } else if (toolPart.state.status === 'completed') {
+          streamer.updateToolStatus(toolPart.tool, 'completed', toolPart.state.output);
+        } else if (toolPart.state.status === 'failed') {
+          streamer.updateToolStatus(toolPart.tool, 'failed', toolPart.state.output);
+        } else {
+          // pending or other
+          streamer.addTool(toolPart.tool);
+        }
+      } else if (part.type === 'thinking' && 'text' in part) { // Assuming 'thinking' type exists or mapping logic
+         streamer.updateThinking(part.text as string);
+      }
+    };
 
-    // 格式化输出
-    const output = formatOutput(result.parts);
-    console.log(`[发送] 输出长度=${output.length}, 内容前100字="${output.slice(0, 100).replace(/\n/g, '\\n')}..."`);
+    const messageHandler = (props: { info: Message }) => {
+      const info = props.info;
+      if (info.sessionID !== sessionId) return;
+      if (info.role === 'assistant' && info.time.completed) {
+        state.lastOpencodeMessageId = info.id;
+        streamer.setStatus('completed');
+        
+        // 自动重命名逻辑
+        if (conversation.mode === 'chat') {
+          const chatId = extractChatIdFromKey(conversation.key);
+          if (chatId) {
+            setTimeout(async () => {
+              const groupInfo = sessionGroupStore.getGroupInfo(chatId);
+              if (groupInfo && !groupInfo.title) {
+                const summary = text.slice(0, 15).trim();
+                const title = `o${sessionId.slice(0, 6)}-${summary}`;
+                console.log(`[群组] 自动重命名: ${title}`);
+                const success = await feishuClient.updateChatName(chatId, title);
+                if (success) {
+                  sessionGroupStore.updateGroupTitle(chatId, title);
+                  
+                  // 尝试重命名目录（可选增强）
+                  // 1. 获取旧目录
+                  const oldDir = sessionDirectoryStore.get(sessionId);
+                  if (oldDir && projectConfig.root) {
+                    // 2. 构建新目录名 (sanitize title)
+                    const safeTitle = sanitizeFilename(title);
+                    const newDir = path.join(projectConfig.root, safeTitle);
+                    
+                    if (oldDir !== newDir) {
+                      try {
+                        await fs.rename(oldDir, newDir);
+                        sessionDirectoryStore.set(sessionId, newDir);
+                        console.log(`[目录] 重命名: ${oldDir} -> ${newDir}`);
+                        // 发送新的 cd 指令
+                        await opencodeClient.sendMessageAsync(sessionId, `! cd "${newDir}"`, {});
+                      } catch (err) {
+                        console.error(`[目录] 重命名失败: ${err}`);
+                      }
+                    }
+                  }
+                }
+              }
+            }, 1000);
+          }
+        }
+        
+        // 移除监听器
+        opencodeClient.off('messagePartUpdated', partHandler);
+        opencodeClient.off('messageUpdated', messageHandler);
+        
+        // 清理活跃任务
+        activeTasks.delete(messageId);
+      }
+    };
 
-    // 发送最终消息
-    let replyId = await feishuClient.reply(messageId, output);
-    if (!replyId) {
-      console.log(`[发送] reply 失败，尝试 sendText`);
-      replyId = await feishuClient.sendText(chatId, output);
+    opencodeClient.on('messagePartUpdated', partHandler);
+    opencodeClient.on('messageUpdated', messageHandler);
+
+    // 检查并确保目录存在
+    let targetDir: string | undefined;
+    if (projectConfig.root) {
+      // 1. 如果已有绑定目录，使用它
+      targetDir = sessionDirectoryStore.get(sessionId);
+      
+      // 2. 如果没有，且是新会话，生成默认目录
+      if (!targetDir) {
+        // 使用简单的 {sessionId前缀} 作为初始目录名，后续重命名
+        // 如果是 chat 模式，尝试用 chatId
+        const dirName = conversation.mode === 'chat' && chatId 
+          ? `chat_${chatId}` 
+          : `session_${sessionId.slice(0, 8)}`;
+          
+        targetDir = path.join(projectConfig.root, dirName);
+        
+        // 创建目录
+        try {
+          await fs.mkdir(targetDir, { recursive: true });
+          sessionDirectoryStore.set(sessionId, targetDir);
+          console.log(`[目录] 创建会话目录: ${targetDir}`);
+        } catch (error) {
+          console.error(`[目录] 创建失败: ${error}`);
+          targetDir = undefined; // 回退到默认
+        }
+      }
     }
-    
-    if (replyId) {
-      state.lastFeishuReplyMessageId = replyId;
-      console.log(`[发送] 消息发送成功: msgId=${replyId.slice(0, 16)}...`);
-    } else {
-      console.log(`[发送] 消息发送失败，reply 和 sendText 都失败`);
-    }
-    
-    if (result.info?.id) {
-      state.lastOpencodeMessageId = result.info.id;
+
+    // 注入 cd 指令（如果目录有效）
+    if (targetDir) {
+      // 发送隐式 CD 指令
+      // 注意：这里我们假设可以通过发送 prompt 来执行 shell
+      // 但为了不干扰当前对话流，最好是发一个单独的 prompt，或者 prepend 到当前 text
+      // 这里采用 prepend 方式，让 AI 知道上下文
+      // 或者使用 ! cd 命令（如果 Opencode 支持）
+      // 根据指示，发送 "! cd {path}"
+      
+      // 为了避免每次都 cd，我们可以检查一下是否已经 cd 过
+      // 但目前没有状态记录 Opencode 当前在哪，所以每次第一条消息或者重新连接时发送是安全的
+      // 这里简单处理：每次 processPrompt 都带上 cd 指令作为 system context 或者 hidden prompt
+      // 为了不让用户看到 "! cd ..." 出现在回复中，我们将其作为隐藏指令
+      
+      // 方案：发送两条消息，第一条是 cd，第二条是用户消息
+      // 但这样会产生两条回复。
+      
+      // 更好的方案：在 prompt 前面加提示，告诉 AI 切换目录
+      // 但题目要求 "本软件只需要给 opencode 指令... 或者发送 ! {命令}"
+      
+      // 我们在发送用户 text 之前，先发送一条 cd 指令
+      // 并且忽略这条指令的输出
+      try {
+        console.log(`[目录] 切换到: ${targetDir}`);
+        // 使用一个特殊的隐藏发送，不触发飞书回复
+        // 但 opencodeClient.sendMessageAsync 会触发 messageUpdated
+        // 我们需要一种方式告诉 messageHandler 忽略这次更新
+        // 或者简单点：将 cd 指令合并到当前 Prompt 中？
+        // "请在目录 ${targetDir} 下执行：${text}" -> 这改变了语义
+        
+        // 采用 ! cd 方式，并将其与用户文本合并
+        // text = `! cd "${targetDir}" && true\n${text}`; 
+        // 这种方式最直接，AI 会先执行 cd，然后处理后面的文本
+        // 但如果 text 也是自然语言，可能造成混淆
+        
+        // 最佳实践：独立发送 cd 指令
+        await opencodeClient.sendMessageAsync(sessionId, `! cd "${targetDir}"`, {
+           // 不带 agent，使用默认
+        });
+        // 稍微等待一下确保 cd 执行？通常不需要，因为是队列
+      } catch (e) {
+        console.error('[目录] 切换指令发送失败', e);
+      }
     }
 
-    outputBuffer.setStatus(conversation.key, 'completed');
+    // 异步发送消息
+    await opencodeClient.sendMessageAsync(sessionId, text, {
+      providerId: currentModel.providerId,
+      modelId: currentModel.modelId,
+      agent: state.agent,
+    });
+
+    console.log(`[OpenCode] 异步请求已发送`);
+
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error('[OpenCode] 发送消息失败:', message);
-    
-    if (message === 'OpenCode响应超时') {
-      // 注册延迟响应处理器，等待 SSE 事件
-      delayedResponseHandler.register({
-        conversationKey: conversation.key,
-        chatId,
-        sessionId,
-        messageId,
-        feishuMessageId: messageId,
-        createdAt: Date.now(),
-        lastReminderAt: undefined,
-        callback: async (result) => {
-          const output = formatOutput(result.parts);
-          const replyId = await feishuClient.reply(messageId, output);
-          if (replyId) {
-            state.lastFeishuReplyMessageId = replyId;
-          }
-          if (result.info?.id) {
-            state.lastOpencodeMessageId = result.info.id;
-          }
-        },
-      });
-      
-      await feishuClient.reply(
-        messageId,
-        '⏳ 请求已发送，正在等待处理...\n（OpenCode 可能正在处理其他任务，完成后会自动回复）'
-      );
-      const pending = delayedResponseHandler.get(messageId);
-      if (pending) {
-        pending.lastReminderAt = Date.now();
-      }
-      // 超时时清理 buffer，延迟响应由 delayedResponseHandler 处理
-      outputBuffer.clear(conversation.key);
-      return;
-    }
-    
-    outputBuffer.setStatus(conversation.key, 'failed');
-    throw error;
+    streamer.setStatus('failed');
+    await feishuClient.reply(messageId, `❌ 发送失败: ${message}`);
   } finally {
-    outputBuffer.clear(conversation.key);
+    // 任务结束（无论成功失败，但在流式中，messageUpdated才是真正的结束点）
+    // 这里只处理同步错误或发送请求本身的结束
+    // 真正的清理在 messageHandler 中
   }
 }
 
@@ -2026,6 +2281,11 @@ async function refreshControlCard(
 
   await feishuClient.updateCard(messageId, card);
 }
+
+// 声明在 processPrompt 之前或提升到模块顶部
+// 但由于 processPrompt 使用了 state，我们需要确保 state 也是可用的
+// 实际上 getConversationState 是模块级函数，所以没问题
+
 
 // 处理卡片动作
 async function handleCardAction(event: FeishuCardActionEvent): Promise<FeishuCardActionResponse | void> {

@@ -12,9 +12,17 @@ export const feishuConfig = {
 export const opencodeConfig = {
   host: process.env.OPENCODE_HOST || 'localhost',
   port: parseInt(process.env.OPENCODE_PORT || '4096', 10),
+  autoStart: process.env.OPENCODE_AUTO_START === 'true',
+  command: process.env.OPENCODE_COMMAND || 'opencode serve',
   get baseUrl() {
     return `http://${this.host}:${this.port}`;
   },
+};
+
+// 项目配置
+export const projectConfig = {
+  // 单一项目根目录
+  root: process.env.PROJECTS || '',
 };
 
 // 用户配置
