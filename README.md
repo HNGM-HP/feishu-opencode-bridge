@@ -1,6 +1,6 @@
 # 飞书 × OpenCode 桥接服务
 
-通过飞书聊天控制本地的 OpenCode，类似 OpenClaw 的功能实现。
+通过飞书聊天控制本地的 OpenCode，类似 OpenClaw 的功能实现。重点：无重大BUG，简易部署即可使用
 
 ## 功能特性
 
