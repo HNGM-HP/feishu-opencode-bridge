@@ -6,7 +6,7 @@
 
 现在，你应该学会用 AI 干活了，在你的 OpenCode 中输入如下执行让它帮你安装吧：
 
-请根据文档自行按照部署https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md
+请根据文档自行安装部署https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md
 ```
 ## 功能特性
 
