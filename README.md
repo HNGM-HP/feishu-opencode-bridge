@@ -176,6 +176,26 @@ MAX_DELAYED_RESPONSE_WAIT_MS=120000
 1. 在飞书客户端给机器人发一条消息
 2. 查看服务运行日志，会显示发送者的 open_id
 
+### OpenCode 服务配置（可选）
+
+您可以修改 OpenCode 的配置文件 `config.json`，以免去每次启动时手动指定端口参数。
+
+**路径**：
+- Windows: `C:\Users\{用户名}\.config\opencode\config.json`
+- Linux/macOS: `~/.config/opencode/config.json`
+
+**配置内容**：
+
+```json
+  "server": {
+    "port": 4096,
+    "hostname": "0.0.0.0",
+    "cors": [
+      "*"
+    ]
+  }
+```
+
 ## 运行
 
 ### 1. 启动 OpenCode 服务

@@ -87,7 +87,32 @@ opencode --port 4096
 ```
 请确保 OpenCode 服务已成功启动并在指定端口（默认 4096）监听。
 
-### 3.2 启动桥接服务
+### 3.2 配置 OpenCode (可选)
+
+为了避免每次启动 OpenCode 时都需要指定参数（如端口），您可以修改 OpenCode 的配置文件。
+
+**配置文件位置**：
+- Windows: `C:\Users\{用户名}\.config\opencode\config.json`
+- Linux/macOS: `~/.config/opencode/config.json` (或 `/root/.config/opencode/config.json`)
+
+**检查与修改**：
+请读取该文件，检查是否存在 `server` 配置块。如果不存在或配置不正确，请添加或修改为以下内容：
+
+```json
+  "server": {
+    "port": 4096,
+    "hostname": "0.0.0.0",
+    "cors": [
+      "*"
+    ]
+  }
+```
+
+*注意：如果文件中已有其他配置，请保留，仅添加或合并 `server` 部分。*
+
+配置完成后，您只需运行 `opencode serve` 或 `opencode` 即可，无需附加参数。
+
+### 3.3 启动桥接服务
 
 在第二个终端窗口中，启动 **飞书 × OpenCode 桥接服务**：
 ```bash

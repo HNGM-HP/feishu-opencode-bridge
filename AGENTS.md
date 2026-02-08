@@ -47,6 +47,21 @@
 - 启动桥接服务（PowerShell 脚本）：`npm run start:bridge`
 - 停止桥接服务（PowerShell 脚本）：`npm run stop:bridge`
 
+### OpenCode 配置
+
+OpenCode 配置文件位于 `~/.config/opencode/config.json`。
+建议添加 `server` 配置以固定端口：
+
+```json
+  "server": {
+    "port": 4096,
+    "hostname": "0.0.0.0",
+    "cors": [
+      "*"
+    ]
+  }
+```
+
 ### Lint
 
 - 未配置 lint 命令（`package.json` 无相关脚本）
