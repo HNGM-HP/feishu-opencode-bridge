@@ -23,6 +23,7 @@ export interface ParsedCommand {
   agentName?: string;      // agent类型的名称
   sessionAction?: 'new' | 'switch' | 'list';
   sessionId?: string;      // session switch的目标ID
+  clearScope?: 'all' | 'free_session'; // 清理范围
   permissionResponse?: 'y' | 'n' | 'yes' | 'no';
   commandName?: string;    // 透传命令名称
   commandArgs?: string;    // 透传命令参数
@@ -86,6 +87,9 @@ export function parseCommand(text: string): ParsedCommand {
 
       case 'clear':
       case 'reset':
+        if (args.length > 0 && args[0].toLowerCase() === 'free' && args[1]?.toLowerCase() === 'session') {
+          return { type: 'clear', clearScope: 'free_session' };
+        }
         return { type: 'clear' };
 
       case 'panel':

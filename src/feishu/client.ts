@@ -656,8 +656,13 @@ class FeishuClient extends EventEmitter {
       });
 
       const chatId = response.data?.chat_id || null;
-      if (chatId) {
-        console.log(`[飞书] 创建群聊成功: chatId=${chatId}, name=${name}`);
+      if (response.code === 0 && chatId) {
+        console.log(`[飞书] 创建群聊成功: chatId=${chatId}, name=${name}, userIds=${userIds.join(',')}`);
+      } else {
+        console.error(`[飞书] 创建群聊失败: code=${response.code}, msg=${response.msg}, name=${name}, userIds=${userIds.join(',')}`);
+        if (response.data) {
+          console.error(`[飞书] 创建群聊错误详情: ${JSON.stringify(response.data)}`);
+        }
       }
       return chatId;
     } catch (error) {
@@ -757,6 +762,14 @@ class FeishuClient extends EventEmitter {
         params: { member_id_type: 'open_id' },
         data: { id_list: userIds },
       });
+      if (response.code === 0) {
+        console.log(`[飞书] 邀请用户 ${userIds.join(', ')} 进群 ${chatId} 成功`);
+      } else {
+        console.error(`[飞书] 邀请用户进群 ${chatId} 失败: code=${response.code}, msg=${response.msg}, userIds=${userIds.join(', ')}`);
+        if (response.data) {
+          console.error(`[飞书] 邀请用户进群错误详情: ${JSON.stringify(response.data)}`);
+        }
+      }
       return response.code === 0;
     } catch (error) {
       const formatted = formatError(error);

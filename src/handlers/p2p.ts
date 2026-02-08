@@ -12,6 +12,20 @@ export class P2PHandler {
 
     // 1. 检查命令
     const command = parseCommand(content);
+    
+    // 特殊处理 /session new 或 "创建新会话" 文本命令，使其行为等同于点击卡片
+    if (content.trim() === '/session new' || content.trim() === '创建新会话') {
+      await this.handleCardAction({
+        openId: senderId,
+        action: { tag: 'button', value: { action: 'create_chat' } },
+        token: '',
+        chatId,
+        messageId,
+        rawEvent: event.rawEvent
+      });
+      return;
+    }
+
     if (command.type !== 'prompt') {
       console.log(`[P2P] 收到命令: ${command.type}`);
       await commandHandler.handle(command, {
@@ -27,8 +41,8 @@ export class P2PHandler {
     console.log(`[P2P] 收到私聊消息: user=${senderId}, content=${content.slice(0, 20)}...`);
 
     // 获取发送者名字（暂时无法获取，除非有API，这里用OpenID或默认称呼）
-    // TODO: 可以调用API获取用户信息，这里暂时用 "你"
-    const card = buildWelcomeCard('你');
+    // TODO: 可以调用API获取用户信息，这里暂时用OpenID
+    const card = buildWelcomeCard(senderId);
     await feishuClient.sendCard(chatId, card);
   }
 
@@ -42,6 +56,7 @@ export class P2PHandler {
 
       // 1. 创建飞书群
       const chatName = `OpenCode会话-${Date.now().toString().slice(-4)}`;
+      // 尝试传递空 description 以避免潜在 API 问题，或者填写默认值
       const newChatId = await feishuClient.createChat(chatName, [openId], '由 OpenCode 自动创建的会话群');
 
       if (!newChatId) {
@@ -50,22 +65,25 @@ export class P2PHandler {
       }
 
       // 1.5 验证用户是否进群（修复用户未进群且未解散的 Bug）
+      // 飞书 API 创建群时 user_id_list 有时可能因为权限或可见性问题部分失败但不报错
       let members = await feishuClient.getChatMembers(newChatId);
       if (!members.includes(openId)) {
-        console.log(`[P2P] 用户 ${openId} 未在新建群 ${newChatId} 中，尝试手动拉取...`);
+        console.warn(`[P2P] 用户 ${openId} 未在新建群 ${newChatId} 中，尝试手动拉取...`);
         const added = await feishuClient.addChatMembers(newChatId, [openId]);
+        
         if (!added) {
-          console.error(`[P2P] 无法拉取用户 ${openId} 进群，回滚操作`);
+          console.error(`[P2P] 无法拉取用户 ${openId} 进群，正在回滚（解散群）...`);
           await feishuClient.disbandChat(newChatId);
-          await feishuClient.reply(messageId!, '❌ 无法将您添加到群聊，请确保您已授权机器人获取群组信息权限，或联系管理员。');
+          await feishuClient.reply(messageId!, '❌ 无法将您添加到群聊。请确保机器人具有"获取群组信息"和"更新群组信息"权限，且您在机器人的可见范围内。');
           return;
         }
+
         // 再次确认
         members = await feishuClient.getChatMembers(newChatId);
         if (!members.includes(openId)) {
-           console.error(`[P2P] 再次确认失败，用户仍不在群中`);
+           console.error(`[P2P] 手动拉取后用户仍不在群中，回滚（解散群）...`);
            await feishuClient.disbandChat(newChatId);
-           await feishuClient.reply(messageId!, '❌ 创建群聊异常：无法确认成员状态。');
+           await feishuClient.reply(messageId!, '❌ 创建群聊异常：无法确认成员状态，已自动清理无效群。');
            return;
         }
       }
