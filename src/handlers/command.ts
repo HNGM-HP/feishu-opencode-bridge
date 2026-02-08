@@ -115,23 +115,18 @@ export class CommandHandler {
       return;
     }
 
-    // 构造完整命令字符串
-    const fullCommand = commandArgs ? `/${commandName} ${commandArgs}` : `/${commandName}`;
-    console.log(`[Command] 透传命令到 OpenCode: ${fullCommand}`);
+    console.log(`[Command] 透传命令到 OpenCode: /${commandName} ${commandArgs}`);
 
     try {
-      // 发送命令到 OpenCode（作为普通消息发送，OpenCode 会解析斜杠命令）
-      const result = await opencodeClient.sendMessage(sessionId, fullCommand, {
-        providerId: modelConfig.defaultProvider,
-        modelId: modelConfig.defaultModel,
-      });
+      // 使用专门的 sendCommand 方法
+      const result = await opencodeClient.sendCommand(sessionId, commandName, commandArgs);
 
       // 处理返回结果
       if (result && result.parts) {
         const output = this.formatOutput(result.parts);
         await feishuClient.reply(messageId, output);
       } else {
-        await feishuClient.reply(messageId, `✅ 命令已发送: ${fullCommand}`);
+        await feishuClient.reply(messageId, `✅ 命令已发送: /${commandName} ${commandArgs}`);
       }
     } catch (error) {
       console.error('[Command] 透传命令失败:', error);
