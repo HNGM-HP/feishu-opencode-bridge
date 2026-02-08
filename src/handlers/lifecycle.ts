@@ -1,6 +1,7 @@
 import { feishuClient } from '../feishu/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { opencodeClient } from '../opencode/client.js';
+import { userConfig } from '../config.js';
 
 export class LifecycleHandler {
   // 启动时清理无效群
@@ -30,10 +31,25 @@ export class LifecycleHandler {
     // 更准确的判断：如果没有人类用户，则解散
     
     console.log(`[Lifecycle] 检查群 ${chatId} 成员数: ${members.length}`);
+
+    // 检查是否有白名单用户在群内
+    const hasAllowedUser = members.some(memberId => userConfig.allowedUsers.includes(memberId));
+    
+    if (hasAllowedUser) {
+      console.log(`[Lifecycle] 群 ${chatId} 包含白名单用户，跳过解散检查`);
+      return;
+    }
+
+    // 二次确认：检查群主是否在白名单中（防止成员列表获取失败导致误删）
+    const chatInfo = await feishuClient.getChat(chatId);
+    if (chatInfo && userConfig.allowedUsers.includes(chatInfo.ownerId)) {
+      console.log(`[Lifecycle] 群 ${chatId} 群主(${chatInfo.ownerId})在白名单中，跳过解散检查`);
+      return;
+    }
     
     // 如果成员数 <= 1，认为群为空（只有机器人或无人）
     if (members.length <= 1) {
-      console.log(`[Lifecycle] 群 ${chatId} 成员不足，准备解散...`);
+      console.log(`[Lifecycle] 群 ${chatId} 成员不足且无白名单用户，准备解散...`);
       
       // 1. 清理 OpenCode 会话
       const sessionId = chatSessionStore.getSessionId(chatId);

@@ -62,10 +62,29 @@ export class CommandHandler {
           // 未知命令透传到 OpenCode
           await this.handlePassthroughCommand(chatId, messageId, command.commandName || '', command.commandArgs || '');
           break;
+
+        case 'model':
+          await this.handlePassthroughCommand(chatId, messageId, 'model', command.modelName || '');
+          break;
+
+        case 'agent':
+          await this.handlePassthroughCommand(chatId, messageId, 'agent', command.agentName || '');
+          break;
+
+        case 'undo':
+          await this.handleUndo(chatId, messageId);
+          break;
+
+        case 'panel':
+          await this.handlePassthroughCommand(chatId, messageId, 'panel', '');
+          break;
         
-        // TODO: 其他命令如 model, agent, undo, panel 等可按需添加
+        // 其他命令如 model, agent, undo, panel 等直接透传
         default:
-          await feishuClient.reply(messageId, `暂不支持命令: ${command.type}`);
+          // 尝试构建通用参数（虽然 ParsedCommand 是联合类型，但在运行时我们只能尽力）
+          // @ts-ignore
+          const args = command.commandArgs || command.text || ''; 
+          await this.handlePassthroughCommand(chatId, messageId, command.type.replace(/^\//, ''), args);
           break;
       }
     } catch (error) {
@@ -186,6 +205,61 @@ export class CommandHandler {
     }
 
     await feishuClient.reply(messageId, `✅ 清理完成\n- 解散群聊: ${cleanedCount} 个\n- 清理会话: ${sessionsCleaned} 个`);
+  }
+
+  // 公开以供外部调用（如消息撤回事件）
+  public async handleUndo(chatId: string, replyMessageId?: string): Promise<void> {
+    const session = chatSessionStore.getSession(chatId);
+    if (!session || !session.sessionId) {
+      if (replyMessageId) await feishuClient.reply(replyMessageId, '❌ 当前没有活跃的会话');
+      return;
+    }
+
+    console.log(`[Undo] 尝试撤回会话 ${session.sessionId} 的最后一条消息`);
+
+    try {
+      // 1. 获取会话消息历史
+      const messages = await opencodeClient.getSessionMessages(session.sessionId);
+      
+      // 2. 找到最后一条 User 消息
+      // OpenCode SDK Message 类型: { role: 'user' | 'assistant' | ... }
+      const reversed = [...messages].reverse();
+      // @ts-ignore
+      const lastUserMsg = reversed.find(m => m.info.role === 'user');
+
+      if (!lastUserMsg) {
+        if (replyMessageId) await feishuClient.reply(replyMessageId, '⚠️ 未找到可撤回的用户消息');
+        return;
+      }
+
+      // 3. 调用 Revert
+      // @ts-ignore
+      const success = await opencodeClient.revertMessage(session.sessionId, lastUserMsg.info.id);
+
+      if (success) {
+        // 4. 尝试撤回飞书上的 AI 回复
+        if (session.lastFeishuAiMsgId) {
+          // 只撤回上次 AI 回复，不撤回用户的（因为用户可能已经自己撤回了）
+          try {
+              await feishuClient.deleteMessage(session.lastFeishuAiMsgId);
+          } catch(e) {
+              // ignore
+          }
+          // 清除记录
+          // @ts-ignore
+          chatSessionStore.updateLastInteraction(chatId, session.lastFeishuUserMsgId || '', ''); 
+        }
+        if (replyMessageId) {
+             // 如果是通过 /undo 触发，提示成功
+             await feishuClient.reply(replyMessageId, '✅ 已撤回上一轮对话');
+        }
+      } else {
+        if (replyMessageId) await feishuClient.reply(replyMessageId, '❌ 撤回失败: OpenCode 拒绝');
+      }
+    } catch (error) {
+      console.error('[Undo] 执行失败:', error);
+      if (replyMessageId) await feishuClient.reply(replyMessageId, `❌ 撤回出错: ${error}`);
+    }
   }
 }
 

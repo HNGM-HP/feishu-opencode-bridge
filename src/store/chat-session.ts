@@ -8,6 +8,8 @@ interface ChatSessionData {
   creatorId: string; // 创建者ID
   createdAt: number;
   title?: string;
+  lastFeishuUserMsgId?: string;
+  lastFeishuAiMsgId?: string;
 }
 
 // 存储文件路径
@@ -78,6 +80,18 @@ class ChatSessionStore {
     this.data.set(chatId, data);
     this.save();
     console.log(`[Store] 绑定成功: chat=${chatId} -> session=${sessionId}`);
+  }
+
+  // 更新最近一次交互消息ID
+  updateLastInteraction(chatId: string, userMsgId: string, aiMsgId?: string): void {
+    const session = this.data.get(chatId);
+    if (session) {
+      session.lastFeishuUserMsgId = userMsgId;
+      if (aiMsgId) {
+        session.lastFeishuAiMsgId = aiMsgId;
+      }
+      this.save();
+    }
   }
 
   // 移除绑定（通常在群解散时调用）

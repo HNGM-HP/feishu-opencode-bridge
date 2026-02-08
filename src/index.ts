@@ -5,6 +5,7 @@ import { chatSessionStore } from './store/chat-session.js';
 import { p2pHandler } from './handlers/p2p.js';
 import { groupHandler } from './handlers/group.js';
 import { lifecycleHandler } from './handlers/lifecycle.js';
+import { commandHandler } from './handlers/command.js';
 import { validateConfig } from './config.js';
 
 async function main() {
@@ -192,6 +193,22 @@ async function main() {
   feishuClient.onChatDisbanded(async (chatId) => {
     console.log(`[Index] 群 ${chatId} 已解散`);
     chatSessionStore.removeSession(chatId);
+  });
+  
+  feishuClient.onMessageRecalled(async (event) => {
+    // 处理撤回
+    // event.message_id, event.chat_id
+    // 如果撤回的消息是该会话最后一条 User Message，则触发 Undo
+    const chatId = event.chat_id;
+    const recalledMsgId = event.message_id;
+    
+    if (chatId && recalledMsgId) {
+       const session = chatSessionStore.getSession(chatId);
+       if (session && session.lastFeishuUserMsgId === recalledMsgId) {
+          console.log(`[Index] 检测到用户撤回最后一条消息: ${recalledMsgId}`);
+          await commandHandler.handleUndo(chatId);
+       }
+    }
   });
 
   // 8. 启动飞书客户端

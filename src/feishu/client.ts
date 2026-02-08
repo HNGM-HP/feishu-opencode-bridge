@@ -241,6 +241,13 @@ class FeishuClient extends EventEmitter {
       },
     } as unknown as Record<string, (data: unknown) => Promise<FeishuCardActionResponse | { msg: string }>>);
 
+    // 监听群解散事件
+    this.onChatDisbanded(async (chatId) => {
+      // ...
+    });
+
+    // 监听消息撤回事件
+    // removed local register to avoid conflict with onMessageRecalled
     this.wsClient = new lark.WSClient({
       appId: feishuConfig.appId,
       appSecret: feishuConfig.appSecret,
@@ -273,6 +280,17 @@ class FeishuClient extends EventEmitter {
      this.eventDispatcher.register({
       'im.chat.disbanded_v1': (data: any) => {
          if (data.chat_id) callback(data.chat_id);
+         return { msg: 'ok' };
+      }
+    });
+  }
+
+  // 监听消息撤回事件
+  onMessageRecalled(callback: (event: any) => void): void {
+     // @ts-ignore
+     this.eventDispatcher.register({
+      'im.message.recalled_v1': (data: any) => {
+         callback(data);
          return { msg: 'ok' };
       }
     });
@@ -757,6 +775,28 @@ class FeishuClient extends EventEmitter {
       const formatted = formatError(error);
       console.error('[飞书] 获取群列表失败:', formatted.message, formatted.responseData ?? '');
       return [];
+    }
+  }
+
+  // 获取群信息
+  async getChat(chatId: string): Promise<{ ownerId: string; name: string } | null> {
+    try {
+      const response = await this.client.im.chat.get({
+        path: { chat_id: chatId },
+        params: { user_id_type: 'open_id' },
+      });
+      
+      if (response.code === 0 && response.data) {
+        return {
+          ownerId: response.data.owner_id || '',
+          name: response.data.name || '',
+        };
+      }
+      return null;
+    } catch (error) {
+      const formatted = formatError(error);
+      console.error('[飞书] 获取群信息失败:', formatted.message, formatted.responseData ?? '');
+      return null;
     }
   }
 
