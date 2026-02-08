@@ -10,6 +10,8 @@ interface ChatSessionData {
   title?: string;
   lastFeishuUserMsgId?: string;
   lastFeishuAiMsgId?: string;
+  preferredModel?: string; // e.g., "openai:gpt-4"
+  preferredAgent?: string;
 }
 
 // 存储文件路径
@@ -80,6 +82,16 @@ class ChatSessionStore {
     this.data.set(chatId, data);
     this.save();
     console.log(`[Store] 绑定成功: chat=${chatId} -> session=${sessionId}`);
+  }
+
+  // 更新会话配置 (模型/Agent)
+  updateConfig(chatId: string, config: { preferredModel?: string; preferredAgent?: string }): void {
+    const session = this.data.get(chatId);
+    if (session) {
+      if (config.preferredModel !== undefined) session.preferredModel = config.preferredModel;
+      if (config.preferredAgent !== undefined) session.preferredAgent = config.preferredAgent;
+      this.save();
+    }
   }
 
   // 更新最近一次交互消息ID

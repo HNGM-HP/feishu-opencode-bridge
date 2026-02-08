@@ -64,11 +64,11 @@ export class CommandHandler {
           break;
 
         case 'model':
-          await this.handlePassthroughCommand(chatId, messageId, 'model', command.modelName || '');
+          await this.handleModel(chatId, messageId, command.modelName);
           break;
 
         case 'agent':
-          await this.handlePassthroughCommand(chatId, messageId, 'agent', command.agentName || '');
+          await this.handleAgent(chatId, messageId, command.agentName);
           break;
 
         case 'undo':
@@ -125,6 +125,91 @@ export class CommandHandler {
       // 在群聊模式下，列出 session 意义不大，因为是 1:1 绑定的
       const current = chatSessionStore.getSessionId(chatId);
       await feishuClient.reply(messageId, `当前绑定会话: ${current || '无'}`);
+  }
+
+  private async handleModel(chatId: string, messageId: string, modelName?: string): Promise<void> {
+    try {
+      const { providers, default: defaults } = await opencodeClient.getProviders();
+      const currentSession = chatSessionStore.getSession(chatId);
+      const currentModel = currentSession?.preferredModel || `${modelConfig.defaultProvider}:${modelConfig.defaultModel}`;
+
+      if (modelName) {
+        // 尝试匹配模型
+        let found = false;
+        let targetProvider = '';
+        let targetModel = '';
+
+        for (const p of providers) {
+          for (const m of p.models) {
+             // 支持 "provider:model" 或直接 "model" (如果唯一)
+             if (modelName === `${p.id}:${m.id}` || modelName === m.id || modelName === m.name) {
+               targetProvider = p.id;
+               targetModel = m.id;
+               found = true;
+               break;
+             }
+          }
+          if (found) break;
+        }
+
+        if (found) {
+          chatSessionStore.updateConfig(chatId, { preferredModel: `${targetProvider}:${targetModel}` });
+          await feishuClient.reply(messageId, `✅ 已切换模型为: ${targetProvider}:${targetModel}`);
+        } else {
+          await feishuClient.reply(messageId, `❌ 未找到模型 "${modelName}"\n请使用 /model 查看可用列表`);
+        }
+      } else {
+        // 列出模型
+        let listText = `🤖 **当前模型**: ${currentModel}\n\n**可用模型列表**:`;
+        for (const p of providers) {
+          listText += `\n**${p.name} (${p.id})**:\n`;
+          for (const m of p.models) {
+            listText += `- ${m.name} (\`${m.id}\`)\n`;
+          }
+        }
+        listText += `\n使用 \`/model <name>\` 切换`;
+        await feishuClient.reply(messageId, listText);
+      }
+    } catch (error) {
+      await feishuClient.reply(messageId, `❌获取模型列表失败: ${error}`);
+    }
+  }
+
+  private async handleAgent(chatId: string, messageId: string, agentName?: string): Promise<void> {
+    try {
+      const agents = await opencodeClient.getAgents();
+      const currentSession = chatSessionStore.getSession(chatId);
+      const currentAgent = currentSession?.preferredAgent || '(无)';
+
+      if (agentName) {
+        if (agentName === 'none' || agentName === 'off') {
+           chatSessionStore.updateConfig(chatId, { preferredAgent: undefined }); // how to clear? let's assume undefined
+           await feishuClient.reply(messageId, `✅ 已关闭 Agent`);
+           return;
+        }
+
+        const found = agents.find(a => a.name === agentName);
+        if (found) {
+          chatSessionStore.updateConfig(chatId, { preferredAgent: found.name });
+          await feishuClient.reply(messageId, `✅ 已切换 Agent 为: ${found.name}`);
+        } else {
+          await feishuClient.reply(messageId, `❌ 未找到 Agent "${agentName}"\n请使用 /agent 查看可用列表`);
+        }
+      } else {
+        let listText = `🕵️ **当前 Agent**: ${currentAgent}\n\n**可用 Agent 列表**:`;
+        if (agents.length === 0) {
+            listText += '\n(暂无可用 Agent)';
+        } else {
+            for (const a of agents) {
+                listText += `\n- **${a.name}**: ${a.description || '无描述'}`;
+            }
+        }
+        listText += `\n\n使用 \`/agent <name>\` 切换，使用 \`/agent off\` 关闭`;
+        await feishuClient.reply(messageId, listText);
+      }
+    } catch (error) {
+      await feishuClient.reply(messageId, `❌获取 Agent 列表失败: ${error}`);
+    }
   }
 
   private async handlePassthroughCommand(chatId: string, messageId: string, commandName: string, commandArgs: string): Promise<void> {
@@ -239,18 +324,31 @@ export class CommandHandler {
       if (success) {
         // 4. 尝试撤回飞书上的 AI 回复
         if (session.lastFeishuAiMsgId) {
-          // 只撤回上次 AI 回复，不撤回用户的（因为用户可能已经自己撤回了）
           try {
               await feishuClient.deleteMessage(session.lastFeishuAiMsgId);
           } catch(e) {
               // ignore
           }
-          // 清除记录
-          // @ts-ignore
-          chatSessionStore.updateLastInteraction(chatId, session.lastFeishuUserMsgId || '', ''); 
         }
+        
+        // 5. 尝试撤回飞书上的 用户 消息 (如果存在且机器人有权限)
+        if (session.lastFeishuUserMsgId) {
+           try {
+              await feishuClient.deleteMessage(session.lastFeishuUserMsgId);
+           } catch(e) {
+              // 可能是权限不足或消息已被撤回
+              console.warn(`[Undo] 撤回用户消息失败: ${e}`);
+           }
+        }
+
+        // 清除记录
+        // @ts-ignore
+        chatSessionStore.updateLastInteraction(chatId, '', ''); 
+        
         if (replyMessageId) {
              // 如果是通过 /undo 触发，提示成功
+             // 如果用户消息被撤回了，这个提示可能看起来有点奇怪（悬空），但还是提示一下比较好
+             // 或者短暂提示后撤回? 暂时保持原样
              await feishuClient.reply(replyMessageId, '✅ 已撤回上一轮对话');
         }
       } else {

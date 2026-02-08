@@ -67,7 +67,10 @@ export class GroupHandler {
     // 4. 处理 Prompt
     // 记录用户消息ID
     chatSessionStore.updateLastInteraction(chatId, messageId);
-    await this.processPrompt(sessionId, trimmed, chatId, messageId, attachments);
+    
+    // 获取当前会话配置
+    const sessionConfig = chatSessionStore.getSession(chatId);
+    await this.processPrompt(sessionId, trimmed, chatId, messageId, attachments, sessionConfig);
   }
 
   // 检查待回答问题
@@ -183,7 +186,8 @@ export class GroupHandler {
     text: string,
     chatId: string,
     messageId: string,
-    attachments?: FeishuAttachment[]
+    attachments?: FeishuAttachment[],
+    config?: { preferredModel?: string; preferredAgent?: string }
   ): Promise<void> {
     // 注册输出缓冲
     outputBuffer.getOrCreate(`chat:${chatId}`, chatId, sessionId, messageId);
@@ -210,11 +214,27 @@ export class GroupHandler {
         return;
       }
 
+      // 提取 providerId 和 modelId
+      let providerId = modelConfig.defaultProvider;
+      let modelId = modelConfig.defaultModel;
+      
+      if (config?.preferredModel) {
+        const [p, m] = config.preferredModel.split(':');
+        if (p && m) {
+          providerId = p;
+          modelId = m;
+        } else {
+            // 简单的模型名，默认provider?
+            modelId = config.preferredModel;
+        }
+      }
+
       // 发送请求
       const result = await Promise.race([
         opencodeClient.sendMessageParts(sessionId, parts, {
-          providerId: modelConfig.defaultProvider,
-          modelId: modelConfig.defaultModel,
+          providerId,
+          modelId,
+          agent: config?.preferredAgent
         }, messageId),
         new Promise<never>((_, reject) => {
           setTimeout(() => reject(new Error('OpenCode响应超时')), OPENCODE_WAIT_REMINDER_MS);

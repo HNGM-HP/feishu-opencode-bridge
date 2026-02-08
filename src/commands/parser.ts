@@ -131,27 +131,20 @@ export function getHelpText(): string {
 
 **控制命令**
 /stop - 中断当前执行
-/undo - 撤回上一轮（OpenCode + 飞书）
-/model <名称> - 切换模型（如 /model claude-4）
-/model - 查看当前模型
-/agent <名称> - 切换Agent
-/agent - 查看当前Agent
-/panel - 打开控制面板
-/make_admin - 将机器人设为群管理员
+/undo - 撤回上一轮（包括您的提问和AI的回复）
+/model - 查看可用模型列表 /model <name> - 切换当前会话模型
+/agent - 查看可用Agent列表 /agent <name> - 切换当前会话Agent
+/panel - 打开控制面板 (需前端支持)
 
 **会话管理**
-/session new - 创建新对话
-/session <id> - 切换到指定对话
-/sessions - 列出所有对话
-/clear - 清空当前对话
+/session new - 创建新对话 (重置上下文)
+/clear - 清空当前对话上下文
 
 **其他**
-/status - 查看当前状态
+/status - 查看当前连接状态
 /help - 显示此帮助
 
-**透传命令**
-所有 /xxx 未知命令会透传到 OpenCode 执行
-
-**权限确认**
-当需要确认权限时，回复 y 或 n 来确认`;
+**注意**
+- 切换模型/Agent 仅对当前会话生效
+- 撤回消息需要机器人拥有管理员权限`;
 }
