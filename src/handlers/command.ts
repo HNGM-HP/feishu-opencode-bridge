@@ -57,6 +57,11 @@ export class CommandHandler {
             await feishuClient.reply(messageId, '当前没有活跃的会话');
           }
           break;
+
+        case 'command':
+          // 未知命令透传到 OpenCode
+          await this.handlePassthroughCommand(chatId, messageId, command.commandName || '', command.commandArgs || '');
+          break;
         
         // TODO: 其他命令如 model, agent, undo, panel 等可按需添加
         default:
@@ -101,6 +106,50 @@ export class CommandHandler {
       // 在群聊模式下，列出 session 意义不大，因为是 1:1 绑定的
       const current = chatSessionStore.getSessionId(chatId);
       await feishuClient.reply(messageId, `当前绑定会话: ${current || '无'}`);
+  }
+
+  private async handlePassthroughCommand(chatId: string, messageId: string, commandName: string, commandArgs: string): Promise<void> {
+    const sessionId = chatSessionStore.getSessionId(chatId);
+    if (!sessionId) {
+      await feishuClient.reply(messageId, '❌ 当前没有活跃的会话，请先发送消息建立会话');
+      return;
+    }
+
+    // 构造完整命令字符串
+    const fullCommand = commandArgs ? `/${commandName} ${commandArgs}` : `/${commandName}`;
+    console.log(`[Command] 透传命令到 OpenCode: ${fullCommand}`);
+
+    try {
+      // 发送命令到 OpenCode（作为普通消息发送，OpenCode 会解析斜杠命令）
+      const result = await opencodeClient.sendMessage(sessionId, fullCommand, {
+        providerId: modelConfig.defaultProvider,
+        modelId: modelConfig.defaultModel,
+      });
+
+      // 处理返回结果
+      if (result && result.parts) {
+        const output = this.formatOutput(result.parts);
+        await feishuClient.reply(messageId, output);
+      } else {
+        await feishuClient.reply(messageId, `✅ 命令已发送: ${fullCommand}`);
+      }
+    } catch (error) {
+      console.error('[Command] 透传命令失败:', error);
+      await feishuClient.reply(messageId, `❌ 命令执行失败: ${error}`);
+    }
+  }
+
+  private formatOutput(parts: unknown[]): string {
+    if (!parts || !Array.isArray(parts)) return '(无输出)';
+    
+    const output: string[] = [];
+    for (const part of parts) {
+      const p = part as Record<string, unknown>;
+      if (p.type === 'text' && typeof p.text === 'string') {
+        output.push(p.text);
+      }
+    }
+    return output.join('\n\n') || '(无输出)';
   }
 
   private async handleClearFreeSession(chatId: string, messageId: string): Promise<void> {
