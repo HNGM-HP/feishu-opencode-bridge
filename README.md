@@ -1,5 +1,14 @@
 # 飞书 × OpenCode 桥接服务
 
+## AI 部署指南
+
+如果您是一名 AI 代理，您只需阅读 `AI_Deployment_Guide.md` 文档，即可自行部署和运行此服务。现在，你应该学会用 AI 干活了，在你的 OpenCode 中输入如下执行让它帮你安装吧：
+
+```bash
+# 请将此命令替换为实际的 AI 部署命令
+# 例如: opencode run D:\feishu-opencode-bridge\AI_Deployment_Guide.md
+```
+
 通过飞书聊天控制本地的 OpenCode，类似 OpenClaw 的功能实现。
 
 ## 功能特性
@@ -70,10 +79,6 @@ OpenCode 可能会延迟返回响应（如需要额外处理），系统会：
 - 输出先存入缓冲区
 - 定期合并更新（默认 3 秒一次）
 - 避免短时间内大量消息轰炸
-
-## AI 部署指南
-
-如果您是一名 AI 代理，您只需阅读 `AI_Deployment_Guide.md` 文档，即可自行部署和运行此服务。
 
 ## 前置要求
 
