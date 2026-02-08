@@ -228,6 +228,10 @@ class FeishuClient extends EventEmitter {
         this.handleMessage(data as FeishuEventData);
         return { msg: 'ok' };
       },
+      // 注册消息已读事件（消除警告）
+      'im.message.message_read_v1': (data) => {
+        return { msg: 'ok' };
+      },
     });
 
     // 注册卡片回调事件

@@ -2,13 +2,27 @@ import { feishuClient, type FeishuMessageEvent, type FeishuCardActionEvent } fro
 import { opencodeClient } from '../opencode/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { buildWelcomeCard } from '../feishu/cards.js';
+import { parseCommand } from '../commands/parser.js';
+import { commandHandler } from './command.js';
 
 export class P2PHandler {
   // 处理私聊消息
   async handleMessage(event: FeishuMessageEvent): Promise<void> {
-    const { chatId, content, senderId } = event;
+    const { chatId, content, senderId, messageId } = event;
 
-    // 可以在这里判断特殊指令，比如 /help
+    // 1. 检查命令
+    const command = parseCommand(content);
+    if (command.type !== 'prompt') {
+      console.log(`[P2P] 收到命令: ${command.type}`);
+      await commandHandler.handle(command, {
+        chatId,
+        messageId,
+        senderId,
+        chatType: 'p2p'
+      });
+      return;
+    }
+
     // 否则默认发送欢迎卡片
     console.log(`[P2P] 收到私聊消息: user=${senderId}, content=${content.slice(0, 20)}...`);
 

@@ -6,6 +6,8 @@ import { delayedResponseHandler } from '../opencode/delayed-handler.js';
 import { questionHandler } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
 import { buildQuestionCardV2, buildQuestionAnsweredCard } from '../feishu/cards.js';
+import { parseCommand } from '../commands/parser.js';
+import { commandHandler } from './command.js';
 import { modelConfig, attachmentConfig, outputConfig } from '../config.js';
 import { randomUUID } from 'crypto';
 import path from 'path';
@@ -27,11 +29,18 @@ export class GroupHandler {
   // 处理群聊消息
   async handleMessage(event: FeishuMessageEvent): Promise<void> {
     const { chatId, content, messageId, senderId, attachments } = event;
-
-    // 1. 检查是否是命令
     const trimmed = content.trim();
-    if (trimmed === '/clear' || trimmed === '清除') {
-      await this.handleClear(chatId, messageId);
+
+    // 1. 优先处理命令
+    const command = parseCommand(trimmed);
+    if (command.type !== 'prompt') {
+      console.log(`[Group] 收到命令: ${command.type}`);
+      await commandHandler.handle(command, {
+        chatId,
+        messageId,
+        senderId,
+        chatType: 'group'
+      });
       return;
     }
 
