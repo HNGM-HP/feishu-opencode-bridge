@@ -37,7 +37,7 @@
   },
   "user:ou_6e10b138c8a83ea412b16f880990b808": {
     "userId": "user:ou_6e10b138c8a83ea412b16f880990b808",
-    "currentSessionId": "ses_3c76ae40affeRrIqjHTsLbhNpB",
+    "currentSessionId": "ses_3c3254ba4ffegYThj4mrBy5NSF",
     "sessions": [
       {
         "id": "ses_3dd94efe8ffecxDJsxxQPNMRg1",
@@ -48,9 +48,19 @@
         "id": "ses_3c76ae40affeRrIqjHTsLbhNpB",
         "title": "飞书对话",
         "createdAt": "2026-02-07T14:50:13.977Z"
+      },
+      {
+        "id": "ses_3c32cfe60ffefTY3Rkv2r7741d",
+        "title": "飞书对话",
+        "createdAt": "2026-02-08T10:36:11.282Z"
+      },
+      {
+        "id": "ses_3c3254ba4ffegYThj4mrBy5NSF",
+        "title": "飞书对话",
+        "createdAt": "2026-02-08T10:44:35.821Z"
       }
     ],
-    "lastActiveAt": "2026-02-07T14:50:13.976Z"
+    "lastActiveAt": "2026-02-08T10:44:35.820Z"
   },
   "thread:omt_1ae423e7a8ce9c91": {
     "userId": "thread:omt_1ae423e7a8ce9c91",

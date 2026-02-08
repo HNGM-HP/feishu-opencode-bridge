@@ -348,6 +348,21 @@ class OpencodeClientWrapper extends EventEmitter {
     return result.data!;
   }
 
+  // 删除会话
+  async deleteSession(sessionId: string): Promise<boolean> {
+    const client = this.getClient();
+    try {
+      await client.session.delete({
+        path: { id: sessionId },
+      });
+      console.log(`[OpenCode] 已删除会话: ${sessionId}`);
+      return true;
+    } catch (error) {
+      console.error(`[OpenCode] 删除会话失败: ${sessionId}`, error);
+      return false;
+    }
+  }
+
   // 获取会话消息
   async getSessionMessages(sessionId: string): Promise<Array<{ info: Message; parts: Part[] }>> {
     const client = this.getClient();

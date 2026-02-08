@@ -247,6 +247,33 @@ class FeishuClient extends EventEmitter {
     console.log('[飞书] 长连接已建立');
   }
 
+  // 监听群成员退群事件
+  onMemberLeft(callback: (chatId: string, memberId: string) => void): void {
+    // @ts-ignore: using loose types for dynamic registration
+    this.eventDispatcher.register({
+      'im.chat.member.user.deleted_v1': (data: any) => {
+         const chatId = data.chat_id;
+         const users = data.users || [];
+         for (const user of users) {
+           const openId = user.user_id?.open_id;
+           if (openId) callback(chatId, openId);
+         }
+         return { msg: 'ok' };
+      }
+    });
+  }
+
+  // 监听群解散事件
+  onChatDisbanded(callback: (chatId: string) => void): void {
+     // @ts-ignore
+     this.eventDispatcher.register({
+      'im.chat.disbanded_v1': (data: any) => {
+         if (data.chat_id) callback(data.chat_id);
+         return { msg: 'ok' };
+      }
+    });
+  }
+
   // 处理接收到的消息
   private handleMessage(data: FeishuEventData): void {
     try {
@@ -609,6 +636,130 @@ class FeishuClient extends EventEmitter {
     }
   }
 
+  // 创建群聊
+  async createChat(name: string, userIds: string[], description?: string): Promise<string | null> {
+    try {
+      const response = await this.client.im.chat.create({
+        params: {
+          user_id_type: 'open_id',
+          set_bot_manager: true, // 设置机器人为管理员
+        },
+        data: {
+          name,
+          description,
+          user_id_list: userIds,
+        },
+      });
+
+      const chatId = response.data?.chat_id || null;
+      if (chatId) {
+        console.log(`[飞书] 创建群聊成功: chatId=${chatId}, name=${name}`);
+      }
+      return chatId;
+    } catch (error) {
+      const formatted = formatError(error);
+      console.error('[飞书] 创建群聊失败:', formatted.message, formatted.responseData ?? '');
+      return null;
+    }
+  }
+
+  // 解散群聊
+  async disbandChat(chatId: string): Promise<boolean> {
+    try {
+      await this.client.im.chat.delete({
+        path: { chat_id: chatId },
+      });
+      console.log(`[飞书] 解散群聊成功: chatId=${chatId}`);
+      return true;
+    } catch (error) {
+      const formatted = formatError(error);
+      console.error('[飞书] 解散群聊失败:', formatted.message, formatted.responseData ?? '');
+      return false;
+    }
+  }
+
+  // 获取群成员列表 (返回 open_id 列表)
+  async getChatMembers(chatId: string): Promise<string[]> {
+    try {
+      // 获取所有成员，支持分页
+      const memberIds: string[] = [];
+      let pageToken: string | undefined;
+      
+      do {
+        const response = await this.client.im.chatMembers.get({
+          path: { chat_id: chatId },
+          params: {
+            member_id_type: 'open_id',
+            page_size: 100,
+            page_token: pageToken,
+          },
+        });
+        
+        if (response.data?.items) {
+          for (const item of response.data.items) {
+            if (item.member_id) {
+              memberIds.push(item.member_id);
+            }
+          }
+        }
+        pageToken = response.data?.page_token;
+      } while (pageToken);
+
+      return memberIds;
+    } catch (error) {
+      const formatted = formatError(error);
+      console.error('[飞书] 获取群成员失败:', formatted.message, formatted.responseData ?? '');
+      return [];
+    }
+  }
+
+  // 获取机器人所在的群列表
+  async getUserChats(): Promise<string[]> {
+    try {
+      const chatIds: string[] = [];
+      let pageToken: string | undefined;
+
+      do {
+        const response = await this.client.im.chat.list({
+          params: {
+            page_size: 100,
+            page_token: pageToken,
+          },
+        });
+
+        if (response.data?.items) {
+          for (const item of response.data.items) {
+            if (item.chat_id) {
+              chatIds.push(item.chat_id);
+            }
+          }
+        }
+        pageToken = response.data?.page_token;
+      } while (pageToken);
+
+      return chatIds;
+    } catch (error) {
+      const formatted = formatError(error);
+      console.error('[飞书] 获取群列表失败:', formatted.message, formatted.responseData ?? '');
+      return [];
+    }
+  }
+
+  // 邀请用户进群
+  async addChatMembers(chatId: string, userIds: string[]): Promise<boolean> {
+    try {
+      const response = await this.client.im.chatMembers.create({
+        path: { chat_id: chatId },
+        params: { member_id_type: 'open_id' },
+        data: { id_list: userIds },
+      });
+      return response.code === 0;
+    } catch (error) {
+      const formatted = formatError(error);
+      console.error('[飞书] 邀请进群失败:', formatted.message, formatted.responseData ?? '');
+      return false;
+    }
+  }
 
   // 停止长连接
   stop(): void {

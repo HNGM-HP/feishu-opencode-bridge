@@ -465,3 +465,45 @@ export function buildQuestionAnsweredCard(answers: string[][]): object {
 export function buildQuestionAnsweredCardSimple(answer: string): object {
   return buildQuestionAnsweredCard([[answer]]);
 }
+
+// 欢迎卡片（引导创建群聊）
+export function buildWelcomeCard(userName: string): object {
+  return {
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      title: {
+        tag: 'plain_text',
+        content: '👋 欢迎使用 OpenCode',
+      },
+      template: 'blue',
+    },
+    elements: [
+      {
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: `你好 **${userName}**，我是你的 AI 助手。\n\n为了更好地管理上下文，请点击下方按钮创建一个专属的会话群。`,
+        },
+      },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: {
+              tag: 'plain_text',
+              content: '➕ 创建新会话',
+            },
+            type: 'primary',
+            value: {
+              action: 'create_chat',
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
