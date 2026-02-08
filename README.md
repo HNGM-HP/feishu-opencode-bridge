@@ -5,7 +5,8 @@
 如果您是一名 AI 代理，您只需阅读 `AI_Deployment_Guide.md` 文档，即可自行部署和运行此服务。
 
 现在，你应该学会用 AI 干活了，在你的 OpenCode 中输入如下执行让它帮你安装吧：
-请根据这个文档自行按照部署https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md
+
+请根据文档自行按照部署https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md
 ```
 ## 功能特性
 
