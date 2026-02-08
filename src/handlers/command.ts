@@ -38,6 +38,7 @@ export class CommandHandler {
           break;
 
         case 'clear':
+          console.log(`[Command] clear 命令, clearScope=${command.clearScope}`);
           if (command.clearScope === 'free_session') {
             // 清理空闲群聊
             await this.handleClearFreeSession(chatId, messageId);
@@ -108,30 +109,39 @@ export class CommandHandler {
     // 获取机器人所在的所有群
     const allChats = await feishuClient.getUserChats();
     let cleanedCount = 0;
+    let sessionsCleaned = 0;
+    
+    console.log(`[Cleanup] 开始清理，共扫描 ${allChats.length} 个群聊`);
     
     for (const id of allChats) {
-      // 避免清理当前正在对话的群，除非它真的空了（但在对话中肯定有至少1人，机器人）
-      // 如果当前群只有机器人，那发命令的人不在群里？这不可能（除非是私聊发命令清理群聊）
-      // 如果是私聊发命令，chatId 是私聊ID，allChats 是群聊ID列表，不会重叠。
-      
       const members = await feishuClient.getChatMembers(id);
+      console.log(`[Cleanup] 群 ${id} 成员数: ${members.length}`);
       
-      // 如果群成员只有1人（即机器人自己），或者没人
+      // 如果群成员 <= 1（即只有机器人自己，或者没人），则解散
       if (members.length <= 1) {
         console.log(`[Cleanup] 发现空闲群 ${id} (成员数: ${members.length})，正在解散...`);
+        
+        // 清理 OpenCode 会话
+        const sessionId = chatSessionStore.getSessionId(id);
+        if (sessionId) {
+          try {
+            await opencodeClient.deleteSession(sessionId);
+            sessionsCleaned++;
+            console.log(`[Cleanup] 已删除 OpenCode 会话: ${sessionId}`);
+          } catch (e) {
+            console.warn(`[Cleanup] 删除会话 ${sessionId} 失败:`, e);
+          }
+          chatSessionStore.removeSession(id);
+        }
+        
         const disbanded = await feishuClient.disbandChat(id);
         if (disbanded) {
-          // 清理可能存在的 session 绑定
-          chatSessionStore.removeSession(id);
-          // 同时也尝试清理 opencode session? 
-          // chatSessionStore.getSessionId(id) -> opencodeClient.deleteSession(...)
-          // 暂时只清理绑定关系和群本身
           cleanedCount++;
         }
       }
     }
 
-    await feishuClient.reply(messageId, `✅ 清理完成，共解散 ${cleanedCount} 个空闲群聊。`);
+    await feishuClient.reply(messageId, `✅ 清理完成\n- 解散群聊: ${cleanedCount} 个\n- 清理会话: ${sessionsCleaned} 个`);
   }
 }
 

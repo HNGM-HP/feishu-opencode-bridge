@@ -641,7 +641,7 @@ class FeishuClient extends EventEmitter {
   }
 
   // 创建群聊
-  async createChat(name: string, userIds: string[], description?: string): Promise<string | null> {
+  async createChat(name: string, userIds: string[], description?: string): Promise<{ chatId: string | null; invalidUserIds: string[] }> {
     try {
       const response = await this.client.im.chat.create({
         params: {
@@ -656,19 +656,25 @@ class FeishuClient extends EventEmitter {
       });
 
       const chatId = response.data?.chat_id || null;
+      // 飞书 API 返回的 invalid_id_list 包含无法添加的用户 ID
+      const invalidUserIds = (response.data as { invalid_id_list?: string[] })?.invalid_id_list || [];
+      
       if (response.code === 0 && chatId) {
         console.log(`[飞书] 创建群聊成功: chatId=${chatId}, name=${name}, userIds=${userIds.join(',')}`);
+        if (invalidUserIds.length > 0) {
+          console.warn(`[飞书] 创建群聊时部分用户添加失败: invalidIds=${invalidUserIds.join(',')}`);
+        }
       } else {
         console.error(`[飞书] 创建群聊失败: code=${response.code}, msg=${response.msg}, name=${name}, userIds=${userIds.join(',')}`);
         if (response.data) {
           console.error(`[飞书] 创建群聊错误详情: ${JSON.stringify(response.data)}`);
         }
       }
-      return chatId;
+      return { chatId, invalidUserIds };
     } catch (error) {
       const formatted = formatError(error);
       console.error('[飞书] 创建群聊失败:', formatted.message, formatted.responseData ?? '');
-      return null;
+      return { chatId: null, invalidUserIds: [] };
     }
   }
 

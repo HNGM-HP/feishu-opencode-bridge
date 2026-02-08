@@ -23,20 +23,27 @@ export class LifecycleHandler {
   private async checkAndDisbandIfEmpty(chatId: string): Promise<void> {
     const members = await feishuClient.getChatMembers(chatId);
     
-    // 如果成员数 <= 1 (只有机器人自己，或者没人)，则解散
-    // 注意：getChatMembers 返回的是 open_id 列表
-    // 机器人自己通常不在这个列表里？或者在？
-    // 飞书 API behavior: getChatMembers returns users. Bot might not be in "user" list.
-    // So if members.length === 0, it means only bot is there (or no one).
+    // 飞书 API getChatMembers 返回的是用户成员列表
+    // 机器人可能包含在列表中（取决于 API 行为），也可能不包含
+    // 安全起见，我们检查是否有非机器人用户
+    // 如果成员数为 0（无用户）或只有 1 个成员（可能是机器人本身），则解散
+    // 更准确的判断：如果没有人类用户，则解散
     
-    if (members.length === 0) {
-      console.log(`[Lifecycle] 群 ${chatId} 为空，准备解散...`);
+    console.log(`[Lifecycle] 检查群 ${chatId} 成员数: ${members.length}`);
+    
+    // 如果成员数 <= 1，认为群为空（只有机器人或无人）
+    if (members.length <= 1) {
+      console.log(`[Lifecycle] 群 ${chatId} 成员不足，准备解散...`);
       
       // 1. 清理 OpenCode 会话
       const sessionId = chatSessionStore.getSessionId(chatId);
       if (sessionId) {
         // 尝试删除会话（如果 API 支持）
-        // await opencodeClient.deleteSession(sessionId); 
+        try {
+          await opencodeClient.deleteSession(sessionId);
+        } catch (e) {
+          console.warn(`[Lifecycle] 删除 OpenCode 会话 ${sessionId} 失败:`, e);
+        }
         chatSessionStore.removeSession(chatId);
       }
 

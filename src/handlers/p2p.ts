@@ -56,18 +56,29 @@ export class P2PHandler {
 
       // 1. 创建飞书群
       const chatName = `OpenCode会话-${Date.now().toString().slice(-4)}`;
-      // 尝试传递空 description 以避免潜在 API 问题，或者填写默认值
-      const newChatId = await feishuClient.createChat(chatName, [openId], '由 OpenCode 自动创建的会话群');
+      const createResult = await feishuClient.createChat(chatName, [openId], '由 OpenCode 自动创建的会话群');
 
-      if (!newChatId) {
+      if (!createResult.chatId) {
         await feishuClient.reply(messageId!, '❌ 创建群聊失败，请重试');
         return;
       }
 
-      // 1.5 验证用户是否进群（修复用户未进群且未解散的 Bug）
-      // 飞书 API 创建群时 user_id_list 有时可能因为权限或可见性问题部分失败但不报错
+      const newChatId = createResult.chatId;
+
+      // 1.5 验证用户是否进群
+      // 检查 API 返回的 invalid_id_list
+      const userInvalidOnCreate = createResult.invalidUserIds.includes(openId);
+      let userInGroup = !userInvalidOnCreate;
+      
+      if (userInvalidOnCreate) {
+        console.warn(`[P2P] 用户 ${openId} 在创建群时被标记为无效，尝试手动拉取...`);
+      }
+
+      // 再通过 getChatMembers 二次确认
       let members = await feishuClient.getChatMembers(newChatId);
-      if (!members.includes(openId)) {
+      userInGroup = members.includes(openId);
+
+      if (!userInGroup) {
         console.warn(`[P2P] 用户 ${openId} 未在新建群 ${newChatId} 中，尝试手动拉取...`);
         const added = await feishuClient.addChatMembers(newChatId, [openId]);
         
@@ -87,6 +98,8 @@ export class P2PHandler {
            return;
         }
       }
+      
+      console.log(`[P2P] 用户 ${openId} 已确认在群 ${newChatId} 中`);
 
       // 2. 创建 OpenCode 会话
       const sessionTitle = `飞书群聊: ${chatName}`;
