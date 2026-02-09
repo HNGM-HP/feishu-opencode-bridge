@@ -124,27 +124,28 @@ export function parseCommand(text: string): ParsedCommand {
 
 // 生成帮助文本
 export function getHelpText(): string {
-  return `📖 **飞书 × OpenCode 机器人命令**
+  return `📖 **飞书 × OpenCode 机器人指南**
 
-**消息发送**
-直接输入文字即可发送给AI
+💬 **如何对话**
+直接在群里 @机器人 或回复机器人消息，即可与 AI 对话。
 
-**控制命令**
-/stop - 中断当前执行
-/undo - 撤回上一轮（包括您的提问和AI的回复）
-/model - 查看可用模型列表 /model <name> - 切换当前会话模型
-/agent - 查看可用Agent列表 /agent <name> - 切换当前会话Agent
-/panel - 打开控制面板 (需前端支持)
+🛠️ **常用命令**
+• \`/model\` 查看当前模型
+• \`/model <名称>\` 切换模型 (e.g. \`/model gpt-4\`)
+• \`/agent\` 查看当前 Agent
+• \`/agent <名称>\` 切换 Agent (e.g. \`/agent web-search\`)
+• \`/agent off\` 关闭 Agent
+• \`/panel\` 打开交互式控制面板 ✨
+• \`/undo\` 撤回上一轮对话 (如果你发错或 AI 答错)
+• \`/stop\` 停止当前正在生成的回答
 
-**会话管理**
-/session new - 创建新对话 (重置上下文)
-/clear - 清空当前对话上下文
+⚙️ **会话管理**
+• \`/session new\` 开启新话题 (重置上下文)
+• \`/clear\` 清空当前上下文 (同上)
+• \`/clear free session\` 清理所有空闲/无人群聊
+• \`/status\` 查看连接状态
 
-**其他**
-/status - 查看当前连接状态
-/help - 显示此帮助
-
-**注意**
-- 切换模型/Agent 仅对当前会话生效
-- 撤回消息需要机器人拥有管理员权限`;
+💡 **提示**
+• 切换的模型/Agent 仅对**当前群聊**生效。
+• 如果遇到问题，试着使用 \`/panel\` 面板操作更方便。`;
 }

@@ -1,11 +1,20 @@
 {
-  "oc_3f42ee711c1a8de09204a80129306054": {
-    "chatId": "oc_3f42ee711c1a8de09204a80129306054",
-    "sessionId": "ses_3c2107ea3ffeaueFD46qgxhCCj",
+  "oc_0c46bd3370c2ab1a6c2c964a836ecb93": {
+    "chatId": "oc_0c46bd3370c2ab1a6c2c964a836ecb93",
+    "sessionId": "ses_3c1dd00b0ffeXdnElmybTwltD0",
     "creatorId": "ou_6e10b138c8a83ea412b16f880990b808",
-    "createdAt": 1770565647155,
-    "title": "飞书群聊: OpenCode会话-6370",
-    "lastFeishuUserMsgId": "om_x100b57bf43f57ca8b3f705493725930",
-    "lastFeishuAiMsgId": "om_x100b57bf434d20a4c34b05e313ca5b6"
+    "createdAt": 1770569021490,
+    "title": "飞书群聊: OpenCode会话-0745",
+    "lastFeishuUserMsgId": "om_x100b57b8f998f4a0b331298a84c30a9",
+    "lastFeishuAiMsgId": "om_x100b57b8f64e94a0c379becfce65304",
+    "preferredModel": "custom-gemini:gemini-3-flash"
+  },
+  "ou_6e10b138c8a83ea412b16f880990b808": {
+    "chatId": "ou_6e10b138c8a83ea412b16f880990b808",
+    "sessionId": "ses_3bfb3daccffe26z9sdv3vOuhhr",
+    "creatorId": "ou_6e10b138c8a83ea412b16f880990b808",
+    "createdAt": 1770605269988,
+    "title": "群聊会话-b808",
+    "preferredModel": "github-copilot:gemini-3-pro-preview"
   }
 }

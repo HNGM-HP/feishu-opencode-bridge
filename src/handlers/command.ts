@@ -49,13 +49,7 @@ export class CommandHandler {
           break;
 
         case 'stop':
-          const sessionId = chatSessionStore.getSessionId(chatId);
-          if (sessionId) {
-            await opencodeClient.abortSession(sessionId);
-            await feishuClient.reply(messageId, '⏹️ 已发送中断请求');
-          } else {
-            await feishuClient.reply(messageId, '当前没有活跃的会话');
-          }
+          await this.handleStop(chatId, messageId);
           break;
 
         case 'command':
@@ -64,11 +58,11 @@ export class CommandHandler {
           break;
 
         case 'model':
-          await this.handleModel(chatId, messageId, command.modelName);
+          await this.handleModel(chatId, messageId, context.senderId, command.modelName);
           break;
 
         case 'agent':
-          await this.handleAgent(chatId, messageId, command.agentName);
+          await this.handleAgent(chatId, messageId, context.senderId, command.agentName);
           break;
 
         case 'undo':
@@ -76,15 +70,16 @@ export class CommandHandler {
           break;
 
         case 'panel':
-          await this.handlePassthroughCommand(chatId, messageId, 'panel', '');
+          await this.handlePanel(chatId, messageId);
           break;
         
-        // 其他命令如 model, agent, undo, panel 等直接透传
+        case 'sessions':
+          await this.handleListSessions(chatId, messageId);
+          break;
+
+        // 其他命令透传
         default:
-          // 尝试构建通用参数（虽然 ParsedCommand 是联合类型，但在运行时我们只能尽力）
-          // @ts-ignore
-          const args = command.commandArgs || command.text || ''; 
-          await this.handlePassthroughCommand(chatId, messageId, command.type.replace(/^\//, ''), args);
+          await this.handlePassthroughCommand(chatId, messageId, command.type.replace(/^\//, ''), command.commandArgs || '');
           break;
       }
     } catch (error) {
@@ -127,89 +122,189 @@ export class CommandHandler {
       await feishuClient.reply(messageId, `当前绑定会话: ${current || '无'}`);
   }
 
-  private async handleModel(chatId: string, messageId: string, modelName?: string): Promise<void> {
+  private async handleModel(chatId: string, messageId: string, userId: string, modelName?: string): Promise<void> {
     try {
-      const { providers, default: defaults } = await opencodeClient.getProviders();
-      const currentSession = chatSessionStore.getSession(chatId);
-      const currentModel = currentSession?.preferredModel || `${modelConfig.defaultProvider}:${modelConfig.defaultModel}`;
-
-      if (modelName) {
-        // 尝试匹配模型
-        let found = false;
-        let targetProvider = '';
-        let targetModel = '';
-
-        for (const p of providers) {
-          for (const m of p.models) {
-             // 支持 "provider:model" 或直接 "model" (如果唯一)
-             if (modelName === `${p.id}:${m.id}` || modelName === m.id || modelName === m.name) {
-               targetProvider = p.id;
-               targetModel = m.id;
-               found = true;
-               break;
-             }
-          }
-          if (found) break;
-        }
-
-        if (found) {
-          chatSessionStore.updateConfig(chatId, { preferredModel: `${targetProvider}:${targetModel}` });
-          await feishuClient.reply(messageId, `✅ 已切换模型为: ${targetProvider}:${targetModel}`);
-        } else {
-          await feishuClient.reply(messageId, `❌ 未找到模型 "${modelName}"\n请使用 /model 查看可用列表`);
-        }
-      } else {
-        // 列出模型
-        let listText = `🤖 **当前模型**: ${currentModel}\n\n**可用模型列表**:`;
-        for (const p of providers) {
-          listText += `\n**${p.name} (${p.id})**:\n`;
-          for (const m of p.models) {
-            listText += `- ${m.name} (\`${m.id}\`)\n`;
-          }
-        }
-        listText += `\n使用 \`/model <name>\` 切换`;
-        await feishuClient.reply(messageId, listText);
+      // 0. 确保会话存在
+      let session = chatSessionStore.getSession(chatId);
+      if (!session) {
+         // 自动创建会话
+         const title = `群聊会话-${chatId.slice(-4)}`;
+         const newSession = await opencodeClient.createSession(title);
+         if (newSession) {
+             chatSessionStore.setSession(chatId, newSession.id, userId, title);
+             session = chatSessionStore.getSession(chatId);
+         } else {
+             await feishuClient.reply(messageId, '❌ 无法创建会话以保存配置');
+             return;
+         }
       }
+
+      // 1. 如果没有提供模型名称，显示当前状态
+      if (!modelName) {
+        const currentModel = session?.preferredModel || `${modelConfig.defaultProvider}:${modelConfig.defaultModel}`;
+        await feishuClient.reply(messageId, `当前模型: ${currentModel}`);
+        return;
+      }
+
+      const { providers } = await opencodeClient.getProviders();
+
+      // 2. 解析模型名称 (支持 provider/model 或 model)
+      let found = false;
+      let targetProvider = '';
+      let targetModel = '';
+
+      const safeProviders = Array.isArray(providers) ? providers : [];
+
+      for (const p of safeProviders) {
+        // 安全获取 models，兼容数组和对象
+        const modelsRaw = (p as any).models;
+        const models = Array.isArray(modelsRaw) 
+            ? modelsRaw 
+            : (modelsRaw && typeof modelsRaw === 'object' ? Object.values(modelsRaw) : []);
+
+        for (const m of models) {
+           const modelId = (m as any).id || (m as any).modelID || (m as any).name;
+           const providerId = (p as any).id || (p as any).providerID;
+           
+           if (!modelId || !providerId) continue;
+
+           // 支持 "provider:model", "provider/model" 或直接 "model" (如果唯一)
+           if (
+               modelName === `${providerId}:${modelId}` || 
+               modelName === `${providerId}/${modelId}` || 
+               modelName === modelId || 
+               modelName === (m as any).name
+           ) {
+             targetProvider = providerId;
+             targetModel = modelId;
+             found = true;
+             break;
+           }
+        }
+        if (found) break;
+      }
+
+      if (found) {
+        // 3. 更新配置
+        const newValue = `${targetProvider}:${targetModel}`;
+        chatSessionStore.updateConfig(chatId, { preferredModel: newValue });
+        await feishuClient.reply(messageId, `✅ 已切换模型: ${newValue}`);
+      } else {
+        // 即使没找到匹配的，如果格式正确也允许强制设置（针对自定义或未列出的模型）
+        if (modelName.includes(':') || modelName.includes('/')) {
+             const separator = modelName.includes(':') ? ':' : '/';
+             const [p, m] = modelName.split(separator);
+             const newValue = `${p}:${m}`;
+             chatSessionStore.updateConfig(chatId, { preferredModel: newValue });
+             await feishuClient.reply(messageId, `⚠️ 未在列表中找到该模型，但已强制设置为: ${newValue}`);
+        } else {
+             await feishuClient.reply(messageId, `❌ 未找到模型 "${modelName}"\n请使用 /panel 查看可用列表`);
+        }
+      }
+
     } catch (error) {
-      await feishuClient.reply(messageId, `❌获取模型列表失败: ${error}`);
+      await feishuClient.reply(messageId, `❌ 设置模型失败: ${error}`);
     }
   }
 
-  private async handleAgent(chatId: string, messageId: string, agentName?: string): Promise<void> {
+  private async handleAgent(chatId: string, messageId: string, userId: string, agentName?: string): Promise<void> {
     try {
-      const agents = await opencodeClient.getAgents();
-      const currentSession = chatSessionStore.getSession(chatId);
-      const currentAgent = currentSession?.preferredAgent || '(无)';
-
-      if (agentName) {
-        if (agentName === 'none' || agentName === 'off') {
-           chatSessionStore.updateConfig(chatId, { preferredAgent: undefined }); // how to clear? let's assume undefined
-           await feishuClient.reply(messageId, `✅ 已关闭 Agent`);
-           return;
-        }
-
-        const found = agents.find(a => a.name === agentName);
-        if (found) {
-          chatSessionStore.updateConfig(chatId, { preferredAgent: found.name });
-          await feishuClient.reply(messageId, `✅ 已切换 Agent 为: ${found.name}`);
-        } else {
-          await feishuClient.reply(messageId, `❌ 未找到 Agent "${agentName}"\n请使用 /agent 查看可用列表`);
-        }
-      } else {
-        let listText = `🕵️ **当前 Agent**: ${currentAgent}\n\n**可用 Agent 列表**:`;
-        if (agents.length === 0) {
-            listText += '\n(暂无可用 Agent)';
-        } else {
-            for (const a of agents) {
-                listText += `\n- **${a.name}**: ${a.description || '无描述'}`;
-            }
-        }
-        listText += `\n\n使用 \`/agent <name>\` 切换，使用 \`/agent off\` 关闭`;
-        await feishuClient.reply(messageId, listText);
+      // 0. 确保会话存在
+      let session = chatSessionStore.getSession(chatId);
+      if (!session) {
+         // 自动创建会话
+         const title = `群聊会话-${chatId.slice(-4)}`;
+         const newSession = await opencodeClient.createSession(title);
+         if (newSession) {
+             chatSessionStore.setSession(chatId, newSession.id, userId, title);
+             session = chatSessionStore.getSession(chatId);
+         } else {
+             await feishuClient.reply(messageId, '❌ 无法创建会话以保存配置');
+             return;
+         }
       }
+
+      const currentAgent = session?.preferredAgent || '(无)';
+
+      if (!agentName) {
+        await feishuClient.reply(messageId, `当前Agent: ${currentAgent}`);
+        return;
+      }
+
+      // 特殊值处理
+      if (agentName === 'none' || agentName === 'off' || agentName === 'default') {
+         chatSessionStore.updateConfig(chatId, { preferredAgent: undefined });
+         await feishuClient.reply(messageId, `✅ 已关闭 Agent (使用默认)`);
+         return;
+      }
+
+      // 校验 Agent 是否存在 (这个校验是值得保留的)
+      const agents = await opencodeClient.getAgents();
+      const exists = agents.find(a => a.name === agentName);
+      
+      if (!exists) {
+        await feishuClient.reply(messageId, '❌ 未找到该Agent\n请使用 /agent 查看可用列表');
+        return;
+      }
+
+      chatSessionStore.updateConfig(chatId, { preferredAgent: exists.name });
+      await feishuClient.reply(messageId, `✅ 已切换Agent: ${exists.name}`);
+
     } catch (error) {
-      await feishuClient.reply(messageId, `❌获取 Agent 列表失败: ${error}`);
+      await feishuClient.reply(messageId, `❌ 设置Agent失败: ${error}`);
     }
+  }
+
+  public async handlePanel(chatId: string, messageId: string): Promise<void> {
+      // 简单显示面板说明，或者实现卡片
+      // 这里为了简单且符合用户"逻辑"的要求，我们尽量复用旧逻辑的风格
+      // 旧逻辑构建了一个 ControlCard
+      const session = chatSessionStore.getSession(chatId);
+      const currentModel = session?.preferredModel || '默认';
+      const currentAgent = session?.preferredAgent || '默认';
+      
+      const { buildControlCard } = await import('../feishu/cards.js');
+      
+      // 获取列表供卡片使用
+      const { providers } = await opencodeClient.getProviders();
+      const agents = await opencodeClient.getAgents();
+      
+      const modelOptions: { label: string; value: string }[] = [];
+      const safeProviders = Array.isArray(providers) ? providers : [];
+
+      for (const p of safeProviders) {
+          // 安全获取 models，兼容数组和对象
+          const modelsRaw = (p as any).models;
+          const models = Array.isArray(modelsRaw) 
+              ? modelsRaw 
+              : (modelsRaw && typeof modelsRaw === 'object' ? Object.values(modelsRaw) : []);
+
+          for (const m of models) {
+              const modelId = (m as any).id || (m as any).modelID || (m as any).name;
+              const modelName = (m as any).name || modelId;
+              const providerId = (p as any).id || (p as any).providerID;
+              
+              if (modelId && providerId) {
+                  modelOptions.push({ label: modelName, value: `${providerId}:${modelId}` });
+              }
+          }
+      }
+      
+      const agentOptions = Array.isArray(agents) 
+        ? agents.map(a => ({ label: a.name, value: a.name })) 
+        : [];
+      
+      const card = buildControlCard({
+          conversationKey: `chat:${chatId}`,
+          chatId,
+          chatType: 'group', // 假设群组
+          currentModel,
+          currentAgent,
+          models: modelOptions.slice(0, 50), // 限制数量
+          agents: agentOptions.length > 0 ? agentOptions : [{ label: '无', value: 'none' }]
+      });
+      
+      await feishuClient.replyCard(messageId, card);
   }
 
   private async handlePassthroughCommand(chatId: string, messageId: string, commandName: string, commandArgs: string): Promise<void> {
@@ -290,6 +385,16 @@ export class CommandHandler {
     }
 
     await feishuClient.reply(messageId, `✅ 清理完成\n- 解散群聊: ${cleanedCount} 个\n- 清理会话: ${sessionsCleaned} 个`);
+  }
+
+  public async handleStop(chatId: string, messageId: string): Promise<void> {
+    const sessionId = chatSessionStore.getSessionId(chatId);
+    if (sessionId) {
+      await opencodeClient.abortSession(sessionId);
+      await feishuClient.reply(messageId, '⏹️ 已发送中断请求');
+    } else {
+      await feishuClient.reply(messageId, '当前没有活跃的会话');
+    }
   }
 
   // 公开以供外部调用（如消息撤回事件）

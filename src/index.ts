@@ -6,6 +6,7 @@ import { p2pHandler } from './handlers/p2p.js';
 import { groupHandler } from './handlers/group.js';
 import { lifecycleHandler } from './handlers/lifecycle.js';
 import { commandHandler } from './handlers/command.js';
+import { cardHandler } from './handlers/card.js';
 import { validateConfig } from './config.js';
 
 async function main() {
@@ -45,8 +46,6 @@ async function main() {
     // 如果任务完成或失败，清理缓存
     if (buffer.status !== 'running') {
         streamContentMap.delete(buffer.key);
-        // 如果是完成状态，确保最后一次更新（如果还有未发送的内容）
-        // 但通常 delta 会包含最后的内容
     }
 
     if (!currentFull.trim()) return;
@@ -86,33 +85,11 @@ async function main() {
   // 5. 监听飞书卡片动作
   feishuClient.setCardActionHandler(async (event) => {
     try {
-      const actionValue = event.action.value as any;
-      
-      // 特殊处理创建会话动作 (P2P)
-      if (actionValue?.action === 'create_chat') {
-        await p2pHandler.handleCardAction(event);
-        return;
-      }
-      
-      // 其他动作默认视为群组/会话内动作 (如权限确认、工具交互)
-      // TODO: 在 groupHandler 中实现 handleCardAction (目前暂未实装，可留空或简单处理)
-      console.log(`[Index] 收到卡片动作: ${JSON.stringify(actionValue)}`);
-      
-      // 如果是权限确认，直接调用 opencodeClient
-      if (actionValue?.action === 'permission_allow' || actionValue?.action === 'permission_deny') {
-          const allow = actionValue.action === 'permission_allow';
-          await opencodeClient.respondToPermission(
-              actionValue.sessionId, 
-              actionValue.permissionId, 
-              allow, 
-              actionValue.remember
-          );
-          // TODO: 更新卡片状态
-          return { msg: 'ok' }; // 或者返回更新后的卡片
-      }
-
+      const response = await cardHandler.handle(event);
+      return response as { msg: string } | object | undefined;
     } catch (error) {
       console.error('[Index] 卡片动作处理异常:', error);
+      return { msg: 'error' };
     }
   });
 
@@ -155,7 +132,6 @@ async function main() {
   // 监听 AI 提问事件
   opencodeClient.on('questionAsked', async (event: any) => {
       // event is QuestionRequest properties
-      // need to cast or use as is
       const request = event as import('./opencode/question-handler.js').QuestionRequest;
       const chatId = chatSessionStore.getChatId(request.sessionID);
       
