@@ -93,26 +93,31 @@ class OpencodeClientWrapper extends EventEmitter {
 
   // 处理SSE事件
   private handleEvent(event: { type: string; properties?: Record<string, unknown> }): void {
-    // 权限请求事件
-    if (event.type === 'permission.request' && event.properties) {
+    // 权限请求事件 (compat: support both 'permission.request' and 'permission.asked')
+    if ((event.type === 'permission.request' || event.type === 'permission.asked') && event.properties) {
       const props = event.properties as {
         sessionID?: string;
         id?: string;
         tool?: string;
+        permission?: string; // e.g. "external_directory"
         description?: string;
         risk?: string;
+        metadata?: any;
       };
 
       const permissionEvent: PermissionRequestEvent = {
         sessionId: props.sessionID || '',
         permissionId: props.id || '',
-        tool: props.tool || '',
-        description: props.description || '',
+        // If 'tool' is missing, fallback to 'permission' (e.g. "external_directory")
+        tool: props.tool || props.permission || 'unknown',
+        // If description is missing, try to construct one from metadata
+        description: props.description || (props.metadata ? JSON.stringify(props.metadata) : ''),
         risk: props.risk,
       };
 
       this.emit('permissionRequest', permissionEvent);
     }
+
 
     // 消息更新事件
     if (event.type === 'message.updated' && event.properties) {
