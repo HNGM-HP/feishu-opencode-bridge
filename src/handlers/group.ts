@@ -508,6 +508,12 @@ export class GroupHandler {
             ext = '.jpg';
         }
 
+        if (!ext || !ALLOWED_ATTACHMENT_EXTENSIONS.has(ext)) {
+            console.log(`[附件] 不支持的格式: ext=${ext || 'unknown'}, contentType=${contentType}`);
+            warnings.push(`附件格式不支持 (${ext || 'unknown'})，已跳过`);
+            continue;
+        }
+
         const fileId = randomUUID();
         const filePath = path.join(ATTACHMENT_BASE_DIR, `${fileId}${ext}`);
         const rawName = attachment.fileName || `attachment${ext}`;
@@ -518,7 +524,11 @@ export class GroupHandler {
             const buffer = await fs.readFile(filePath);
             const base64 = buffer.toString('base64');
             
-            const mime = contentType ? contentType.split(';')[0].trim() : mimeFromExtension(ext);
+            let mime = contentType ? contentType.split(';')[0].trim() : '';
+            if (!mime || mime === 'application/octet-stream') {
+                mime = mimeFromExtension(ext);
+            }
+            
             const dataUrl = `data:${mime};base64,${base64}`;
             
             parts.push({
