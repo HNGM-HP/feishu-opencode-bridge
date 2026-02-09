@@ -308,7 +308,7 @@ export class CommandHandler {
           chatType: 'group', // 假设群组
           currentModel,
           currentAgent,
-          models: modelOptions.slice(0, 50), // 限制数量
+          models: modelOptions.slice(0, 100), // 限制数量
           agents: agentOptions.length > 0 ? agentOptions : [{ label: '无', value: 'none' }]
       });
       
