@@ -125,6 +125,22 @@ class OutputBuffer {
   get(key: string): BufferedOutput | undefined {
     return this.buffers.get(key);
   }
+
+  // 中断输出
+  abort(key: string): void {
+    const buffer = this.buffers.get(key);
+    if (buffer) {
+      if (buffer.timer) {
+        clearTimeout(buffer.timer);
+        buffer.timer = null;
+      }
+      buffer.status = 'aborted';
+      // 触发最后一次更新
+      this.triggerUpdate(key);
+      // 清理缓冲区
+      this.clear(key);
+    }
+  }
 }
 
 // 单例导出

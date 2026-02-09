@@ -49,7 +49,13 @@ export class CommandHandler {
           break;
 
         case 'stop':
-          await this.handleStop(chatId, messageId);
+          const sessionId = chatSessionStore.getSessionId(chatId);
+          if (sessionId) {
+            await opencodeClient.abortSession(sessionId);
+            await feishuClient.reply(messageId, '⏹️ 已发送中断请求');
+          } else {
+            await feishuClient.reply(messageId, '当前没有活跃的会话');
+          }
           break;
 
         case 'command':
@@ -255,7 +261,7 @@ export class CommandHandler {
     }
   }
 
-  public async handlePanel(chatId: string, messageId: string): Promise<void> {
+  private async handlePanel(chatId: string, messageId: string): Promise<void> {
       // 简单显示面板说明，或者实现卡片
       // 这里为了简单且符合用户"逻辑"的要求，我们尽量复用旧逻辑的风格
       // 旧逻辑构建了一个 ControlCard
@@ -385,16 +391,6 @@ export class CommandHandler {
     }
 
     await feishuClient.reply(messageId, `✅ 清理完成\n- 解散群聊: ${cleanedCount} 个\n- 清理会话: ${sessionsCleaned} 个`);
-  }
-
-  public async handleStop(chatId: string, messageId: string): Promise<void> {
-    const sessionId = chatSessionStore.getSessionId(chatId);
-    if (sessionId) {
-      await opencodeClient.abortSession(sessionId);
-      await feishuClient.reply(messageId, '⏹️ 已发送中断请求');
-    } else {
-      await feishuClient.reply(messageId, '当前没有活跃的会话');
-    }
   }
 
   // 公开以供外部调用（如消息撤回事件）

@@ -5,8 +5,33 @@
     "creatorId": "ou_6e10b138c8a83ea412b16f880990b808",
     "createdAt": 1770569021490,
     "title": "飞书群聊: OpenCode会话-0745",
-    "lastFeishuUserMsgId": "om_x100b57a1ff35d8b4b275ca285558594",
+    "lastFeishuUserMsgId": "om_x100b57a339fd04acb2ddf9cf66a0aa8",
     "lastFeishuAiMsgId": "om_x100b57a1ff898cb0c2e3486f3b50d46",
     "preferredModel": "custom-gemini:gemini-3-flash"
+  },
+  "oc_be18e9d78d6945e2affd8442ac7c2355": {
+    "chatId": "oc_be18e9d78d6945e2affd8442ac7c2355",
+    "sessionId": "ses_3bf046c55ffe9tC6bfPJKAHy6Z",
+    "creatorId": "ou_6e10b138c8a83ea412b16f880990b808",
+    "createdAt": 1770616766227,
+    "title": "群聊会话-2355",
+    "lastFeishuUserMsgId": "om_x100b57a3351a48a8b28237ff16d425d",
+    "lastFeishuAiMsgId": "om_x100b57a332d608a4c2e3ba00f0786c2"
+  },
+  "oc_24e4090d759cb4745292fe6f3ce6bf97": {
+    "chatId": "oc_24e4090d759cb4745292fe6f3ce6bf97",
+    "sessionId": "ses_3beefe937ffeaKgIiYmcErIti9",
+    "creatorId": "ou_6e10b138c8a83ea412b16f880990b808",
+    "createdAt": 1770618110417,
+    "title": "飞书群聊: OpenCode会话-9446",
+    "lastFeishuUserMsgId": "om_x100b57ac595954a4b36c8f3f51003a2",
+    "lastFeishuAiMsgId": "om_x100b57ac57e9b4bcc3d3e58cf0f0216"
+  },
+  "oc_48d0406487e104a913a9d43bea663b10": {
+    "chatId": "oc_48d0406487e104a913a9d43bea663b10",
+    "sessionId": "ses_3beee314affeK6o6UC7bPrZQ3T",
+    "creatorId": "ou_6e10b138c8a83ea412b16f880990b808",
+    "createdAt": 1770618223025,
+    "title": "飞书群聊: OpenCode会话-2142"
   }
 }

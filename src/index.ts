@@ -6,7 +6,7 @@ import { p2pHandler } from './handlers/p2p.js';
 import { groupHandler } from './handlers/group.js';
 import { lifecycleHandler } from './handlers/lifecycle.js';
 import { commandHandler } from './handlers/command.js';
-import { legacyCardHandler } from './handlers/legacy-card.js';
+import { cardActionHandler } from './handlers/card-action.js';
 import { validateConfig } from './config.js';
 
 async function main() {
@@ -46,6 +46,8 @@ async function main() {
     // 如果任务完成或失败，清理缓存
     if (buffer.status !== 'running') {
         streamContentMap.delete(buffer.key);
+        // 如果是完成状态，确保最后一次更新（如果还有未发送的内容）
+        // 但通常 delta 会包含最后的内容
     }
 
     if (!currentFull.trim()) return;
@@ -85,11 +87,43 @@ async function main() {
   // 5. 监听飞书卡片动作
   feishuClient.setCardActionHandler(async (event) => {
     try {
-      const response = await legacyCardHandler.handle(event);
-      return response as { msg: string } | object | undefined;
+      const actionValue = event.action.value as any;
+
+      // 特殊处理创建会话动作 (P2P)
+      if (actionValue?.action === 'create_chat') {
+        return await p2pHandler.handleCardAction(event);
+      }
+
+      // 处理权限确认
+      if (actionValue?.action === 'permission_allow' || actionValue?.action === 'permission_deny') {
+        const allow = actionValue.action === 'permission_allow';
+        await opencodeClient.respondToPermission(
+          actionValue.sessionId,
+          actionValue.permissionId,
+          allow,
+          actionValue.remember
+        );
+        return {
+          toast: {
+            type: allow ? 'success' : 'error',
+            content: allow ? '已允许' : '已拒绝',
+            i18n_content: { zh_cn: allow ? '已允许' : '已拒绝', en_us: allow ? 'Allowed' : 'Denied' }
+          }
+        };
+      }
+
+      // 其他卡片动作统一由 cardActionHandler 处理
+      return await cardActionHandler.handle(event);
+
     } catch (error) {
       console.error('[Index] 卡片动作处理异常:', error);
-      return { msg: 'error' };
+      return {
+        toast: {
+          type: 'error',
+          content: '处理失败',
+          i18n_content: { zh_cn: '处理失败', en_us: 'Failed' }
+        }
+      };
     }
   });
 
@@ -132,6 +166,7 @@ async function main() {
   // 监听 AI 提问事件
   opencodeClient.on('questionAsked', async (event: any) => {
       // event is QuestionRequest properties
+      // need to cast or use as is
       const request = event as import('./opencode/question-handler.js').QuestionRequest;
       const chatId = chatSessionStore.getChatId(request.sessionID);
       
@@ -195,13 +230,34 @@ async function main() {
 
   console.log('✅ 服务已就绪');
   
-  // 优雅退出
-  process.on('SIGINT', () => {
-    console.log('正在关闭...');
-    feishuClient.stop();
-    opencodeClient.disconnect();
-    process.exit(0);
-  });
+  // 优雅退出处理
+  const gracefulShutdown = (signal: string) => {
+    console.log(`\n[${signal}] 正在关闭服务...`);
+
+    // 停止飞书连接
+    try {
+      feishuClient.stop();
+    } catch (e) {
+      console.error('停止飞书连接失败:', e);
+    }
+
+    // 断开 OpenCode 连接
+    try {
+      opencodeClient.disconnect();
+    } catch (e) {
+      console.error('断开 OpenCode 失败:', e);
+    }
+
+    // 清理资源
+    setTimeout(() => {
+      console.log('✅ 服务已安全关闭');
+      process.exit(0);
+    }, 1000);
+  };
+
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2')); // nodemon 重启信号
 }
 
 main().catch(error => {
