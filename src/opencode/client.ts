@@ -87,19 +87,18 @@ class OpencodeClientWrapper extends EventEmitter {
 
   // 处理SSE事件
   private handleEvent(event: { type: string; properties?: Record<string, unknown> }): void {
+    // Debug: Log all events to help troubleshoot missing permissions
+    // console.log(`[OpenCode Debug] Event: ${event.type}`, JSON.stringify(event.properties));
+
     // 权限请求事件
     if (event.type === 'permission.request' && event.properties) {
-      const props = event.properties as {
-        sessionID?: string;
-        id?: string;
-        tool?: string;
-        description?: string;
-        risk?: string;
-      };
+      const props = event.properties as any;
+      
+      console.log(`[OpenCode] Raw Permission Event:`, JSON.stringify(props));
 
       const permissionEvent: PermissionRequestEvent = {
-        sessionId: props.sessionID || '',
-        permissionId: props.id || '',
+        sessionId: props.sessionID || props.sessionId || '',
+        permissionId: props.id || props.permissionId || '',
         tool: props.tool || '',
         description: props.description || '',
         risk: props.risk,
@@ -107,6 +106,7 @@ class OpencodeClientWrapper extends EventEmitter {
 
       this.emit('permissionRequest', permissionEvent);
     }
+
 
     // 消息更新事件
     if (event.type === 'message.updated' && event.properties) {
@@ -132,7 +132,15 @@ class OpencodeClientWrapper extends EventEmitter {
     if (event.type === 'question.asked' && event.properties) {
       this.emit('questionAsked', event.properties);
     }
+    
+    // Log unknown permission-like events
+    if (event.type.includes('request') || event.type.includes('permission') || event.type.includes('confirmation')) {
+        if (event.type !== 'permission.request') {
+            console.log(`[OpenCode] Unhandled Request Event: ${event.type}`, JSON.stringify(event.properties));
+        }
+    }
   }
+
 
   // 获取客户端实例
   getClient(): SdkOpencodeClient {
