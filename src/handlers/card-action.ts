@@ -26,8 +26,6 @@ export class CardActionHandler {
         return this.handleModelSelect(actionValue, event);
       case 'agent_select':
         return this.handleAgentSelect(actionValue, event);
-      case 'question_skip':
-        return this.handleQuestionSkip(actionValue, event);
       case 'create_chat':
         // P2P 创建会话，由 p2pHandler 处理
         return;
@@ -136,109 +134,6 @@ export class CardActionHandler {
         i18n_content: { zh_cn: agentName ? `已切换Agent: ${agentName}` : '已关闭Agent', en_us: agentName ? `Agent changed: ${agentName}` : 'Agent disabled' }
       }
     };
-  }
-
-  private async handleQuestionSkip(value: any, event: FeishuCardActionEvent): Promise<object> {
-    const { requestId, conversationKey } = value;
-    // 确保 questionIndex 是数字类型，防止字符串拼接导致逻辑错误
-    const questionIndex = typeof value.questionIndex === 'string' ? parseInt(value.questionIndex, 10) : value.questionIndex;
-    const messageId = event.messageId;
-
-    console.log(`[CardAction] Question skip: requestId=${requestId}, currentIndex=${questionIndex}`);
-
-    if (!requestId || questionIndex === undefined || isNaN(questionIndex)) {
-      return { toast: { type: 'error', content: '参数错误' } };
-    }
-
-    const pending = questionHandler.get(requestId);
-    if (!pending) {
-      console.log(`[CardAction] Question skip failed: pending not found for ${requestId}`);
-      return { toast: { type: 'error', content: '问题已过期或不存在' } };
-    }
-
-    const totalQuestions = pending.request.questions.length;
-    console.log(`[CardAction] Question skip: total=${totalQuestions}, current=${questionIndex}`);
-
-    // 设置为跳过（空答案）
-    questionHandler.setDraftAnswer(requestId, questionIndex, ['']);
-    questionHandler.setDraftCustomAnswer(requestId, questionIndex, '');
-
-    // 计算下一个问题索引
-    const nextIndex = questionIndex + 1;
-
-    if (nextIndex < totalQuestions) {
-      // 还有更多问题，更新卡片到下一个问题
-      const nextPending = questionHandler.get(requestId);
-      // Re-fetch pending to ensure latest state
-      if (!nextPending) return { toast: { type: 'error', content: '上下文已丢失' } };
-
-      // Ensure index is updated
-      nextPending.currentQuestionIndex = nextIndex;
-      questionHandler.setOptionPageIndex(requestId, nextIndex, 0);
-
-      const { buildQuestionCardV2 } = await import('../feishu/cards.js');
-      const card = buildQuestionCardV2({
-        requestId,
-        sessionId: nextPending.request.sessionID,
-        questions: nextPending.request.questions,
-        conversationKey,
-        chatId: nextPending.chatId,
-        draftAnswers: questionHandler.getDraftAnswers(requestId) || undefined,
-        draftCustomAnswers: questionHandler.getDraftCustomAnswers(requestId) || undefined,
-        currentQuestionIndex: nextIndex,
-        optionPageIndexes: nextPending.optionPageIndexes
-      });
-
-      // 主动更新卡片
-      try {
-        if (messageId) {
-           await feishuClient.updateCard(messageId, card);
-        }
-      } catch(e) {
-         console.warn(`[CardAction] Failed to update card actively: ${e}`);
-      }
-      
-      return { 
-          toast: {
-              type: 'success',
-              content: '已跳过',
-              i18n_content: { zh_cn: '已跳过', en_us: 'Skipped' }
-          }
-      };
-    } else {
-      // 所有问题回答完毕，提交答案
-      console.log(`[CardAction] All questions skipped, submitting answers`);
-      const draftAnswers = questionHandler.getDraftAnswers(requestId);
-      if (draftAnswers) {
-        const success = await opencodeClient.replyQuestion(requestId, draftAnswers);
-        if (success) {
-          questionHandler.remove(requestId);
-          console.log(`[CardAction] Answers submitted successfully`);
-        } else {
-          console.error(`[CardAction] Failed to submit answers`);
-          return { toast: { type: 'error', content: '提交答案失败' } };
-        }
-      }
-
-      // 更新卡片为已回答状态
-      const card = buildQuestionAnsweredCard(draftAnswers || [[]]);
-      
-      try {
-        if (messageId) {
-           await feishuClient.updateCard(messageId, card);
-        }
-      } catch(e) {
-         console.warn(`[CardAction] Failed to update card actively: ${e}`);
-      }
-
-      return { 
-          toast: {
-              type: 'success',
-              content: '已完成',
-              i18n_content: { zh_cn: '已完成', en_us: 'Completed' }
-          }
-      };
-    }
   }
 }
 
