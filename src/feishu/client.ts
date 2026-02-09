@@ -673,9 +673,10 @@ class FeishuClient extends EventEmitter {
         },
       });
 
-      const chatId = response.data?.chat_id || null;
+      const data = response.data as any;
+      const chatId = data?.chat_id || data?.chatId || null;
       // 飞书 API 返回的 invalid_id_list 包含无法添加的用户 ID
-      const invalidUserIds = (response.data as { invalid_id_list?: string[] })?.invalid_id_list || [];
+      const invalidUserIds = (data as { invalid_id_list?: string[] })?.invalid_id_list || [];
       
       if (response.code === 0 && chatId) {
         console.log(`[飞书] 创建群聊成功: chatId=${chatId}, name=${name}, userIds=${userIds.join(',')}`);

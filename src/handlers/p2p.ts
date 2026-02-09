@@ -64,6 +64,7 @@ export class P2PHandler {
       }
 
       const newChatId = createResult.chatId;
+      console.log(`[P2P] 群聊已创建，ID: ${newChatId}`);
 
       // 1.5 验证用户是否进群
       // 检查 API 返回的 invalid_id_list
@@ -114,6 +115,7 @@ export class P2PHandler {
 
       // 3. 绑定关系
       chatSessionStore.setSession(newChatId, session.id, openId, sessionTitle);
+      console.log(`[P2P] 已绑定会话: Chat=${newChatId}, Session=${session.id}`);
 
       // 4. 回复用户
       // 更新原卡片为成功状态，或发送新消息

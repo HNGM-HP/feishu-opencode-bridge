@@ -51,6 +51,7 @@ export class GroupHandler {
     // 3. 获取或创建会话
     let sessionId = chatSessionStore.getSessionId(chatId);
     if (!sessionId) {
+      console.log(`[Group] 未找到绑定会话 (ChatID: ${chatId})，正在创建新会话...`);
       // 如果没有绑定会话，自动创建一个
       const title = `群聊会话-${chatId.slice(-4)}`;
       const session = await opencodeClient.createSession(title);
@@ -58,10 +59,13 @@ export class GroupHandler {
         sessionId = session.id;
         // 尝试获取群名作为 title，或者用默认的
         chatSessionStore.setSession(chatId, sessionId, senderId, title); // senderId 暂时作为 creator
+        console.log(`[Group] 新会话创建并绑定成功: ${sessionId}`);
       } else {
         await feishuClient.reply(messageId, '❌ 无法创建 OpenCode 会话');
         return;
       }
+    } else {
+        console.log(`[Group] 使用现有会话: ${sessionId} (ChatID: ${chatId})`);
     }
 
     // 4. 处理 Prompt
