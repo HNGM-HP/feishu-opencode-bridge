@@ -10,6 +10,7 @@ import { lifecycleHandler } from './handlers/lifecycle.js';
 import { commandHandler } from './handlers/command.js';
 import { cardActionHandler } from './handlers/card-action.js';
 import { validateConfig } from './config.js';
+import { buildStreamCard } from './feishu/cards-stream.js';
 
 async function main() {
   console.log('╔════════════════════════════════════════════════╗');
@@ -32,44 +33,66 @@ async function main() {
   }
 
   // 3. 配置输出缓冲 (流式响应)
-  const streamContentMap = new Map<string, string>();
+  const streamContentMap = new Map<string, { text: string; thinking: string; isCard: boolean }>();
 
   outputBuffer.setUpdateCallback(async (buffer) => {
     // 获取增量内容
-    const delta = outputBuffer.getAndClear(buffer.key);
+    const { text, thinking } = outputBuffer.getAndClear(buffer.key);
     
     // 如果没有新内容且不是状态变化，跳过
-    if (!delta && buffer.status === 'running') return;
+    if (!text && !thinking && buffer.status === 'running') return;
 
     // 更新全量内容
-    const currentFull = (streamContentMap.get(buffer.key) || '') + delta;
-    streamContentMap.set(buffer.key, currentFull);
+    const current = streamContentMap.get(buffer.key) || { text: '', thinking: '', isCard: false };
+    current.text += text;
+    current.thinking += thinking;
+    
+    // 如果有思考内容，强制使用卡片模式
+    if (current.thinking) {
+        current.isCard = true;
+        outputBuffer.setIsCard(buffer.key, true);
+    }
+    
+    streamContentMap.set(buffer.key, current);
 
     // 如果任务完成或失败，清理缓存
     if (buffer.status !== 'running') {
         streamContentMap.delete(buffer.key);
-        // 如果是完成状态，确保最后一次更新（如果还有未发送的内容）
-        // 但通常 delta 会包含最后的内容
     }
 
-    if (!currentFull.trim()) return;
+    if (!current.text.trim() && !current.thinking.trim()) return;
 
     // 发送或更新消息
-    if (buffer.messageId) {
-      // 已有消息，进行更新
-      await feishuClient.updateMessage(buffer.messageId, currentFull);
+    if (current.isCard) {
+        const card = buildStreamCard({
+            text: current.text,
+            thinking: current.thinking,
+            tools: [], // 流式阶段暂不展示工具状态
+            status: buffer.status === 'completed' ? 'completed' : 'processing',
+            showThinking: false // 默认折叠
+        });
+
+        if (buffer.messageId) {
+             await feishuClient.updateCard(buffer.messageId, card);
+        } else {
+             const msgId = await feishuClient.sendCard(buffer.chatId, card);
+             if (msgId) outputBuffer.setMessageId(buffer.key, msgId);
+        }
     } else {
-      // 第一次发送
-      let msgId;
-      if (buffer.replyMessageId) {
-        msgId = await feishuClient.reply(buffer.replyMessageId, currentFull);
-      } else {
-        msgId = await feishuClient.sendText(buffer.chatId, currentFull);
-      }
-      
-      if (msgId) {
-        outputBuffer.setMessageId(buffer.key, msgId);
-      }
+        // 纯文本模式
+        if (buffer.messageId) {
+            await feishuClient.updateMessage(buffer.messageId, current.text);
+        } else {
+            let msgId;
+            if (buffer.replyMessageId) {
+                msgId = await feishuClient.reply(buffer.replyMessageId, current.text);
+            } else {
+                msgId = await feishuClient.sendText(buffer.chatId, current.text);
+            }
+            if (msgId) {
+                outputBuffer.setMessageId(buffer.key, msgId);
+            }
+        }
     }
   });
 
@@ -156,11 +179,17 @@ async function main() {
       
       const chatId = chatSessionStore.getChatId(sessionID);
       if (chatId) {
-          // 只处理文本增量
           if (typeof delta === 'string') {
               outputBuffer.append(`chat:${chatId}`, delta);
-          } else if (typeof delta === 'object' && delta.text) {
-              outputBuffer.append(`chat:${chatId}`, delta.text);
+          } else if (typeof delta === 'object') {
+              if ((delta.type === 'reasoning' && delta.reasoning) || (delta.type === 'thinking' && delta.thinking)) {
+                  outputBuffer.appendThinking(`chat:${chatId}`, delta.reasoning || delta.thinking);
+              } else if (delta.type === 'text' && delta.text) {
+                  outputBuffer.append(`chat:${chatId}`, delta.text);
+              } else if (delta.text) {
+                   // Fallback for objects with just text
+                  outputBuffer.append(`chat:${chatId}`, delta.text);
+              }
           }
       }
   });

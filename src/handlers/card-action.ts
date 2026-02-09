@@ -6,6 +6,7 @@ import { feishuClient } from '../feishu/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { commandHandler } from './command.js';
+import { buildStreamCard, type StreamCardData } from '../feishu/cards-stream.js';
 import type { FeishuCardActionEvent } from '../feishu/client.js';
 
 export class CardActionHandler {
@@ -24,6 +25,8 @@ export class CardActionHandler {
         return this.handleModelSelect(actionValue, event);
       case 'agent_select':
         return this.handleAgentSelect(actionValue, event);
+      case 'toggle_thinking':
+        return this.handleToggleThinking(actionValue, event);
       case 'create_chat':
         // P2P 创建会话，由 p2pHandler 处理
         return;
@@ -132,6 +135,39 @@ export class CardActionHandler {
         i18n_content: { zh_cn: agentName ? `已切换Agent: ${agentName}` : '已关闭Agent', en_us: agentName ? `Agent changed: ${agentName}` : 'Agent disabled' }
       }
     };
+  }
+
+  private async handleToggleThinking(value: any, event: FeishuCardActionEvent): Promise<object> {
+      const chatId = value.chatId || event.chatId;
+      const messageId = event.messageId; 
+      
+      if (!chatId || !messageId) return { toast: { type: 'error', content: '参数错误' } };
+      
+      // Find interaction
+      const interaction = chatSessionStore.findInteractionByBotMsgId(chatId, messageId);
+      if (!interaction || !interaction.cardData) {
+          // If interaction not found (maybe old message or restarted), try to parse from card?
+          // But we don't have the thinking content in the action value.
+          // So we can't really toggle if we don't have the data.
+          return { toast: { type: 'error', content: '无法加载思考内容 (可能是历史消息)' } };
+      }
+      
+      // Toggle
+      const cardData = interaction.cardData as StreamCardData;
+      cardData.showThinking = !cardData.showThinking;
+      
+      // Update store
+      chatSessionStore.updateInteraction(chatId, 
+          (r) => r.botFeishuMsgIds.includes(messageId),
+          (r) => { r.cardData = cardData; }
+      );
+      
+      // Rebuild card
+      // Note: buildStreamCard returns { config: ..., header: ..., elements: ... }
+      // This matches Feishu card structure.
+      const newCard = buildStreamCard(cardData);
+      
+      return newCard;
   }
 }
 

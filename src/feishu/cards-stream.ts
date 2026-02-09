@@ -4,6 +4,7 @@ export * from './cards.js';
 
 export interface StreamCardData {
   thinking: string;
+  showThinking?: boolean; // Controls visibility of thinking process
   text: string;
   tools: Array<{
     name: string;
@@ -16,26 +17,48 @@ export interface StreamCardData {
 export function buildStreamCard(data: StreamCardData): object {
   const elements: object[] = [];
 
-  // 1. 思考过程 (Collapsible Panel)
+  // 1. 思考过程 (Collapsible UI)
   if (data.thinking) {
-    const thinkingPreview = data.thinking.slice(0, 50).replace(/\n/g, ' ') + (data.thinking.length > 50 ? '...' : '');
+    const isExpanded = data.showThinking === true;
+    
+    // Header line with toggle button
     elements.push({
-      tag: 'collapsible_panel',
-      expanded: false,
-      header: {
-        title: {
-          tag: 'plain_text',
-          content: `🤔 思考过程 (${data.thinking.length} chars)`,
-        },
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: `🤔 **思考过程** (${data.thinking.length} chars)`,
       },
-      elements: [
-        {
-          tag: 'markdown',
-          content: data.thinking, // 飞书会自动处理 Markdown 引用块
+      extra: {
+        tag: 'button',
+        text: {
+          tag: 'plain_text',
+          content: isExpanded ? '收起' : '展开',
         },
-      ],
+        type: 'default',
+        value: {
+          action: 'toggle_thinking',
+          // We rely on the handler to infer chat/message context from the event
+        }
+      }
     });
+
+    // Content (only if expanded)
+    if (isExpanded) {
+      elements.push({
+        tag: 'div',
+        text: {
+            tag: 'lark_md',
+            content: data.thinking
+        }
+      });
+      // Add a separator
+      elements.push({ tag: 'hr' });
+    } else {
+        // Optional: Show a preview if collapsed?
+        // For now, just hide it as requested ("Thinking..." by default)
+    }
   }
+
 
   // 2. 工具调用列表
   if (data.tools && data.tools.length > 0) {

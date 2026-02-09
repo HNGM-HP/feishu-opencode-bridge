@@ -396,70 +396,116 @@ export class CommandHandler {
   }
 
   // 公开以供外部调用（如消息撤回事件）
-  public async handleUndo(chatId: string, replyMessageId?: string): Promise<void> {
+  public async handleUndo(chatId: string, triggerMessageId?: string): Promise<void> {
+    // 0. 删除触发 undo 的命令消息（如果存在）
+    if (triggerMessageId) {
+        try {
+            await feishuClient.deleteMessage(triggerMessageId);
+        } catch (e) {
+            // ignore (might not have permission or already deleted)
+        }
+    }
+
     const session = chatSessionStore.getSession(chatId);
     if (!session || !session.sessionId) {
-      if (replyMessageId) await feishuClient.reply(replyMessageId, '❌ 当前没有活跃的会话');
+      // 无法回复因为消息已删，或者发个临时消息?
+      // 如果 triggerMessageId 被删了，我们发的新消息就是独立的。
+      // 但如果失败，最好还是提示一下。
+      const msg = await feishuClient.sendText(chatId, '❌ 当前没有活跃的会话');
+      // 5秒后删除提示
+      setTimeout(() => msg && feishuClient.deleteMessage(msg), 5000);
       return;
     }
 
-    console.log(`[Undo] 尝试撤回会话 ${session.sessionId} 的最后一条消息`);
+    console.log(`[Undo] 尝试撤回会话 ${session.sessionId} 的最后一次交互`);
+
+    // 递归撤回函数
+    const performUndo = async (skipOpenCodeRevert: boolean = false): Promise<boolean> => {
+        // 1. Pop interaction
+        const lastInteraction = chatSessionStore.popInteraction(chatId);
+        if (!lastInteraction) {
+            return false; // No history
+        }
+
+        // 2. Revert in OpenCode
+        if (!skipOpenCodeRevert) {
+            let targetRevertId = '';
+            try {
+                const messages = await opencodeClient.getSessionMessages(session.sessionId);
+                
+                // Find the AI message
+                // For question_answer type, openCodeMsgId is empty, so this will be -1
+                const aiMsgIndex = messages.findIndex(m => m.info.id === lastInteraction.openCodeMsgId);
+                
+                if (aiMsgIndex !== -1) {
+                    // We want to remove the User Message and the AI Message.
+                    // To remove a message in OpenCode (revert), we pass the ID of the message to remove.
+                    // Revert removes the target message and all subsequent messages.
+                    // So we target the User Message (aiMsgIndex - 1).
+                    if (aiMsgIndex >= 1) {
+                        targetRevertId = messages[aiMsgIndex - 1].info.id;
+                    } else {
+                        // AI message is at index 0? User message missing?
+                        // Fallback to removing AI message itself.
+                        targetRevertId = messages[aiMsgIndex].info.id;
+                    }
+                } else {
+                    // Fallback: usually for question_answer or if ID not found.
+                    // Structure: [..., User/Question, Answer].
+                    // We want to remove both.
+                    // Target User/Question (index N-2).
+                    if (messages.length >= 2) {
+                        targetRevertId = messages[messages.length - 2].info.id;
+                    } else if (messages.length === 1) {
+                        targetRevertId = messages[0].info.id;
+                    }
+                }
+            } catch (e) {
+                console.warn('[Undo] Failed to fetch messages for revert calculation', e);
+            }
+
+            if (targetRevertId) {
+                 await opencodeClient.revertMessage(session.sessionId, targetRevertId);
+            }
+        }
+
+        // 3. Delete Feishu messages
+        // Delete AI replies
+        for (const msgId of lastInteraction.botFeishuMsgIds) {
+            try { await feishuClient.deleteMessage(msgId); } catch (e) {}
+        }
+        // Delete User message
+        if (lastInteraction.userFeishuMsgId) {
+            try { await feishuClient.deleteMessage(lastInteraction.userFeishuMsgId); } catch (e) {}
+        }
+        
+        // 4. Recursive check for question answer
+        if (lastInteraction.type === 'question_answer') {
+            // The previous fallback revert (length-2) targeting the Question (AI msg)
+            // has already removed the Question and the Answer.
+            // So we need to clean up the previous interaction (the Question one) from our local store
+            // and delete its Feishu card.
+            // But we MUST NOT revert again in OpenCode because the Question is already gone.
+            await performUndo(true);
+        }
+        
+        return true;
+    };
+
 
     try {
-      // 1. 获取会话消息历史
-      const messages = await opencodeClient.getSessionMessages(session.sessionId);
-      
-      // 2. 找到最后一条 User 消息
-      // OpenCode SDK Message 类型: { role: 'user' | 'assistant' | ... }
-      const reversed = [...messages].reverse();
-      // @ts-ignore
-      const lastUserMsg = reversed.find(m => m.info.role === 'user');
-
-      if (!lastUserMsg) {
-        if (replyMessageId) await feishuClient.reply(replyMessageId, '⚠️ 未找到可撤回的用户消息');
-        return;
-      }
-
-      // 3. 调用 Revert
-      // @ts-ignore
-      const success = await opencodeClient.revertMessage(session.sessionId, lastUserMsg.info.id);
-
-      if (success) {
-        // 4. 尝试撤回飞书上的 AI 回复
-        if (session.lastFeishuAiMsgId) {
-          try {
-              await feishuClient.deleteMessage(session.lastFeishuAiMsgId);
-          } catch(e) {
-              // ignore
-          }
+        const success = await performUndo();
+        if (success) {
+             const msg = await feishuClient.sendText(chatId, '✅ 已撤回上一轮对话');
+             setTimeout(() => msg && feishuClient.deleteMessage(msg), 3000);
+        } else {
+             const msg = await feishuClient.sendText(chatId, '⚠️ 没有可撤回的消息');
+             setTimeout(() => msg && feishuClient.deleteMessage(msg), 3000);
         }
-        
-        // 5. 尝试撤回飞书上的 用户 消息 (如果存在且机器人有权限)
-        if (session.lastFeishuUserMsgId) {
-           try {
-              await feishuClient.deleteMessage(session.lastFeishuUserMsgId);
-           } catch(e) {
-              // 可能是权限不足或消息已被撤回
-              console.warn(`[Undo] 撤回用户消息失败: ${e}`);
-           }
-        }
-
-        // 清除记录
-        // @ts-ignore
-        chatSessionStore.updateLastInteraction(chatId, '', ''); 
-        
-        if (replyMessageId) {
-             // 如果是通过 /undo 触发，提示成功
-             // 如果用户消息被撤回了，这个提示可能看起来有点奇怪（悬空），但还是提示一下比较好
-             // 或者短暂提示后撤回? 暂时保持原样
-             await feishuClient.reply(replyMessageId, '✅ 已撤回上一轮对话');
-        }
-      } else {
-        if (replyMessageId) await feishuClient.reply(replyMessageId, '❌ 撤回失败: OpenCode 拒绝');
-      }
     } catch (error) {
-      console.error('[Undo] 执行失败:', error);
-      if (replyMessageId) await feishuClient.reply(replyMessageId, `❌ 撤回出错: ${error}`);
+       console.error('[Undo] 执行失败:', error);
+       const msg = await feishuClient.sendText(chatId, `❌ 撤回出错: ${error}`);
+       setTimeout(() => msg && feishuClient.deleteMessage(msg), 5000);
     }
   }
 }

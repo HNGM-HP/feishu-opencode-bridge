@@ -1,14 +1,16 @@
 import { feishuClient, type FeishuMessageEvent, type FeishuCardActionEvent, type FeishuAttachment } from '../feishu/client.js';
 import { opencodeClient } from '../opencode/client.js';
-import { chatSessionStore } from '../store/chat-session.js';
+import { chatSessionStore, type InteractionRecord } from '../store/chat-session.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { delayedResponseHandler } from '../opencode/delayed-handler.js';
 import { questionHandler } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
 import { buildQuestionCardV2, buildQuestionAnsweredCard } from '../feishu/cards.js';
+import { buildStreamCard, type StreamCardData } from '../feishu/cards-stream.js';
 import { parseCommand } from '../commands/parser.js';
 import { commandHandler } from './command.js';
 import { modelConfig, attachmentConfig, outputConfig } from '../config.js';
+
 import { randomUUID } from 'crypto';
 import path from 'path';
 import { promises as fs } from 'fs';
@@ -133,16 +135,17 @@ export class GroupHandler {
             questionHandler.setCardMessageId(pending.request.id, cardMsgId);
         }
     } else {
-        // 提交所有答案
-        await this.submitQuestionAnswers(pending, messageId);
+      // 提交所有答案
+      await this.submitQuestionAnswers(pending, messageId, chatId);
     }
 
     return true;
   }
 
   // 提交问题答案
-  private async submitQuestionAnswers(pending: any, replyMessageId: string): Promise<void> {
+  private async submitQuestionAnswers(pending: any, replyMessageId: string, chatId: string): Promise<void> {
       const answers: string[][] = [];
+
       const totalQuestions = pending.request.questions.length;
 
       for (let i = 0; i < totalQuestions; i++) {
@@ -160,11 +163,23 @@ export class GroupHandler {
       if (success) {
           questionHandler.remove(pending.request.id);
           const answeredCard = buildQuestionAnsweredCard(answers);
-          await feishuClient.sendCard(pending.chatId, answeredCard);
+          const msgId = await feishuClient.sendCard(pending.chatId, answeredCard);
+          
+          if (msgId) {
+             // 记录交互历史
+             chatSessionStore.addInteraction(chatId, {
+                 userFeishuMsgId: replyMessageId,
+                 openCodeMsgId: '', // 暂时无法获取，Undo时需动态查找
+                 botFeishuMsgIds: [msgId],
+                 type: 'question_answer',
+                 timestamp: Date.now()
+             });
+          }
       } else {
           await feishuClient.reply(replyMessageId, '⚠️ 回答提交失败，请重试');
       }
   }
+
 
   // 清除上下文
   private async handleClear(chatId: string, messageId: string): Promise<void> {
@@ -242,27 +257,111 @@ export class GroupHandler {
       ]);
 
       // 处理结果
-      const finalOutput = this.formatOutput(result.parts);
+      // 解析 parts 到结构化数据
+      const finalData: StreamCardData = {
+          thinking: '',
+          text: '',
+          tools: [],
+          status: 'completed',
+          showThinking: false
+      };
+      
+      if (result.parts) {
+          for (const part of result.parts) {
+              // @ts-ignore: part type might be extended
+              if ((part.type === 'reasoning' && part.reasoning) || (part.type === 'thinking' && (part as any).thinking)) {
+                  // @ts-ignore
+                  finalData.thinking += (part.reasoning || (part as any).thinking);
+              } else if (part.type === 'text' && (part as any).text) {
+                  finalData.text += (part as any).text;
+              } else if (part.type === 'tool') {
+                  const toolPart = part as any;
+                  finalData.tools.push({ 
+                      name: toolPart.tool, 
+                      status: toolPart.state?.status || 'completed', 
+                      output: toolPart.state?.output 
+                  });
+              }
+          }
+      }
       
       const buffer = outputBuffer.get(`chat:${chatId}`);
-      if (buffer?.messageId) {
-        // 如果已经有流式消息，更新它为最终结果
-        await feishuClient.updateMessage(buffer.messageId, finalOutput);
-        chatSessionStore.updateLastInteraction(chatId, messageId, buffer.messageId);
+      let msgId = buffer?.messageId;
+      const wasCard = buffer?.isCard;
+      
+      // Use card if we have thinking, tools, or if we were already using a card
+      const shouldUseCard = !!finalData.thinking || finalData.tools.length > 0 || wasCard;
+      
+      if (shouldUseCard) {
+          const card = buildStreamCard(finalData);
+          if (msgId) {
+             // 尝试更新
+             // 如果之前是 Card (wasCard=true), 必须 updateCard
+             if (wasCard) {
+                 await feishuClient.updateCard(msgId, card);
+             } else {
+                 // 之前可能是 text (msgId created by reply/sendText)
+                 // 但现在决定用 Card
+                 // 飞书不支持 updateMessage (text) -> updateCard (interactive)
+                 // 如果之前发送了 text，现在想转 card，需要撤回再发，或者...
+                 // 实际上，如果我们决定用 Card，之前 streaming 阶段应该已经是 Card 了 (因为 thinking/tools 触发)
+                 // 如果 streaming 阶段没有触发 thinking (e.g. fast response or no thinking), outputBuffer sent text.
+                 // 现在 finalData 决定要 card (e.g. tools appeared at end).
+                 // 这时候我们无法原地变身。只能发新的 Card。
+                 // 或者只能放弃 card 格式，用 text 展示 tools (ugly).
+                 // 策略：如果 buffer.isCard 为 false，且 finalData 需要 Card -> 发新消息
+                 // 为了用户体验，我们最好尽量保持一致。
+                 // 如果 msgId 存在且 wasCard=false，我们只能 updateText (tool output append to text).
+                 // 但 finalData.thinking 必须显示。如果 text mode，thinking 怎么显示？
+                 // 如果 text mode，我们把 thinking prepend/append 到 text?
+                 
+                 // 修改策略：
+                 // 如果 buffer.isCard 为 false，但 finalData 需要 Card (thinking/tools)，
+                 // 我们尝试 deleteMessage(msgId) 然后 sendCard。
+                 try {
+                     await feishuClient.deleteMessage(msgId);
+                 } catch (e) { console.warn('Delete failed', e); }
+                 msgId = await feishuClient.sendCard(chatId, card);
+             }
+          } else {
+             msgId = await feishuClient.sendCard(chatId, card);
+          }
       } else {
-        // 否则发送新消息
-        let replyId = await feishuClient.reply(messageId, finalOutput);
-        if (!replyId) {
-          replyId = await feishuClient.sendText(chatId, finalOutput);
-        }
-        if (replyId) {
-          chatSessionStore.updateLastInteraction(chatId, messageId, replyId);
-        }
+          // 纯文本
+          const text = finalData.text || '(无输出)';
+          if (msgId) {
+             // 如果 buffer.isCard = true，不能 updateMessage (text)
+             if (wasCard) {
+                 // 同样逻辑：delete old card, send new text? Or just update card to show only text?
+                 // Update card is better (smoother).
+                 // Re-use buildStreamCard with empty thinking/tools.
+                 const card = buildStreamCard(finalData); // finalData has empty thinking/tools
+                 await feishuClient.updateCard(msgId, card);
+             } else {
+                 await feishuClient.updateMessage(msgId, text);
+             }
+          } else {
+             msgId = await feishuClient.reply(messageId, text);
+             if (!msgId) msgId = await feishuClient.sendText(chatId, text);
+          }
+      }
+
+      // 记录交互
+      if (msgId) {
+          chatSessionStore.addInteraction(chatId, {
+              userFeishuMsgId: messageId,
+              openCodeMsgId: result.info?.id || '',
+              botFeishuMsgIds: [msgId],
+              type: 'normal',
+              cardData: shouldUseCard ? finalData : undefined,
+              timestamp: Date.now()
+          });
       }
 
       outputBuffer.setStatus(`chat:${chatId}`, 'completed');
 
     } catch (error) {
+
       const message = error instanceof Error ? error.message : String(error);
       console.error('[Group] 处理失败:', message);
 

@@ -8,10 +8,22 @@ interface ChatSessionData {
   creatorId: string; // 创建者ID
   createdAt: number;
   title?: string;
+  // Deprecated: use interactionHistory instead
   lastFeishuUserMsgId?: string;
+  // Deprecated: use interactionHistory instead
   lastFeishuAiMsgId?: string;
   preferredModel?: string; // e.g., "openai:gpt-4"
   preferredAgent?: string;
+  interactionHistory: InteractionRecord[];
+}
+
+export interface InteractionRecord {
+  userFeishuMsgId: string;
+  openCodeMsgId: string; // The ID of the user message in OpenCode (to revert to/from)
+  botFeishuMsgIds: string[]; // All bot messages generated in this turn
+  type: 'normal' | 'question_answer';
+  cardData?: any; // Store StreamCardData or other card data for UI interactions
+  timestamp: number;
 }
 
 // 存储文件路径
@@ -78,6 +90,7 @@ class ChatSessionStore {
       creatorId,
       createdAt: Date.now(),
       title,
+      interactionHistory: [],
     };
     this.data.set(chatId, data);
     this.save();
@@ -94,7 +107,81 @@ class ChatSessionStore {
     }
   }
 
-  // 更新最近一次交互消息ID
+  // Push a new interaction to history
+  addInteraction(chatId: string, record: InteractionRecord): void {
+    const session = this.data.get(chatId);
+    if (session) {
+      if (!session.interactionHistory) {
+        session.interactionHistory = [];
+      }
+      session.interactionHistory.push(record);
+      
+      // Sync legacy fields for backward compatibility
+      session.lastFeishuUserMsgId = record.userFeishuMsgId;
+      if (record.botFeishuMsgIds.length > 0) {
+        session.lastFeishuAiMsgId = record.botFeishuMsgIds[record.botFeishuMsgIds.length - 1];
+      }
+      
+      // Limit history size (e.g., keep last 20)
+      if (session.interactionHistory.length > 20) {
+        session.interactionHistory.shift();
+      }
+      
+      this.save();
+    }
+  }
+
+  // Pop the last interaction
+  popInteraction(chatId: string): InteractionRecord | undefined {
+    const session = this.data.get(chatId);
+    if (session && session.interactionHistory && session.interactionHistory.length > 0) {
+      const record = session.interactionHistory.pop();
+      
+      // Update legacy fields
+      const last = session.interactionHistory[session.interactionHistory.length - 1];
+      if (last) {
+        session.lastFeishuUserMsgId = last.userFeishuMsgId;
+        session.lastFeishuAiMsgId = last.botFeishuMsgIds[last.botFeishuMsgIds.length - 1];
+      } else {
+        session.lastFeishuUserMsgId = undefined;
+        session.lastFeishuAiMsgId = undefined;
+      }
+      
+      this.save();
+      return record;
+    }
+    return undefined;
+  }
+
+  // Get the last interaction without popping
+  getLastInteraction(chatId: string): InteractionRecord | undefined {
+    const session = this.data.get(chatId);
+    if (session && session.interactionHistory && session.interactionHistory.length > 0) {
+      return session.interactionHistory[session.interactionHistory.length - 1];
+    }
+    return undefined;
+  }
+  
+  // Find interaction by a bot message ID (useful for card actions)
+  findInteractionByBotMsgId(chatId: string, msgId: string): InteractionRecord | undefined {
+    const session = this.data.get(chatId);
+    if (!session || !session.interactionHistory) return undefined;
+    return session.interactionHistory.find(r => r.botFeishuMsgIds.includes(msgId));
+  }
+
+  // Update an existing interaction (e.g. to update cardData)
+  updateInteraction(chatId: string, predicate: (r: InteractionRecord) => boolean, updater: (r: InteractionRecord) => void): void {
+      const session = this.data.get(chatId);
+      if (session && session.interactionHistory) {
+          const record = session.interactionHistory.find(predicate);
+          if (record) {
+              updater(record);
+              this.save();
+          }
+      }
+  }
+
+  // Deprecated: Use addInteraction instead
   updateLastInteraction(chatId: string, userMsgId: string, aiMsgId?: string): void {
     const session = this.data.get(chatId);
     if (session) {

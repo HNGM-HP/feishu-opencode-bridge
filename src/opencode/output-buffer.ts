@@ -8,9 +8,11 @@ interface BufferedOutput {
   replyMessageId: string | null;
   sessionId: string;
   content: string[];
+  thinking: string[]; // Store thinking parts
   lastUpdate: number;
   timer: NodeJS.Timeout | null;
   status: 'running' | 'completed' | 'failed' | 'aborted';
+  isCard?: boolean; // Track if the message is a Card
 }
 
 class OutputBuffer {
@@ -34,9 +36,11 @@ class OutputBuffer {
         replyMessageId,
         sessionId,
         content: [],
+        thinking: [],
         lastUpdate: Date.now(),
         timer: null,
         status: 'running',
+        isCard: false,
       };
       this.buffers.set(key, buffer);
     }
@@ -53,8 +57,27 @@ class OutputBuffer {
     this.scheduleUpdate(key);
   }
 
-  // 设置消息ID（用于更新消息）
+  // Append thinking content
+  appendThinking(key: string, text: string): void {
+    const buffer = this.buffers.get(key);
+    if (!buffer) return;
+
+    buffer.thinking.push(text);
+    this.scheduleUpdate(key);
+  }
+
+
+  // Set isCard flag
+  setIsCard(key: string, isCard: boolean): void {
+      const buffer = this.buffers.get(key);
+      if (buffer) {
+          buffer.isCard = isCard;
+      }
+  }
+
+  // Set message ID
   setMessageId(key: string, messageId: string): void {
+
     const buffer = this.buffers.get(key);
     if (buffer) {
       buffer.messageId = messageId;
@@ -101,14 +124,19 @@ class OutputBuffer {
   }
 
   // 获取并清空内容
-  getAndClear(key: string): string {
+  getAndClear(key: string): { text: string; thinking: string } {
     const buffer = this.buffers.get(key);
-    if (!buffer) return '';
+    if (!buffer) return { text: '', thinking: '' };
 
-    const content = buffer.content.join('\n');
+    const text = buffer.content.join('');
     buffer.content = [];
-    return content;
+    
+    const thinking = buffer.thinking.join('');
+    buffer.thinking = [];
+    
+    return { text, thinking };
   }
+
 
   // 清理缓冲区
   clear(key: string): void {
