@@ -376,31 +376,14 @@ export function buildQuestionCardV2(data: QuestionCardData): object {
   }
 
   const hint = question.multiple
-    ? '多选请用逗号或空格分隔（如 A,C 或 1 3），或直接回复自定义内容，也可输入跳过'
-    : '回复 A 或 1，或直接回复自定义内容（不匹配选项将按自定义处理），也可输入跳过';
+    ? '多选请用逗号或空格分隔（如 A,C 或 1 3），或直接回复自定义内容'
+    : '回复 A 或 1，或直接回复自定义内容（不匹配选项将按自定义处理）';
   elements.push({
     tag: 'note',
     elements: [
       {
         tag: 'plain_text',
         content: hint,
-      },
-    ],
-  });
-
-  elements.push({
-    tag: 'action',
-    actions: [
-      {
-        tag: 'button',
-        text: { tag: 'plain_text', content: '跳过' },
-        type: 'default',
-        value: {
-          action: 'question_skip',
-          requestId: data.requestId,
-          conversationKey: data.conversationKey,
-          questionIndex: safeIndex,
-        },
       },
     ],
   });

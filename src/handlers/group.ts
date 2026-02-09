@@ -248,7 +248,7 @@ export class GroupHandler {
       if (buffer?.messageId) {
         // 如果已经有流式消息，更新它为最终结果
         await feishuClient.updateMessage(buffer.messageId, finalOutput);
-        chatSessionStore.updateLastInteraction(chatId, messageId, buffer.messageId);
+        chatSessionStore.pushInteraction(chatId, messageId, buffer.messageId);
       } else {
         // 否则发送新消息
         let replyId = await feishuClient.reply(messageId, finalOutput);
@@ -256,7 +256,7 @@ export class GroupHandler {
           replyId = await feishuClient.sendText(chatId, finalOutput);
         }
         if (replyId) {
-          chatSessionStore.updateLastInteraction(chatId, messageId, replyId);
+          chatSessionStore.pushInteraction(chatId, messageId, replyId);
         }
       }
 

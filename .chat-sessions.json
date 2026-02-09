@@ -24,16 +24,9 @@
     "creatorId": "ou_6e10b138c8a83ea412b16f880990b808",
     "createdAt": 1770618110417,
     "title": "飞书群聊: OpenCode会话-9446",
-    "lastFeishuUserMsgId": "",
-    "lastFeishuAiMsgId": "om_x100b57ad4dbc24b0c11cd0c28c6426d",
-    "preferredModel": "custom-gemini:claude-opus-4-5-thinking",
+    "lastFeishuUserMsgId": "om_x100b57ad97d4b484b49a091a6cb353a",
+    "lastFeishuAiMsgId": "om_x100b57ad944b70acc323b92c58de588",
+    "preferredModel": "custom-gemini:gemini-3-flash",
     "preferredAgent": "build"
-  },
-  "oc_48d0406487e104a913a9d43bea663b10": {
-    "chatId": "oc_48d0406487e104a913a9d43bea663b10",
-    "sessionId": "ses_3beee314affeK6o6UC7bPrZQ3T",
-    "creatorId": "ou_6e10b138c8a83ea412b16f880990b808",
-    "createdAt": 1770618223025,
-    "title": "飞书群聊: OpenCode会话-2142"
   }
 }
