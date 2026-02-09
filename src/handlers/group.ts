@@ -24,7 +24,70 @@ const ALLOWED_ATTACHMENT_EXTENSIONS = new Set([
   '.pjp', '.pjpeg', '.jfif', '.jpe'
 ]);
 
+// Helper functions for file type detection
+function getHeaderValue(headers: Record<string, unknown>, name: string): string {
+  const target = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === target) {
+      if (typeof value === 'string') return value;
+      if (Array.isArray(value) && typeof value[0] === 'string') return value[0];
+    }
+  }
+  return '';
+}
+
+function extractExtension(name: string): string {
+  return path.extname(name).toLowerCase();
+}
+
+function normalizeExtension(ext: string): string {
+  if (!ext) return '';
+  const withDot = ext.startsWith('.') ? ext.toLowerCase() : `.${ext.toLowerCase()}`;
+  if (withDot === '.jpeg' || withDot === '.pjpeg' || withDot === '.pjp' || withDot === '.jpe' || withDot === '.jfif') {
+    return '.jpg';
+  }
+  return withDot;
+}
+
+function extensionFromContentType(contentType: string): string {
+  const type = contentType.split(';')[0]?.trim().toLowerCase();
+  if (type === 'image/png') return '.png';
+  if (type === 'image/jpeg') return '.jpg';
+  if (type === 'image/gif') return '.gif';
+  if (type === 'image/webp') return '.webp';
+  if (type === 'application/pdf') return '.pdf';
+  return '';
+}
+
+function mimeFromExtension(ext: string): string {
+  switch (ext) {
+    case '.png':
+      return 'image/png';
+    case '.jpg':
+    case '.jpeg':
+    case '.pjpeg':
+    case '.pjp':
+    case '.jfif':
+    case '.jpe':
+      return 'image/jpeg';
+    case '.gif':
+      return 'image/gif';
+    case '.webp':
+      return 'image/webp';
+    case '.pdf':
+      return 'application/pdf';
+    default:
+      return 'application/octet-stream';
+  }
+}
+
+function sanitizeFilename(name: string): string {
+  const cleaned = name.replace(/[\\/:*?"<>|]+/g, '_').trim();
+  return cleaned || 'attachment';
+}
+
 type OpencodeFilePartInput = { type: 'file'; mime: string; url: string; filename?: string };
+
 type OpencodePartInput = { type: 'text'; text: string } | OpencodeFilePartInput;
 
 export class GroupHandler {
@@ -435,24 +498,34 @@ export class GroupHandler {
             continue;
         }
 
+        const contentType = getHeaderValue(resource.headers || {}, 'content-type');
+        const extFromName = attachment.fileName ? extractExtension(attachment.fileName) : '';
+        const extFromType = attachment.fileType ? normalizeExtension(attachment.fileType) : '';
+        const extFromContent = contentType ? extensionFromContentType(contentType) : '';
+        let ext = normalizeExtension(extFromName || extFromType || extFromContent);
+        
+        if (!ext && attachment.type === 'image') {
+            ext = '.jpg';
+        }
+
         const fileId = randomUUID();
-        // 简单处理扩展名，更严谨的逻辑在 index.ts 里有，这里简化一下
-        const ext = path.extname(attachment.fileName || '') || '.bin';
         const filePath = path.join(ATTACHMENT_BASE_DIR, `${fileId}${ext}`);
+        const rawName = attachment.fileName || `attachment${ext}`;
+        const safeName = sanitizeFilename(rawName.endsWith(ext) ? rawName : `${rawName}${ext}`);
 
         try {
             await resource.writeFile(filePath);
             const buffer = await fs.readFile(filePath);
             const base64 = buffer.toString('base64');
-            // 简单的 mime 推断
-            const mime = 'application/octet-stream'; 
+            
+            const mime = contentType ? contentType.split(';')[0].trim() : mimeFromExtension(ext);
             const dataUrl = `data:${mime};base64,${base64}`;
             
             parts.push({
                 type: 'file',
                 mime,
                 url: dataUrl,
-                filename: attachment.fileName || `file${ext}`
+                filename: safeName
             });
         } catch (e) {
             warnings.push(`附件处理失败: ${attachment.fileName}`);
@@ -462,6 +535,7 @@ export class GroupHandler {
     }
 
     return { parts, warnings };
+
   }
 }
 
