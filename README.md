@@ -83,6 +83,14 @@ OpenCode 可能会延迟返回响应（如需要额外处理），系统会：
 - 定期合并更新（默认 3 秒一次）
 - 避免短时间内大量消息轰炸
 
+### 优雅退出
+
+服务支持优雅退出，确保资源正确清理：
+- 捕获 SIGINT、SIGTERM、SIGUSR2 信号
+- 依次停止飞书连接、OpenCode 连接
+- 清理所有缓冲区、定时器和挂起的请求
+- 确保数据持久化完成后退出
+
 ## 前置要求
 
 ### 运行环境
@@ -260,21 +268,26 @@ npm run dev
 
 ```
 src/
-├── index.ts              # 入口文件，主流程控制
+├── index.ts              # 入口文件，主流程控制与优雅退出
 ├── config.ts             # 配置管理与验证
+├── commands/
+│   └── parser.ts         # 命令解析器
 ├── feishu/
-│   ├── client.ts         # 飞书 SDK 封装
+│   ├── client.ts         # 飞书 SDK 封装与长连接管理
 │   ├── cards.ts          # 消息卡片模板（权限、问题、流式输出、控制面板）
+│   ├── streamer.ts       # 流式卡片更新器
 │   └── attachment.ts     # 附件处理（Data URL 转换）
 ├── opencode/
-│   ├── client.ts         # OpenCode SDK 封装
+│   ├── client.ts         # OpenCode SDK 封装与 SSE 事件监听
 │   ├── output-buffer.ts  # 智能输出缓冲
 │   ├── delayed-handler.ts # 延迟响应处理器
 │   └── question-handler.ts # AI 提问处理器
 ├── handlers/
 │   ├── command.ts        # 统一命令处理器 (/panel, /undo 等)
-│   ├── card-action.ts    # 统一卡片交互处理器
-│   └── lifecycle.ts      # 生命周期处理器 (群组、权限)
+│   ├── card-action.ts    # 卡片交互处理器（模型/Agent 选择）
+│   ├── group.ts          # 群聊消息处理器
+│   ├── p2p.ts            # 私聊消息处理器
+│   └── lifecycle.ts      # 生命周期处理器 (群组、权限、退出清理)
 ├── permissions/
 │   └── handler.ts        # 工具白名单与权限处理
 └── store/

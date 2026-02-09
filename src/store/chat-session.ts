@@ -12,12 +12,6 @@ interface ChatSessionData {
   lastFeishuAiMsgId?: string;
   preferredModel?: string; // e.g., "openai:gpt-4"
   preferredAgent?: string;
-  interactionHistory?: Array<{
-    userMsgId: string;
-    aiMsgId?: string;
-    cmdMsgId?: string; // optional: if triggered by a command
-    timestamp: number;
-  }>;
 }
 
 // 存储文件路径
@@ -100,7 +94,7 @@ class ChatSessionStore {
     }
   }
 
-  // 更新最近一次交互消息ID (Deprecated, use pushInteraction)
+  // 更新最近一次交互消息ID
   updateLastInteraction(chatId: string, userMsgId: string, aiMsgId?: string): void {
     const session = this.data.get(chatId);
     if (session) {
@@ -108,65 +102,8 @@ class ChatSessionStore {
       if (aiMsgId) {
         session.lastFeishuAiMsgId = aiMsgId;
       }
-      this.pushInteraction(chatId, userMsgId, aiMsgId); // Auto push to history for compatibility
       this.save();
     }
-  }
-
-  // Push new interaction to history
-  pushInteraction(chatId: string, userMsgId: string, aiMsgId?: string, cmdMsgId?: string): void {
-    const session = this.data.get(chatId);
-    if (session) {
-        if (!session.interactionHistory) {
-            session.interactionHistory = [];
-        }
-        session.interactionHistory.push({
-            userMsgId,
-            aiMsgId,
-            cmdMsgId,
-            timestamp: Date.now()
-        });
-        
-        // Update legacy fields for compatibility
-        session.lastFeishuUserMsgId = userMsgId;
-        if (aiMsgId) session.lastFeishuAiMsgId = aiMsgId;
-        
-        this.save();
-    }
-  }
-
-  // Pop the last interaction from history
-  popInteraction(chatId: string): { userMsgId: string; aiMsgId?: string; cmdMsgId?: string } | undefined {
-      const session = this.data.get(chatId);
-      if (session && session.interactionHistory && session.interactionHistory.length > 0) {
-          const last = session.interactionHistory.pop();
-          this.save();
-          
-          // Update legacy fields to the new "last" (if any)
-          const newLast = session.interactionHistory[session.interactionHistory.length - 1];
-          if (newLast) {
-              session.lastFeishuUserMsgId = newLast.userMsgId;
-              session.lastFeishuAiMsgId = newLast.aiMsgId;
-          } else {
-              session.lastFeishuUserMsgId = undefined;
-              session.lastFeishuAiMsgId = undefined;
-          }
-          
-          return last;
-      }
-      // Fallback to legacy fields if history is empty
-      if (session && (session.lastFeishuUserMsgId || session.lastFeishuAiMsgId)) {
-          const legacy = {
-              userMsgId: session.lastFeishuUserMsgId || '',
-              aiMsgId: session.lastFeishuAiMsgId
-          };
-          // Clear legacy
-          session.lastFeishuUserMsgId = undefined;
-          session.lastFeishuAiMsgId = undefined;
-          this.save();
-          return legacy;
-      }
-      return undefined;
   }
 
   // 移除绑定（通常在群解散时调用）

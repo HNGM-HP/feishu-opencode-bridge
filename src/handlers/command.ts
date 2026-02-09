@@ -406,9 +406,10 @@ export class CommandHandler {
     console.log(`[Undo] 尝试撤回会话 ${session.sessionId} 的最后一条消息`);
 
     try {
-      // 1. 获取会话消息历史 (检查是否可以撤回)
+      // 1. 获取会话消息历史
       const messages = await opencodeClient.getSessionMessages(session.sessionId);
       
+      // 2. 找到最后一条 User 消息
       // OpenCode SDK Message 类型: { role: 'user' | 'assistant' | ... }
       const reversed = [...messages].reverse();
       // @ts-ignore
@@ -419,52 +420,40 @@ export class CommandHandler {
         return;
       }
 
-      // 2. 调用 OpenCode Revert
+      // 3. 调用 Revert
       // @ts-ignore
       const success = await opencodeClient.revertMessage(session.sessionId, lastUserMsg.info.id);
 
       if (success) {
-        // 3. 从本地存储中弹出并删除飞书消息
-        const lastInteraction = chatSessionStore.popInteraction(chatId);
-        
-        if (lastInteraction) {
-            // 删除 AI 回复
-            if (lastInteraction.aiMsgId) {
-                try {
-                    await feishuClient.deleteMessage(lastInteraction.aiMsgId);
-                } catch(e) {
-                    console.warn(`[Undo] 删除AI消息失败: ${e}`);
-                }
-            }
-            // 删除用户消息
-            if (lastInteraction.userMsgId) {
-                try {
-                    await feishuClient.deleteMessage(lastInteraction.userMsgId);
-                } catch(e) {
-                    console.warn(`[Undo] 删除用户消息失败: ${e}`);
-                }
-            }
-            // 删除触发命令的消息 (如果有)
-            if (lastInteraction.cmdMsgId) {
-                try {
-                    await feishuClient.deleteMessage(lastInteraction.cmdMsgId);
-                } catch(e) {
-                    // ignore
-                }
-            }
-        } else {
-            console.warn('[Undo] 本地未找到对应的飞书消息记录，仅撤回了 AI 状态');
+        // 4. 尝试撤回飞书上的 AI 回复
+        if (session.lastFeishuAiMsgId) {
+          try {
+              await feishuClient.deleteMessage(session.lastFeishuAiMsgId);
+          } catch(e) {
+              // ignore
+          }
         }
         
-        // 删除本次 /undo 命令本身
+        // 5. 尝试撤回飞书上的 用户 消息 (如果存在且机器人有权限)
+        if (session.lastFeishuUserMsgId) {
+           try {
+              await feishuClient.deleteMessage(session.lastFeishuUserMsgId);
+           } catch(e) {
+              // 可能是权限不足或消息已被撤回
+              console.warn(`[Undo] 撤回用户消息失败: ${e}`);
+           }
+        }
+
+        // 清除记录
+        // @ts-ignore
+        chatSessionStore.updateLastInteraction(chatId, '', ''); 
+        
         if (replyMessageId) {
-             try {
-                 await feishuClient.deleteMessage(replyMessageId);
-             } catch(e) {
-                 // ignore
-             }
+             // 如果是通过 /undo 触发，提示成功
+             // 如果用户消息被撤回了，这个提示可能看起来有点奇怪（悬空），但还是提示一下比较好
+             // 或者短暂提示后撤回? 暂时保持原样
+             await feishuClient.reply(replyMessageId, '✅ 已撤回上一轮对话');
         }
-        
       } else {
         if (replyMessageId) await feishuClient.reply(replyMessageId, '❌ 撤回失败: OpenCode 拒绝');
       }
