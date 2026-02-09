@@ -2,6 +2,7 @@
 // 处理 /panel 和 question 工具的卡片交互
 
 import { opencodeClient } from '../opencode/client.js';
+import { feishuClient } from '../feishu/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { commandHandler } from './command.js';
@@ -138,12 +139,14 @@ export class CardActionHandler {
   }
 
   private async handleQuestionSkip(value: any, event: FeishuCardActionEvent): Promise<object> {
-    const { requestId, conversationKey, questionIndex } = value;
+    const { requestId, conversationKey } = value;
+    // 确保 questionIndex 是数字类型，防止字符串拼接导致逻辑错误
+    const questionIndex = typeof value.questionIndex === 'string' ? parseInt(value.questionIndex, 10) : value.questionIndex;
     const messageId = event.messageId;
 
     console.log(`[CardAction] Question skip: requestId=${requestId}, currentIndex=${questionIndex}`);
 
-    if (!requestId || questionIndex === undefined) {
+    if (!requestId || questionIndex === undefined || isNaN(questionIndex)) {
       return { toast: { type: 'error', content: '参数错误' } };
     }
 
@@ -165,26 +168,43 @@ export class CardActionHandler {
 
     if (nextIndex < totalQuestions) {
       // 还有更多问题，更新卡片到下一个问题
-      questionHandler.setCurrentQuestionIndex(requestId, nextIndex);
-      questionHandler.setOptionPageIndex(requestId, nextIndex, 0);
+      const nextPending = questionHandler.get(requestId);
+      // Re-fetch pending to ensure latest state
+      if (!nextPending) return { toast: { type: 'error', content: '上下文已丢失' } };
 
-      console.log(`[CardAction] Building card for next question: ${nextIndex}`);
+      // Ensure index is updated
+      nextPending.currentQuestionIndex = nextIndex;
+      questionHandler.setOptionPageIndex(requestId, nextIndex, 0);
 
       const { buildQuestionCardV2 } = await import('../feishu/cards.js');
       const card = buildQuestionCardV2({
         requestId,
-        sessionId: pending.request.sessionID,
-        questions: pending.request.questions,
+        sessionId: nextPending.request.sessionID,
+        questions: nextPending.request.questions,
         conversationKey,
-        chatId: pending.chatId,
+        chatId: nextPending.chatId,
         draftAnswers: questionHandler.getDraftAnswers(requestId) || undefined,
         draftCustomAnswers: questionHandler.getDraftCustomAnswers(requestId) || undefined,
         currentQuestionIndex: nextIndex,
-        optionPageIndexes: pending.optionPageIndexes
+        optionPageIndexes: nextPending.optionPageIndexes
       });
 
-      console.log(`[CardAction] Returning card for question ${nextIndex}`);
-      return { card };
+      // 主动更新卡片
+      try {
+        if (messageId) {
+           await feishuClient.updateCard(messageId, card);
+        }
+      } catch(e) {
+         console.warn(`[CardAction] Failed to update card actively: ${e}`);
+      }
+      
+      return { 
+          toast: {
+              type: 'success',
+              content: '已跳过',
+              i18n_content: { zh_cn: '已跳过', en_us: 'Skipped' }
+          }
+      };
     } else {
       // 所有问题回答完毕，提交答案
       console.log(`[CardAction] All questions skipped, submitting answers`);
@@ -202,7 +222,22 @@ export class CardActionHandler {
 
       // 更新卡片为已回答状态
       const card = buildQuestionAnsweredCard(draftAnswers || [[]]);
-      return { card };
+      
+      try {
+        if (messageId) {
+           await feishuClient.updateCard(messageId, card);
+        }
+      } catch(e) {
+         console.warn(`[CardAction] Failed to update card actively: ${e}`);
+      }
+
+      return { 
+          toast: {
+              type: 'success',
+              content: '已完成',
+              i18n_content: { zh_cn: '已完成', en_us: 'Completed' }
+          }
+      };
     }
   }
 }

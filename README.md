@@ -16,12 +16,14 @@
 - ✅ **消息收发**: 通过飞书发送指令，OpenCode 执行后返回结果
 - ✅ **权限确认**: 支持卡片按钮、文本回复、预设白名单三种方式
 - ✅ **中断执行**: 发送 `/stop` 立即中断当前任务
-- ✅ **切换模型**: 发送 `/model <名称>` 动态切换模型
+- ✅ **智能撤回**: 发送 `/undo` 撤回 OpenCode 操作状态并同步撤回飞书消息
+- ✅ **控制面板**: 发送 `/panel` 唤起交互式面板，可视化切换模型/Agent及控制执行
+- ✅ **切换模型**: 发送 `/model <名称>` 动态切换模型，支持厂商前缀显示
 - ✅ **切换 Agent**: 发送 `/agent <名称>` 动态切换 Agent
 - ✅ **会话管理**: 支持新建、切换、列出对话
 - ✅ **输出缓冲**: 智能输出缓冲，避免重复发送
 - ✅ **延迟响应处理**: 自动处理 OpenCode 的延迟响应
-- ✅ **AI 提问**: 支持 AI 向用户提问的场景
+- ✅ **AI 提问**: 支持 AI 向用户提问的场景，支持跳过及多题连续交互
 - ✅ **附件支持**: 通过 Data URL 方式传输附件，无需本地文件服务
 - ✅ **流式输出**: 实时显示 AI 执行过程（思考、工具状态）
 - ✅ **用户白名单**: 限制只有指定用户可以使用
@@ -64,8 +66,9 @@ OpenCode 可能会延迟返回响应（如需要额外处理），系统会：
 当 AI 需要用户输入时：
 1. 发送问题卡片到飞书
 2. 用户可通过卡片选项或直接回复文本回答
-3. 回答后自动提交给 OpenCode
-4. 超时自动过期处理
+3. 支持"跳过"按钮，可连续跳过多道题目
+4. 回答后自动提交给 OpenCode
+5. 超时自动过期处理
 
 ### 附件处理
 
@@ -230,8 +233,9 @@ npm run dev
 
 | 命令 | 功能 |
 |------|------|
+| `/panel` | **打开控制面板 (推荐)**，可视化切换模型/Agent、停止、撤回 |
 | `/stop` | 中断当前执行 |
-| `/undo` | 撤回上一步（OpenCode + 飞书） |
+| `/undo` | **智能撤回**，回滚 OpenCode 状态并删除最近的飞书消息 |
 | `/abort` | 取消当前操作 |
 | `/model <名称>` | 切换模型（如 `/model claude-4`） |
 | `/model` | 查看当前模型 |
@@ -243,7 +247,6 @@ npm run dev
 | `/session <id>` | 切换到指定对话 |
 | `/sessions` | 列出所有对话 |
 | `/clear` | 清空当前对话 |
-| `/panel` | 打开控制面板 |
 | `/status` | 查看当前状态 |
 | `/help` | 显示帮助 |
 
@@ -261,19 +264,22 @@ src/
 ├── config.ts             # 配置管理与验证
 ├── feishu/
 │   ├── client.ts         # 飞书 SDK 封装
-│   ├── cards.ts          # 消息卡片模板（权限、问题、流式输出）
-│   └── attachment.ts      # 附件处理（Data URL 转换）
+│   ├── cards.ts          # 消息卡片模板（权限、问题、流式输出、控制面板）
+│   └── attachment.ts     # 附件处理（Data URL 转换）
 ├── opencode/
 │   ├── client.ts         # OpenCode SDK 封装
 │   ├── output-buffer.ts  # 智能输出缓冲
 │   ├── delayed-handler.ts # 延迟响应处理器
 │   └── question-handler.ts # AI 提问处理器
-├── commands/
-│   └── parser.ts         # 命令解析器（17 种命令类型）
+├── handlers/
+│   ├── command.ts        # 统一命令处理器 (/panel, /undo 等)
+│   ├── card-action.ts    # 统一卡片交互处理器
+│   └── lifecycle.ts      # 生命周期处理器 (群组、权限)
 ├── permissions/
 │   └── handler.ts        # 工具白名单与权限处理
 └── store/
     ├── user-session.ts   # 用户会话持久化存储
+    ├── chat-session.ts   # 聊天会话状态存储
     ├── session-group.ts  # 会话群映射（私聊→群）
     └── session-directory.ts # 会话目录映射
 ```
@@ -321,6 +327,7 @@ npm start
 - `[延迟响应]` - 延迟响应处理
 - `[会话群]` - 会话群管理
 - `[SSE]` - Server-Sent Events 连接
+- `[CardAction]` - 卡片交互事件
 
 ## License
 
