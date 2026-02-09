@@ -24,8 +24,10 @@
     "creatorId": "ou_6e10b138c8a83ea412b16f880990b808",
     "createdAt": 1770618110417,
     "title": "飞书群聊: OpenCode会话-9446",
-    "lastFeishuUserMsgId": "om_x100b57ac595954a4b36c8f3f51003a2",
-    "lastFeishuAiMsgId": "om_x100b57ac57e9b4bcc3d3e58cf0f0216"
+    "lastFeishuUserMsgId": "",
+    "lastFeishuAiMsgId": "om_x100b57ad4dbc24b0c11cd0c28c6426d",
+    "preferredModel": "custom-gemini:claude-opus-4-5-thinking",
+    "preferredAgent": "build"
   },
   "oc_48d0406487e104a913a9d43bea663b10": {
     "chatId": "oc_48d0406487e104a913a9d43bea663b10",

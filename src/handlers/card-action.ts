@@ -1,13 +1,12 @@
 // 飞书卡片动作处理器
 // 处理 /panel 和 question 工具的卡片交互
 
-import { feishuClient } from '../feishu/client.js';
 import { opencodeClient } from '../opencode/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { commandHandler } from './command.js';
 import { questionHandler } from '../opencode/question-handler.js';
-import { buildQuestionAnsweredCard, buildControlCard } from '../feishu/cards.js';
+import { buildQuestionAnsweredCard } from '../feishu/cards.js';
 import type { FeishuCardActionEvent } from '../feishu/client.js';
 
 export class CardActionHandler {
@@ -42,10 +41,23 @@ export class CardActionHandler {
   }
 
   private async handleStop(value: any): Promise<object> {
-    const { conversationKey } = value;
+    const { conversationKey, chatId } = value;
     if (!conversationKey) return { msg: 'ok' };
 
+    // 1. 中断本地输出缓冲
     outputBuffer.abort(conversationKey);
+
+    // 2. 获取会话ID并中断OpenCode会话
+    const session = chatId ? chatSessionStore.getSession(chatId) : null;
+    if (session?.sessionId) {
+      try {
+        await opencodeClient.abortSession(session.sessionId);
+        console.log(`[CardAction] 已中断会话: ${session.sessionId}`);
+      } catch (e) {
+        console.error('[CardAction] 中断会话失败:', e);
+      }
+    }
+
     return {
       toast: {
         type: 'success',
@@ -90,57 +102,16 @@ export class CardActionHandler {
 
     // 更新配置
     chatSessionStore.updateConfig(chatId, { preferredModel: selectedOption });
+    console.log(`[CardAction] 已切换模型: ${selectedOption}`);
 
-    // 更新卡片显示当前模型
-    const session = chatSessionStore.getSession(chatId);
-    const currentModel = selectedOption;
-    const currentAgent = session?.preferredAgent || '默认';
-
-    // 获取模型和Agent列表以刷新卡片
-    const { providers } = await opencodeClient.getProviders();
-    const agents = await opencodeClient.getAgents();
-
-    const modelOptions: { label: string; value: string }[] = [];
-    const safeProviders = Array.isArray(providers) ? providers : [];
-
-    for (const p of safeProviders) {
-      const modelsRaw = (p as any).models;
-      const models = Array.isArray(modelsRaw)
-        ? modelsRaw
-        : (modelsRaw && typeof modelsRaw === 'object' ? Object.values(modelsRaw) : []);
-
-      for (const m of models) {
-        const modelId = (m as any).id || (m as any).modelID || (m as any).name;
-        const modelName = (m as any).name || modelId;
-        const providerId = (p as any).id || (p as any).providerID;
-
-        if (modelId && providerId) {
-          modelOptions.push({ label: modelName, value: `${providerId}:${modelId}` });
-        }
-      }
-    }
-
-    const agentOptions = Array.isArray(agents)
-      ? agents.map(a => ({ label: a.name, value: a.name }))
-      : [];
-
-    const card = buildControlCard({
-      conversationKey: `chat:${chatId}`,
-      chatId,
-      chatType: 'group',
-      currentModel,
-      currentAgent,
-      models: modelOptions.slice(0, 50),
-      agents: agentOptions.length > 0 ? agentOptions : [{ label: '无', value: 'none' }]
-    });
-
+    // 只返回toast，不更新卡片
+    // 卡片更新可能失败（错误码200672），所以只返回toast确保用户知道操作成功
     return {
       toast: {
         type: 'success',
         content: `已切换模型: ${selectedOption}`,
         i18n_content: { zh_cn: `已切换模型: ${selectedOption}`, en_us: `Model changed: ${selectedOption}` }
-      },
-      card
+      }
     };
   }
 
@@ -154,56 +125,15 @@ export class CardActionHandler {
 
     const agentName = selectedOption === 'none' ? undefined : selectedOption;
     chatSessionStore.updateConfig(chatId, { preferredAgent: agentName });
+    console.log(`[CardAction] 已切换Agent: ${agentName || '默认'}`);
 
-    // 更新卡片
-    const session = chatSessionStore.getSession(chatId);
-    const currentModel = session?.preferredModel || '默认';
-    const currentAgent = agentName || '默认';
-
-    const { providers } = await opencodeClient.getProviders();
-    const agents = await opencodeClient.getAgents();
-
-    const modelOptions: { label: string; value: string }[] = [];
-    const safeProviders = Array.isArray(providers) ? providers : [];
-
-    for (const p of safeProviders) {
-      const modelsRaw = (p as any).models;
-      const models = Array.isArray(modelsRaw)
-        ? modelsRaw
-        : (modelsRaw && typeof modelsRaw === 'object' ? Object.values(modelsRaw) : []);
-
-      for (const m of models) {
-        const modelId = (m as any).id || (m as any).modelID || (m as any).name;
-        const modelName = (m as any).name || modelId;
-        const providerId = (p as any).id || (p as any).providerID;
-
-        if (modelId && providerId) {
-          modelOptions.push({ label: modelName, value: `${providerId}:${modelId}` });
-        }
-      }
-    }
-
-    const agentOptions = Array.isArray(agents)
-      ? agents.map(a => ({ label: a.name, value: a.name }))
-      : [];
-
-    const card = buildControlCard({
-      conversationKey: `chat:${chatId}`,
-      chatId,
-      chatType: 'group',
-      currentModel,
-      currentAgent,
-      models: modelOptions.slice(0, 50),
-      agents: agentOptions.length > 0 ? agentOptions : [{ label: '无', value: 'none' }]
-    });
-
+    // 只返回toast，不更新卡片
     return {
       toast: {
         type: 'success',
         content: agentName ? `已切换Agent: ${agentName}` : '已关闭Agent',
         i18n_content: { zh_cn: agentName ? `已切换Agent: ${agentName}` : '已关闭Agent', en_us: agentName ? `Agent changed: ${agentName}` : 'Agent disabled' }
-      },
-      card
+      }
     };
   }
 
@@ -211,30 +141,34 @@ export class CardActionHandler {
     const { requestId, conversationKey, questionIndex } = value;
     const messageId = event.messageId;
 
+    console.log(`[CardAction] Question skip: requestId=${requestId}, currentIndex=${questionIndex}`);
+
     if (!requestId || questionIndex === undefined) {
       return { toast: { type: 'error', content: '参数错误' } };
     }
 
     const pending = questionHandler.get(requestId);
     if (!pending) {
+      console.log(`[CardAction] Question skip failed: pending not found for ${requestId}`);
       return { toast: { type: 'error', content: '问题已过期或不存在' } };
     }
 
-    // 设置当前问题索引
-    questionHandler.setCurrentQuestionIndex(requestId, questionIndex);
+    const totalQuestions = pending.request.questions.length;
+    console.log(`[CardAction] Question skip: total=${totalQuestions}, current=${questionIndex}`);
 
     // 设置为跳过（空答案）
     questionHandler.setDraftAnswer(requestId, questionIndex, ['']);
     questionHandler.setDraftCustomAnswer(requestId, questionIndex, '');
 
-    // 检查是否还有更多问题
-    const totalQuestions = pending.request.questions.length;
+    // 计算下一个问题索引
     const nextIndex = questionIndex + 1;
 
     if (nextIndex < totalQuestions) {
       // 还有更多问题，更新卡片到下一个问题
       questionHandler.setCurrentQuestionIndex(requestId, nextIndex);
       questionHandler.setOptionPageIndex(requestId, nextIndex, 0);
+
+      console.log(`[CardAction] Building card for next question: ${nextIndex}`);
 
       const { buildQuestionCardV2 } = await import('../feishu/cards.js');
       const card = buildQuestionCardV2({
@@ -249,13 +183,21 @@ export class CardActionHandler {
         optionPageIndexes: pending.optionPageIndexes
       });
 
+      console.log(`[CardAction] Returning card for question ${nextIndex}`);
       return { card };
     } else {
       // 所有问题回答完毕，提交答案
+      console.log(`[CardAction] All questions skipped, submitting answers`);
       const draftAnswers = questionHandler.getDraftAnswers(requestId);
       if (draftAnswers) {
-        await opencodeClient.replyQuestion(requestId, draftAnswers);
-        questionHandler.remove(requestId);
+        const success = await opencodeClient.replyQuestion(requestId, draftAnswers);
+        if (success) {
+          questionHandler.remove(requestId);
+          console.log(`[CardAction] Answers submitted successfully`);
+        } else {
+          console.error(`[CardAction] Failed to submit answers`);
+          return { toast: { type: 'error', content: '提交答案失败' } };
+        }
       }
 
       // 更新卡片为已回答状态
