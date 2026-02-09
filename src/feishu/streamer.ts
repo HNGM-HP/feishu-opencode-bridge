@@ -103,4 +103,12 @@ export class CardStreamer {
       status: this.state.status,
     });
   }
+
+  // 清理资源
+  close(): void {
+    if (this.pendingUpdate) {
+      clearTimeout(this.pendingUpdate);
+      this.pendingUpdate = null;
+    }
+  }
 }

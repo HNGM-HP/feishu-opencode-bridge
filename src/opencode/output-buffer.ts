@@ -141,6 +141,17 @@ class OutputBuffer {
       this.clear(key);
     }
   }
+
+  // 清理所有缓冲区和定时器
+  clearAll(): void {
+    for (const buffer of this.buffers.values()) {
+      if (buffer.timer) {
+        clearTimeout(buffer.timer);
+        buffer.timer = null;
+      }
+    }
+    this.buffers.clear();
+  }
 }
 
 // 单例导出

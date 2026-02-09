@@ -1,6 +1,8 @@
 import { feishuClient } from './feishu/client.js';
 import { opencodeClient } from './opencode/client.js';
 import { outputBuffer } from './opencode/output-buffer.js';
+import { delayedResponseHandler } from './opencode/delayed-handler.js';
+import { questionHandler } from './opencode/question-handler.js';
 import { chatSessionStore } from './store/chat-session.js';
 import { p2pHandler } from './handlers/p2p.js';
 import { groupHandler } from './handlers/group.js';
@@ -248,11 +250,20 @@ async function main() {
       console.error('断开 OpenCode 失败:', e);
     }
 
-    // 清理资源
+    // 清理所有缓冲区和定时器
+    try {
+      outputBuffer.clearAll();
+      delayedResponseHandler.cleanupExpired(0);
+      questionHandler.cleanupExpired(0);
+    } catch (e) {
+      console.error('清理资源失败:', e);
+    }
+
+    // 延迟退出以确保所有清理完成
     setTimeout(() => {
       console.log('✅ 服务已安全关闭');
       process.exit(0);
-    }, 1000);
+    }, 500);
   };
 
   process.on('SIGINT', () => gracefulShutdown('SIGINT'));

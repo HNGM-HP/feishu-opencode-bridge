@@ -6,8 +6,6 @@ import { feishuClient } from '../feishu/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { commandHandler } from './command.js';
-import { questionHandler } from '../opencode/question-handler.js';
-import { buildQuestionAnsweredCard } from '../feishu/cards.js';
 import type { FeishuCardActionEvent } from '../feishu/client.js';
 
 export class CardActionHandler {
