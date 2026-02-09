@@ -6,7 +6,7 @@ import { p2pHandler } from './handlers/p2p.js';
 import { groupHandler } from './handlers/group.js';
 import { lifecycleHandler } from './handlers/lifecycle.js';
 import { commandHandler } from './handlers/command.js';
-import { cardHandler } from './handlers/card.js';
+import { legacyCardHandler } from './handlers/legacy-card.js';
 import { validateConfig } from './config.js';
 
 async function main() {
@@ -85,7 +85,7 @@ async function main() {
   // 5. 监听飞书卡片动作
   feishuClient.setCardActionHandler(async (event) => {
     try {
-      const response = await cardHandler.handle(event);
+      const response = await legacyCardHandler.handle(event);
       return response as { msg: string } | object | undefined;
     } catch (error) {
       console.error('[Index] 卡片动作处理异常:', error);
