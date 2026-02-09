@@ -3,6 +3,7 @@ import { opencodeClient } from './opencode/client.js';
 import { outputBuffer } from './opencode/output-buffer.js';
 import { delayedResponseHandler } from './opencode/delayed-handler.js';
 import { questionHandler } from './opencode/question-handler.js';
+import { permissionHandler } from './permissions/handler.js';
 import { chatSessionStore } from './store/chat-session.js';
 import { p2pHandler } from './handlers/p2p.js';
 import { groupHandler } from './handlers/group.js';
@@ -155,10 +156,19 @@ async function main() {
   // 6. 监听 OpenCode 事件
   // 监听权限请求
   opencodeClient.on('permissionRequest', async (event: any) => {
-      // 找到对应的 chatId
+      console.log(`[权限] 收到请求: ${event.tool}, ID: ${event.permissionId}, Session: ${event.sessionId}`);
+
+      // 1. Check Whitelist
+      if (permissionHandler.isToolWhitelisted(event.tool)) {
+          console.log(`[权限] 工具 ${event.tool} 在白名单中，自动允许`);
+          await opencodeClient.respondToPermission(event.sessionId, event.permissionId, true);
+          return;
+      }
+
+      // 2. Find Chat ID
       const chatId = chatSessionStore.getChatId(event.sessionId);
       if (chatId) {
-          console.log(`[权限] 收到权限请求: ${event.tool} (Session: ${event.sessionId}) -> Chat: ${chatId}`);
+          console.log(`[权限] 发送确认卡片 -> Chat: ${chatId}`);
           
           const { buildPermissionCard } = await import('./feishu/cards.js');
           const card = buildPermissionCard({
@@ -169,6 +179,8 @@ async function main() {
               permissionId: event.permissionId
           });
           await feishuClient.sendCard(chatId, card);
+      } else {
+          console.warn(`[权限] ⚠️ 未找到关联的群聊 (Session: ${event.sessionId})，无法发送确认卡片`);
       }
   });
   
