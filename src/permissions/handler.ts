@@ -18,11 +18,19 @@ class PermissionHandler {
   private pendingPermissions: Map<string, PendingPermission> = new Map();
 
   // 检查工具是否在白名单中
-  isToolWhitelisted(toolName: string): boolean {
+  isToolWhitelisted(toolName: any): boolean {
+    if (typeof toolName !== 'string') {
+        if (toolName && typeof toolName === 'object' && typeof toolName.name === 'string') {
+            toolName = toolName.name;
+        } else {
+            return false;
+        }
+    }
     return permissionConfig.toolWhitelist.some(
       t => t.toLowerCase() === toolName.toLowerCase()
     );
   }
+
 
   // 添加待处理的权限请求
   addPending(

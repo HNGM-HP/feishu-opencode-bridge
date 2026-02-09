@@ -97,19 +97,22 @@ class OpencodeClientWrapper extends EventEmitter {
     if ((event.type === 'permission.request' || event.type === 'permission.asked') && event.properties) {
       const props = event.properties as {
         sessionID?: string;
+        sessionId?: string;
         id?: string;
-        tool?: string;
-        permission?: string; // e.g. "external_directory"
+        tool?: any;
+        permission?: string;
         description?: string;
         risk?: string;
         metadata?: any;
       };
 
       const permissionEvent: PermissionRequestEvent = {
-        sessionId: props.sessionID || '',
+        sessionId: props.sessionID || props.sessionId || '',
         permissionId: props.id || '',
-        // If 'tool' is missing, fallback to 'permission' (e.g. "external_directory")
-        tool: props.tool || props.permission || 'unknown',
+        // Ensure tool/permission is a string
+        tool: (typeof props.tool === 'string' ? props.tool : 
+               (props.tool && typeof props.tool === 'object' && (props.tool as any).name) ? (props.tool as any).name :
+               (typeof props.permission === 'string' ? props.permission : 'unknown')),
         // If description is missing, try to construct one from metadata
         description: props.description || (props.metadata ? JSON.stringify(props.metadata) : ''),
         risk: props.risk,
