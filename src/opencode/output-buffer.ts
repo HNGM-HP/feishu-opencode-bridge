@@ -118,7 +118,7 @@ class OutputBuffer {
     buffer.lastUpdate = Date.now();
 
     // 调用回调
-    if (this.updateCallback && buffer.content.length > 0) {
+    if (this.updateCallback && (buffer.content.length > 0 || buffer.thinking.length > 0 || buffer.status !== 'running')) {
       await this.updateCallback(buffer);
     }
   }

@@ -6,6 +6,24 @@ import { parseCommand } from '../commands/parser.js';
 import { commandHandler } from './command.js';
 
 export class P2PHandler {
+  private async safeReply(
+    messageId: string | undefined,
+    chatId: string | undefined,
+    text: string
+  ): Promise<boolean> {
+    if (messageId) {
+      await feishuClient.reply(messageId, text);
+      return true;
+    }
+
+    if (chatId) {
+      await feishuClient.sendText(chatId, text);
+      return true;
+    }
+
+    return false;
+  }
+
   // 处理私聊消息
   async handleMessage(event: FeishuMessageEvent): Promise<void> {
     const { chatId, content, senderId, messageId } = event;
@@ -47,7 +65,7 @@ export class P2PHandler {
   }
 
   // 处理私聊中的卡片动作
-  async handleCardAction(event: FeishuCardActionEvent): Promise<void> {
+  async handleCardAction(event: FeishuCardActionEvent): Promise<object | void> {
     const { action, openId, chatId, messageId } = event;
     const actionTag = action.value?.action as string;
 
@@ -59,7 +77,16 @@ export class P2PHandler {
       const createResult = await feishuClient.createChat(chatName, [openId], '由 OpenCode 自动创建的会话群');
 
       if (!createResult.chatId) {
-        await feishuClient.reply(messageId!, '❌ 创建群聊失败，请重试');
+        const sent = await this.safeReply(messageId, chatId, '❌ 创建群聊失败，请重试');
+        if (!sent) {
+          return {
+            toast: {
+              type: 'error',
+              content: '创建群聊失败，请重试',
+              i18n_content: { zh_cn: '创建群聊失败，请重试', en_us: 'Failed to create chat' }
+            }
+          };
+        }
         return;
       }
 
@@ -86,7 +113,16 @@ export class P2PHandler {
         if (!added) {
           console.error(`[P2P] 无法拉取用户 ${openId} 进群，正在回滚（解散群）...`);
           await feishuClient.disbandChat(newChatId);
-          await feishuClient.reply(messageId!, '❌ 无法将您添加到群聊。请确保机器人具有"获取群组信息"和"更新群组信息"权限，且您在机器人的可见范围内。');
+          const sent = await this.safeReply(messageId, chatId, '❌ 无法将您添加到群聊。请确保机器人具有"获取群组信息"和"更新群组信息"权限，且您在机器人的可见范围内。');
+          if (!sent) {
+            return {
+              toast: {
+                type: 'error',
+                content: '无法将你添加到群聊',
+                i18n_content: { zh_cn: '无法将你添加到群聊', en_us: 'Failed to add you to chat' }
+              }
+            };
+          }
           return;
         }
 
@@ -95,7 +131,16 @@ export class P2PHandler {
         if (!members.includes(openId)) {
            console.error(`[P2P] 手动拉取后用户仍不在群中，回滚（解散群）...`);
            await feishuClient.disbandChat(newChatId);
-           await feishuClient.reply(messageId!, '❌ 创建群聊异常：无法确认成员状态，已自动清理无效群。');
+           const sent = await this.safeReply(messageId, chatId, '❌ 创建群聊异常：无法确认成员状态，已自动清理无效群。');
+           if (!sent) {
+             return {
+               toast: {
+                 type: 'error',
+                 content: '创建群聊异常，已回滚',
+                 i18n_content: { zh_cn: '创建群聊异常，已回滚', en_us: 'Chat creation failed and rolled back' }
+               }
+             };
+           }
            return;
         }
       }
@@ -107,9 +152,18 @@ export class P2PHandler {
       const session = await opencodeClient.createSession(sessionTitle);
       
       if (!session) {
-        await feishuClient.reply(messageId!, '❌ 创建 OpenCode 会话失败，请重试');
+        const sent = await this.safeReply(messageId, chatId, '❌ 创建 OpenCode 会话失败，请重试');
         // TODO: 应该解散刚创建的群以回滚
         await feishuClient.disbandChat(newChatId);
+        if (!sent) {
+          return {
+            toast: {
+              type: 'error',
+              content: '创建 OpenCode 会话失败',
+              i18n_content: { zh_cn: '创建 OpenCode 会话失败', en_us: 'Failed to create OpenCode session' }
+            }
+          };
+        }
         return;
       }
 
@@ -120,11 +174,21 @@ export class P2PHandler {
       // 4. 回复用户
       // 更新原卡片为成功状态，或发送新消息
       // 这里简单回复文字
-      await feishuClient.reply(messageId!, `✅ 会话群已创建！\n正在为您跳转...`);
+      const sent = await this.safeReply(messageId, chatId, '✅ 会话群已创建！\n正在为您跳转...');
       // 发送群名片或链接（飞书会自动把群显示在列表里）
       
       // 在新群里发一条欢迎消息
       await feishuClient.sendText(newChatId, '👋 会话已就绪，请直接在这里发送消息与 AI 对话。');
+
+      if (!sent) {
+        return {
+          toast: {
+            type: 'success',
+            content: '会话群已创建，请到新群继续',
+            i18n_content: { zh_cn: '会话群已创建，请到新群继续', en_us: 'Chat created, continue in new group' }
+          }
+        };
+      }
     }
   }
 }

@@ -6,6 +6,8 @@ export interface StreamCardData {
   thinking: string;
   showThinking?: boolean; // Controls visibility of thinking process
   text: string;
+  chatId?: string;
+  messageId?: string;
   tools: Array<{
     name: string;
     status: 'pending' | 'running' | 'completed' | 'failed';
@@ -37,7 +39,10 @@ export function buildStreamCard(data: StreamCardData): object {
         type: 'default',
         value: {
           action: 'toggle_thinking',
-          // We rely on the handler to infer chat/message context from the event
+          toggleMode: isExpanded ? 'collapse' : 'expand',
+          nextShowThinking: !isExpanded,
+          ...(data.chatId ? { chatId: data.chatId } : {}),
+          ...(data.messageId ? { messageId: data.messageId } : {}),
         }
       }
     });

@@ -420,11 +420,31 @@ class FeishuClient extends EventEmitter {
         chat_id?: string;
         open_thread_id?: string;
         thread_id?: string;
+        context?: {
+          open_message_id?: string;
+          message_id?: string;
+          open_chat_id?: string;
+          chat_id?: string;
+          open_thread_id?: string;
+          thread_id?: string;
+        };
       };
 
-      const messageId = event.open_message_id || event.message_id;
-      const chatId = event.open_chat_id || event.chat_id;
-      const threadId = event.open_thread_id || event.thread_id;
+      const messageId =
+        event.open_message_id ||
+        event.message_id ||
+        event.context?.open_message_id ||
+        event.context?.message_id;
+      const chatId =
+        event.open_chat_id ||
+        event.chat_id ||
+        event.context?.open_chat_id ||
+        event.context?.chat_id;
+      const threadId =
+        event.open_thread_id ||
+        event.thread_id ||
+        event.context?.open_thread_id ||
+        event.context?.thread_id;
 
       const cardEvent: FeishuCardActionEvent = {
         openId: event.operator.open_id,
