@@ -8,7 +8,7 @@
 
 新时代了，让 AI 代理自动部署吧：请在 OpenCode 执行如下指令：
 ```bash
-阅读https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md文档并安装程序
+请阅读 https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md 文档并安装程序
 ```
 
 ## 目录
