@@ -6,7 +6,10 @@
 
 把本地 OpenCode 直接接进飞书群聊：@机器人即可对话，支持流式输出、思考折叠卡片、权限确认、question 提问与 `/undo` 一致回滚。
 
-新时代了，让 AI 代理自动部署吧：请在 OpenCode 执行如下指令：`阅读https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md并安装`。
+新时代了，让 AI 代理自动部署吧：请在 OpenCode 执行如下指令：
+```bash
+阅读https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md文档并安装程序
+```
 
 ## 目录
 
