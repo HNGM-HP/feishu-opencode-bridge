@@ -241,13 +241,8 @@ class FeishuClient extends EventEmitter {
       },
     } as unknown as Record<string, (data: unknown) => Promise<FeishuCardActionResponse | { msg: string }>>);
 
-    // 监听群解散事件
-    this.onChatDisbanded(async (chatId) => {
-      // ...
-    });
-
     // 监听消息撤回事件
-    // removed local register to avoid conflict with onMessageRecalled
+    // 本地不再重复注册撤回事件，避免与 onMessageRecalled 冲突
     this.wsClient = new lark.WSClient({
       appId: feishuConfig.appId,
       appSecret: feishuConfig.appSecret,
