@@ -2,76 +2,12 @@
 // 处理 /panel 和 question 工具的卡片交互
 
 import { opencodeClient } from '../opencode/client.js';
-import { feishuClient } from '../feishu/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { commandHandler } from './command.js';
-import { buildStreamCard, type StreamCardData } from '../feishu/cards-stream.js';
 import type { FeishuCardActionEvent } from '../feishu/client.js';
 
 export class CardActionHandler {
-  private toggleUpdateQueue: Map<string, Promise<void>> = new Map();
-
-  private enqueueToggleCardUpdate(messageId: string, updater: () => Promise<void>): void {
-    const prev = this.toggleUpdateQueue.get(messageId) || Promise.resolve();
-    const next = prev
-      .then(async () => {
-        await updater();
-      })
-      .catch(error => {
-        console.error(`[CardAction] 思考卡片更新队列失败: msgId=${messageId}`, error);
-      })
-      .finally(() => {
-        if (this.toggleUpdateQueue.get(messageId) === next) {
-          this.toggleUpdateQueue.delete(messageId);
-        }
-      });
-
-    this.toggleUpdateQueue.set(messageId, next);
-  }
-
-  private findChatIdByBotMessageId(messageId: string): string | null {
-    const allChatIds = chatSessionStore.getAllChatIds();
-    for (const chatId of allChatIds) {
-      const interaction = chatSessionStore.findInteractionByBotMsgId(chatId, messageId);
-      if (interaction) {
-        return chatId;
-      }
-    }
-    return null;
-  }
-
-  private findLatestCardTarget(): { chatId: string; messageId: string } | null {
-    const allChatIds = chatSessionStore.getAllChatIds();
-    let latest: { chatId: string; messageId: string; timestamp: number } | null = null;
-
-    for (const chatId of allChatIds) {
-      const interaction = chatSessionStore.getLastInteraction(chatId);
-      if (!interaction?.cardData) continue;
-      if (!interaction.botFeishuMsgIds || interaction.botFeishuMsgIds.length === 0) continue;
-
-      const target = {
-        chatId,
-        messageId: interaction.botFeishuMsgIds[interaction.botFeishuMsgIds.length - 1],
-        timestamp: interaction.timestamp,
-      };
-
-      if (!latest || target.timestamp > latest.timestamp) {
-        latest = target;
-      }
-    }
-
-    if (!latest) return null;
-    return { chatId: latest.chatId, messageId: latest.messageId };
-  }
-
-  private findLatestCardMessageInChat(chatId: string): string | null {
-    const interaction = chatSessionStore.getLastInteraction(chatId);
-    if (!interaction?.cardData) return null;
-    if (!interaction.botFeishuMsgIds || interaction.botFeishuMsgIds.length === 0) return null;
-    return interaction.botFeishuMsgIds[interaction.botFeishuMsgIds.length - 1];
-  }
-
   async handle(event: FeishuCardActionEvent): Promise<object | void> {
     const actionValue = event.action.value as any;
     const action = actionValue?.action;
@@ -199,75 +135,8 @@ export class CardActionHandler {
     };
   }
 
-  private async handleToggleThinking(value: any, event: FeishuCardActionEvent): Promise<object> {
-      let messageId = (typeof value.messageId === 'string' && value.messageId) ? value.messageId : event.messageId;
-      let chatId = value.chatId || event.chatId || (messageId ? this.findChatIdByBotMessageId(messageId) : null);
-
-      if (chatId && !messageId) {
-        messageId = this.findLatestCardMessageInChat(chatId) || undefined;
-      }
-
-      if (!chatId || !messageId) {
-        const latest = this.findLatestCardTarget();
-        if (latest) {
-          chatId = chatId || latest.chatId;
-          messageId = messageId || latest.messageId;
-        }
-      }
-
-      if (!chatId || !messageId) {
-        return { toast: { type: 'error', content: '无法定位思考卡片，请重试' } };
-      }
-
-      // Find interaction
-      const interaction = chatSessionStore.findInteractionByBotMsgId(chatId, messageId);
-      if (!interaction || !interaction.cardData) {
-          // If interaction not found (maybe old message or restarted), try to parse from card?
-          // But we don't have the thinking content in the action value.
-          // So we can't really toggle if we don't have the data.
-          return { toast: { type: 'error', content: '无法加载思考内容 (可能是历史消息)' } };
-      }
-      
-      // Toggle
-      const cardData = interaction.cardData as StreamCardData;
-      const toggleMode = typeof value.toggleMode === 'string' ? value.toggleMode : '';
-      const desiredState = toggleMode === 'expand'
-        ? true
-        : toggleMode === 'collapse'
-          ? false
-          : typeof value.nextShowThinking === 'boolean'
-            ? value.nextShowThinking
-            : value.nextShowThinking === 'true'
-              ? true
-              : value.nextShowThinking === 'false'
-                ? false
-                : !cardData.showThinking;
-      cardData.showThinking = desiredState;
-
-      if (!cardData.messageId) {
-        cardData.messageId = messageId;
-      }
-
-      // 展开/折叠操作只作用于已产出的卡片，不应把完成态打回处理中
-      cardData.status = 'completed';
-
-      // 仅更新内存状态，避免频繁同步写文件导致卡片回调超时
-      interaction.cardData = cardData;
-
-      const targetMsgId = messageId as string;
-      this.enqueueToggleCardUpdate(targetMsgId, async () => {
-        const latest = chatSessionStore.findInteractionByBotMsgId(chatId as string, targetMsgId);
-        const latestCardData = (latest?.cardData as StreamCardData | undefined) || cardData;
-        latestCardData.status = 'completed';
-        latestCardData.messageId = targetMsgId;
-
-        const newCard = buildStreamCard(latestCardData);
-        const updated = await feishuClient.updateCard(targetMsgId, newCard);
-        if (!updated) {
-          console.warn(`[CardAction] 刷新思考卡片失败: msgId=${targetMsgId}`);
-        }
-      });
-
+  private async handleToggleThinking(_value: any, _event: FeishuCardActionEvent): Promise<object> {
+      // 兼容历史卡片按钮：思考展开已改为飞书原生折叠面板，无需回调更新。
       return { msg: 'ok' };
   }
 }

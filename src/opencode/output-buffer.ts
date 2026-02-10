@@ -5,14 +5,23 @@ interface BufferedOutput {
   key: string;
   chatId: string;
   messageId: string | null;
+  thinkingMessageId: string | null;
   replyMessageId: string | null;
   sessionId: string;
   content: string[];
-  thinking: string[]; // Store thinking parts
+  thinking: string[]; // 存储思考片段
+  tools: Array<{
+    name: string;
+    status: 'pending' | 'running' | 'completed' | 'failed';
+    output?: string;
+  }>;
+  finalText: string;
+  finalThinking: string;
+  openCodeMsgId: string;
+  showThinking: boolean;
   lastUpdate: number;
   timer: NodeJS.Timeout | null;
   status: 'running' | 'completed' | 'failed' | 'aborted';
-  isCard?: boolean; // Track if the message is a Card
 }
 
 class OutputBuffer {
@@ -33,14 +42,19 @@ class OutputBuffer {
         key,
         chatId,
         messageId: null,
+        thinkingMessageId: null,
         replyMessageId,
         sessionId,
         content: [],
         thinking: [],
+        tools: [],
+        finalText: '',
+        finalThinking: '',
+        openCodeMsgId: '',
+        showThinking: false,
         lastUpdate: Date.now(),
         timer: null,
         status: 'running',
-        isCard: false,
       };
       this.buffers.set(key, buffer);
     }
@@ -57,7 +71,7 @@ class OutputBuffer {
     this.scheduleUpdate(key);
   }
 
-  // Append thinking content
+  // 追加思考内容
   appendThinking(key: string, text: string): void {
     const buffer = this.buffers.get(key);
     if (!buffer) return;
@@ -66,21 +80,56 @@ class OutputBuffer {
     this.scheduleUpdate(key);
   }
 
-
-  // Set isCard flag
-  setIsCard(key: string, isCard: boolean): void {
-      const buffer = this.buffers.get(key);
-      if (buffer) {
-          buffer.isCard = isCard;
-      }
-  }
-
-  // Set message ID
+  // 设置正文卡片消息ID
   setMessageId(key: string, messageId: string): void {
 
     const buffer = this.buffers.get(key);
     if (buffer) {
       buffer.messageId = messageId;
+    }
+  }
+
+  // 设置思考卡片消息ID
+  setThinkingMessageId(key: string, messageId: string): void {
+    const buffer = this.buffers.get(key);
+    if (buffer) {
+      buffer.thinkingMessageId = messageId;
+    }
+  }
+
+  // 设置工具状态快照
+  setTools(
+    key: string,
+    tools: Array<{ name: string; status: 'pending' | 'running' | 'completed' | 'failed'; output?: string }>
+  ): void {
+    const buffer = this.buffers.get(key);
+    if (buffer) {
+      buffer.tools = [...tools];
+    }
+  }
+
+  // 设置最终文本和思考快照
+  setFinalSnapshot(key: string, text: string, thinking: string): void {
+    const buffer = this.buffers.get(key);
+    if (buffer) {
+      buffer.finalText = text;
+      buffer.finalThinking = thinking;
+    }
+  }
+
+  // 设置 OpenCode 消息ID
+  setOpenCodeMsgId(key: string, openCodeMsgId: string): void {
+    const buffer = this.buffers.get(key);
+    if (buffer) {
+      buffer.openCodeMsgId = openCodeMsgId;
+    }
+  }
+
+  // 设置思考展开状态
+  setShowThinking(key: string, showThinking: boolean): void {
+    const buffer = this.buffers.get(key);
+    if (buffer) {
+      buffer.showThinking = showThinking;
     }
   }
 

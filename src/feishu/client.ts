@@ -202,6 +202,7 @@ class FeishuClient extends EventEmitter {
   private wsClient: lark.WSClient | null = null;
   private eventDispatcher: lark.EventDispatcher;
   private cardActionHandler?: (event: FeishuCardActionEvent) => Promise<FeishuCardActionResponse | void>;
+  private cardUpdateQueue: Map<string, Promise<boolean>> = new Map();
 
   constructor() {
     super();
@@ -570,6 +571,23 @@ class FeishuClient extends EventEmitter {
 
   // 更新卡片
   async updateCard(messageId: string, card: object): Promise<boolean> {
+    const prev = this.cardUpdateQueue.get(messageId) || Promise.resolve(true);
+    const next = prev
+      .catch(() => true)
+      .then(async () => {
+        return await this.doUpdateCard(messageId, card);
+      })
+      .finally(() => {
+        if (this.cardUpdateQueue.get(messageId) === next) {
+          this.cardUpdateQueue.delete(messageId);
+        }
+      });
+
+    this.cardUpdateQueue.set(messageId, next);
+    return await next;
+  }
+
+  private async doUpdateCard(messageId: string, card: object): Promise<boolean> {
     try {
       const data = {
         msg_type: 'interactive',

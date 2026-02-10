@@ -1,71 +1,30 @@
-import { type PermissionCardData } from './cards.js';
-
 export * from './cards.js';
+
+export type StreamToolState = {
+  name: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  output?: string;
+};
 
 export interface StreamCardData {
   thinking: string;
-  showThinking?: boolean; // Controls visibility of thinking process
+  showThinking?: boolean;
   text: string;
   chatId?: string;
   messageId?: string;
-  tools: Array<{
-    name: string;
-    status: 'pending' | 'running' | 'completed' | 'failed';
-    output?: string;
-  }>;
+  thinkingMessageId?: string;
+  tools: StreamToolState[];
   status: 'processing' | 'completed' | 'failed';
+}
+
+function escapeCodeBlockContent(text: string): string {
+  return text.replace(/```/g, '` ` `');
 }
 
 export function buildStreamCard(data: StreamCardData): object {
   const elements: object[] = [];
 
-  // 1. 思考过程 (Collapsible UI)
-  if (data.thinking) {
-    const isExpanded = data.showThinking === true;
-    
-    // Header line with toggle button
-    elements.push({
-      tag: 'div',
-      text: {
-        tag: 'lark_md',
-        content: `🤔 **思考过程** (${data.thinking.length} chars)`,
-      },
-      extra: {
-        tag: 'button',
-        text: {
-          tag: 'plain_text',
-          content: isExpanded ? '收起' : '展开',
-        },
-        type: 'default',
-        value: {
-          action: 'toggle_thinking',
-          toggleMode: isExpanded ? 'collapse' : 'expand',
-          nextShowThinking: !isExpanded,
-          ...(data.chatId ? { chatId: data.chatId } : {}),
-          ...(data.messageId ? { messageId: data.messageId } : {}),
-        }
-      }
-    });
-
-    // Content (only if expanded)
-    if (isExpanded) {
-      elements.push({
-        tag: 'div',
-        text: {
-            tag: 'lark_md',
-            content: data.thinking
-        }
-      });
-      // Add a separator
-      elements.push({ tag: 'hr' });
-    } else {
-        // Optional: Show a preview if collapsed?
-        // For now, just hide it as requested ("Thinking..." by default)
-    }
-  }
-
-
-  // 2. 工具调用列表
+  // 1. 工具调用列表
   if (data.tools && data.tools.length > 0) {
     const toolLines = data.tools.map(tool => {
       const icon = tool.status === 'running' ? '⏳' : tool.status === 'completed' ? '✅' : tool.status === 'failed' ? '❌' : '⏸️';
@@ -89,7 +48,7 @@ export function buildStreamCard(data: StreamCardData): object {
     elements.push({ tag: 'hr' });
   }
 
-  // 3. 最终文本回复
+  // 2. 最终文本回复
   if (data.text) {
     elements.push({
       tag: 'markdown',
@@ -105,7 +64,7 @@ export function buildStreamCard(data: StreamCardData): object {
     });
   }
 
-  // 4. 状态栏
+  // 3. 状态栏
   const statusColor = data.status === 'processing' ? 'blue' : data.status === 'completed' ? 'green' : 'red';
   const statusText = data.status === 'processing' ? '处理中...' : data.status === 'completed' ? '已完成' : '失败';
 
@@ -121,5 +80,47 @@ export function buildStreamCard(data: StreamCardData): object {
       template: statusColor,
     },
     elements,
+  };
+}
+
+export function buildThinkingCard(data: StreamCardData): object {
+  const thinkingText = data.thinking || '（无思考过程）';
+  const panelTitle = `🤔 思考过程 (${thinkingText.length}字)`;
+
+  const statusColor = data.status === 'processing' ? 'blue' : data.status === 'completed' ? 'green' : 'red';
+  const statusText = data.status === 'processing' ? '思考中...' : data.status === 'completed' ? '思考完成' : '思考失败';
+
+  return {
+    schema: '2.0',
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      title: {
+        tag: 'plain_text',
+        content: statusText,
+      },
+      template: statusColor,
+    },
+    body: {
+      elements: [
+        {
+          tag: 'collapsible_panel',
+          expanded: false,
+          header: {
+            title: {
+              tag: 'plain_text',
+              content: panelTitle,
+            },
+          },
+          elements: [
+            {
+              tag: 'markdown',
+              content: `\`\`\`\n${escapeCodeBlockContent(thinkingText)}\n\`\`\``,
+            },
+          ],
+        },
+      ],
+    },
   };
 }

@@ -11,7 +11,7 @@ import { lifecycleHandler } from './handlers/lifecycle.js';
 import { commandHandler } from './handlers/command.js';
 import { cardActionHandler } from './handlers/card-action.js';
 import { validateConfig } from './config.js';
-import { buildStreamCard } from './feishu/cards-stream.js';
+import { buildStreamCard, buildThinkingCard, type StreamCardData } from './feishu/cards-stream.js';
 
 async function main() {
   console.log('╔════════════════════════════════════════════════╗');
@@ -34,7 +34,7 @@ async function main() {
   }
 
   // 3. 配置输出缓冲 (流式响应)
-  const streamContentMap = new Map<string, { text: string; thinking: string; isCard: boolean }>();
+  const streamContentMap = new Map<string, { text: string; thinking: string }>();
   const reasoningSnapshotMap = new Map<string, string>();
 
   const appendReasoningFromPart = (sessionID: string, part: { id?: unknown; text?: unknown }, chatId: string): void => {
@@ -69,38 +69,42 @@ async function main() {
 
   const upsertLiveCardInteraction = (
     chatId: string,
-    messageId: string,
     replyMessageId: string | null,
-    cardData: {
-      text: string;
-      thinking: string;
-      chatId: string;
-      messageId?: string;
-      tools: Array<{ name: string; status: 'pending' | 'running' | 'completed' | 'failed'; output?: string }>;
-      status: 'processing' | 'completed' | 'failed';
-      showThinking: boolean;
-    }
+    cardData: StreamCardData,
+    bodyMessageId: string | null,
+    thinkingMessageId: string | null,
+    openCodeMsgId: string
   ): void => {
-    const existing = chatSessionStore.findInteractionByBotMsgId(chatId, messageId);
+    const botMessageIds = [bodyMessageId, thinkingMessageId].filter((id): id is string => typeof id === 'string' && id.length > 0);
+    if (botMessageIds.length === 0) {
+      return;
+    }
+
+    let existing = chatSessionStore.findInteractionByBotMsgId(chatId, botMessageIds[0]);
+    if (!existing && botMessageIds.length > 1) {
+      existing = chatSessionStore.findInteractionByBotMsgId(chatId, botMessageIds[1]);
+    }
+
     if (existing) {
       chatSessionStore.updateInteraction(
         chatId,
-        r => r.botFeishuMsgIds.includes(messageId),
+        r => r === existing,
         r => {
           if (!r.userFeishuMsgId && replyMessageId) {
             r.userFeishuMsgId = replyMessageId;
           }
-          if (!r.botFeishuMsgIds.includes(messageId)) {
-            r.botFeishuMsgIds.push(messageId);
+
+          for (const msgId of botMessageIds) {
+            if (!r.botFeishuMsgIds.includes(msgId)) {
+              r.botFeishuMsgIds.push(msgId);
+            }
           }
 
-          const prev = r.cardData as { showThinking?: unknown } | undefined;
-          const mergedCardData = {
-            ...cardData,
-            showThinking: typeof prev?.showThinking === 'boolean' ? prev.showThinking : cardData.showThinking,
-          };
-
-          r.cardData = mergedCardData;
+          r.cardData = { ...cardData };
+          r.type = 'normal';
+          if (openCodeMsgId) {
+            r.openCodeMsgId = openCodeMsgId;
+          }
           r.timestamp = Date.now();
         }
       );
@@ -109,136 +113,151 @@ async function main() {
 
     chatSessionStore.addInteraction(chatId, {
       userFeishuMsgId: replyMessageId || '',
-      openCodeMsgId: '',
-      botFeishuMsgIds: [messageId],
+      openCodeMsgId: openCodeMsgId || '',
+      botFeishuMsgIds: botMessageIds,
       type: 'normal',
-      cardData,
+      cardData: { ...cardData },
       timestamp: Date.now(),
     });
   };
 
   outputBuffer.setUpdateCallback(async (buffer) => {
-    // 获取增量内容
     const { text, thinking } = outputBuffer.getAndClear(buffer.key);
 
-    // 如果没有新内容且不是状态变化，跳过
     if (!text && !thinking && buffer.status === 'running') return;
 
-    // 更新全量内容
-    const current = streamContentMap.get(buffer.key) || { text: '', thinking: '', isCard: false };
+    const current = streamContentMap.get(buffer.key) || { text: '', thinking: '' };
     current.text += text;
     current.thinking += thinking;
 
-    // 如果有思考内容，强制使用卡片模式
-    if (current.thinking) {
-      current.isCard = true;
+    if (buffer.status !== 'running') {
+      if (buffer.finalText) {
+        current.text = buffer.finalText;
+      }
+      if (buffer.finalThinking) {
+        current.thinking = buffer.finalThinking;
+      }
     }
 
     streamContentMap.set(buffer.key, current);
 
-    // 如果任务完成或失败，清理缓存
+    const hasVisibleContent =
+      current.text.trim().length > 0 ||
+      current.thinking.trim().length > 0 ||
+      buffer.tools.length > 0;
+
+    if (!hasVisibleContent && buffer.status === 'running') return;
+
+    const status: StreamCardData['status'] =
+      buffer.status === 'failed' || buffer.status === 'aborted'
+        ? 'failed'
+        : buffer.status === 'completed'
+          ? 'completed'
+          : 'processing';
+
+    let bodyMessageId = buffer.messageId;
+    let thinkingMessageId = buffer.thinkingMessageId;
+
+    const cardData: StreamCardData = {
+      text: current.text,
+      thinking: current.thinking,
+      chatId: buffer.chatId,
+      messageId: bodyMessageId || undefined,
+      thinkingMessageId: thinkingMessageId || undefined,
+      tools: [...buffer.tools],
+      status,
+      showThinking: false,
+    };
+
+    const hadBodyBeforeThinking = Boolean(bodyMessageId);
+    let createdThinkingCard = false;
+    const buildThinkingOnlyCard = (targetMessageId?: string): object => {
+      return buildThinkingCard({
+        ...cardData,
+        messageId: targetMessageId || thinkingMessageId || undefined,
+        thinkingMessageId: targetMessageId || thinkingMessageId || undefined,
+      });
+    };
+
+    const hasThinkingContent = current.thinking.trim().length > 0;
+    const hasThinkingDelta = thinking.length > 0;
+    const isFinalFlush = buffer.status !== 'running';
+    const shouldUpdateThinkingCard = hasThinkingContent && (!thinkingMessageId || hasThinkingDelta || isFinalFlush);
+
+    if (shouldUpdateThinkingCard) {
+      if (thinkingMessageId) {
+        const updated = await feishuClient.updateCard(thinkingMessageId, buildThinkingOnlyCard(thinkingMessageId));
+        if (!updated) {
+          console.warn(`[Index] 思考卡片更新失败，保留原消息ID: msgId=${thinkingMessageId}`);
+        }
+      } else {
+        const newThinkingMessageId = await feishuClient.sendCard(buffer.chatId, buildThinkingOnlyCard());
+        if (newThinkingMessageId) {
+          thinkingMessageId = newThinkingMessageId;
+          createdThinkingCard = true;
+          outputBuffer.setThinkingMessageId(buffer.key, newThinkingMessageId);
+          cardData.thinkingMessageId = newThinkingMessageId;
+        }
+      }
+    }
+
+    const buildBodyCard = (): object => {
+      return buildStreamCard({
+        ...cardData,
+        messageId: bodyMessageId || undefined,
+        thinkingMessageId: thinkingMessageId || undefined,
+      });
+    };
+
+    if (bodyMessageId) {
+      const shouldReorderBody = createdThinkingCard && hadBodyBeforeThinking;
+      if (shouldReorderBody) {
+        const oldBodyMessageId = bodyMessageId;
+        const newBodyMessageId = await feishuClient.sendCard(buffer.chatId, buildBodyCard());
+        if (newBodyMessageId) {
+          bodyMessageId = newBodyMessageId;
+          outputBuffer.setMessageId(buffer.key, newBodyMessageId);
+          cardData.messageId = newBodyMessageId;
+          void feishuClient.deleteMessage(oldBodyMessageId).catch(() => undefined);
+        } else {
+          await feishuClient.updateCard(bodyMessageId, buildBodyCard());
+        }
+      } else {
+        const updated = await feishuClient.updateCard(bodyMessageId, buildBodyCard());
+        if (!updated) {
+          const newBodyMessageId = await feishuClient.sendCard(buffer.chatId, buildBodyCard());
+          if (newBodyMessageId) {
+            void feishuClient.deleteMessage(bodyMessageId).catch(() => undefined);
+            bodyMessageId = newBodyMessageId;
+            outputBuffer.setMessageId(buffer.key, newBodyMessageId);
+            cardData.messageId = newBodyMessageId;
+          }
+        }
+      }
+    } else {
+      const newBodyMessageId = await feishuClient.sendCard(buffer.chatId, buildBodyCard());
+      if (newBodyMessageId) {
+        bodyMessageId = newBodyMessageId;
+        outputBuffer.setMessageId(buffer.key, newBodyMessageId);
+        cardData.messageId = newBodyMessageId;
+      }
+    }
+
+    cardData.messageId = bodyMessageId || undefined;
+    cardData.thinkingMessageId = thinkingMessageId || undefined;
+
+    upsertLiveCardInteraction(
+      buffer.chatId,
+      buffer.replyMessageId,
+      cardData,
+      bodyMessageId,
+      thinkingMessageId,
+      buffer.openCodeMsgId
+    );
+
     if (buffer.status !== 'running') {
       streamContentMap.delete(buffer.key);
       clearReasoningSnapshotsForSession(buffer.sessionId);
-    }
-
-    if (!current.text.trim() && !current.thinking.trim()) return;
-
-    if (current.isCard) {
-      let activeMessageId = buffer.messageId;
-      let showThinking = false;
-
-      if (activeMessageId) {
-        const existing = chatSessionStore.findInteractionByBotMsgId(buffer.chatId, activeMessageId);
-        const prev = existing?.cardData as { showThinking?: unknown } | undefined;
-        if (typeof prev?.showThinking === 'boolean') {
-          showThinking = prev.showThinking;
-        }
-      }
-
-      const cardData = {
-        text: current.text,
-        thinking: current.thinking,
-        chatId: buffer.chatId,
-        tools: [] as Array<{ name: string; status: 'pending' | 'running' | 'completed' | 'failed'; output?: string }>,
-        status: (buffer.status === 'completed' ? 'completed' : 'processing') as 'processing' | 'completed' | 'failed',
-        showThinking,
-      };
-      const buildCard = (messageId?: string) => buildStreamCard({
-        ...cardData,
-        ...(messageId ? { messageId } : {}),
-      });
-
-      if (activeMessageId) {
-        if (buffer.isCard) {
-          const updated = await feishuClient.updateCard(activeMessageId, buildCard(activeMessageId));
-          if (!updated) {
-            const newCardMsgId = await feishuClient.sendCard(buffer.chatId, buildCard());
-            if (newCardMsgId) {
-              outputBuffer.setMessageId(buffer.key, newCardMsgId);
-              outputBuffer.setIsCard(buffer.key, true);
-              await feishuClient.updateCard(newCardMsgId, buildCard(newCardMsgId));
-              void feishuClient.deleteMessage(activeMessageId).catch(() => undefined);
-              activeMessageId = newCardMsgId;
-            }
-          }
-        } else {
-          const oldTextMsgId = activeMessageId;
-          const newCardMsgId = await feishuClient.sendCard(buffer.chatId, buildCard());
-          if (newCardMsgId) {
-            outputBuffer.setMessageId(buffer.key, newCardMsgId);
-            outputBuffer.setIsCard(buffer.key, true);
-            await feishuClient.updateCard(newCardMsgId, buildCard(newCardMsgId));
-            void feishuClient.deleteMessage(oldTextMsgId).catch(() => undefined);
-            activeMessageId = newCardMsgId;
-          }
-        }
-      } else {
-        const newCardMsgId = await feishuClient.sendCard(buffer.chatId, buildCard());
-        if (newCardMsgId) {
-          outputBuffer.setMessageId(buffer.key, newCardMsgId);
-          outputBuffer.setIsCard(buffer.key, true);
-          await feishuClient.updateCard(newCardMsgId, buildCard(newCardMsgId));
-          activeMessageId = newCardMsgId;
-        }
-      }
-
-      if (activeMessageId) {
-        upsertLiveCardInteraction(buffer.chatId, activeMessageId, buffer.replyMessageId, {
-          ...cardData,
-          messageId: activeMessageId,
-        });
-      }
-      return;
-    }
-
-    // 纯文本模式
-    if (buffer.messageId) {
-      if (buffer.isCard) {
-        const textCard = buildStreamCard({
-          text: current.text,
-          thinking: '',
-          chatId: buffer.chatId,
-          tools: [],
-          status: buffer.status === 'completed' ? 'completed' : 'processing',
-          showThinking: false,
-        });
-        await feishuClient.updateCard(buffer.messageId, textCard);
-      } else {
-        await feishuClient.updateMessage(buffer.messageId, current.text);
-      }
-      return;
-    }
-
-    let msgId: string | null;
-    if (buffer.replyMessageId) {
-      msgId = await feishuClient.reply(buffer.replyMessageId, current.text);
-    } else {
-      msgId = await feishuClient.sendText(buffer.chatId, current.text);
-    }
-    if (msgId) {
-      outputBuffer.setMessageId(buffer.key, msgId);
-      outputBuffer.setIsCard(buffer.key, false);
     }
   });
 

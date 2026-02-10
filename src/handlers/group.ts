@@ -1,11 +1,11 @@
 import { feishuClient, type FeishuMessageEvent, type FeishuCardActionEvent, type FeishuAttachment } from '../feishu/client.js';
 import { opencodeClient } from '../opencode/client.js';
-import { chatSessionStore, type InteractionRecord } from '../store/chat-session.js';
+import { chatSessionStore } from '../store/chat-session.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { questionHandler } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
 import { buildQuestionCardV2, buildQuestionAnsweredCard } from '../feishu/cards.js';
-import { buildStreamCard, type StreamCardData } from '../feishu/cards-stream.js';
+import { type StreamCardData } from '../feishu/cards-stream.js';
 import { parseCommand } from '../commands/parser.js';
 import { commandHandler } from './command.js';
 import { modelConfig, attachmentConfig } from '../config.js';
@@ -327,178 +327,77 @@ export class GroupHandler {
         waitReminderTimer = null;
       }
 
-      // 处理结果
-      // 解析 parts 到结构化数据
+      // 处理结果：只更新缓冲区元数据，由统一的流式渲染器输出卡片
       const finalData: StreamCardData = {
-          thinking: '',
-          text: '',
-          tools: [],
-          status: 'completed',
-          showThinking: false
+        thinking: '',
+        text: '',
+        tools: [],
+        status: 'completed',
+        showThinking: false,
       };
-      
+
       if (result.parts) {
-          for (const part of result.parts) {
-              if (part.type === 'reasoning') {
-                  const reasoningText =
-                    typeof (part as { text?: unknown }).text === 'string'
-                      ? (part as { text: string }).text
-                      : '';
-                  if (reasoningText) {
-                    finalData.thinking += reasoningText;
-                  }
-              } else if (part.type === 'text' && (part as any).text) {
-                  finalData.text += (part as any).text;
-              } else if (part.type === 'tool') {
-                  const toolPart = part as any;
-                  finalData.tools.push({ 
-                      name: toolPart.tool, 
-                      status: toolPart.state?.status || 'completed', 
-                      output: toolPart.state?.output 
-                  });
+        for (const part of result.parts) {
+          if (part.type === 'reasoning') {
+            const reasoningText =
+              typeof (part as { text?: unknown }).text === 'string'
+                ? (part as { text: string }).text
+                : '';
+            if (reasoningText) {
+              finalData.thinking += reasoningText;
+            }
+            continue;
+          }
+
+          if (part.type === 'text') {
+            const textPart = part as { text?: unknown };
+            if (typeof textPart.text === 'string') {
+              finalData.text += textPart.text;
+            }
+            continue;
+          }
+
+          if (part.type === 'tool') {
+            const toolPart = part as {
+              tool?: unknown;
+              state?: {
+                status?: unknown;
+                output?: unknown;
+              };
+            };
+
+            const toolName = typeof toolPart.tool === 'string' ? toolPart.tool : 'tool';
+            const rawStatus = toolPart.state?.status;
+            const toolStatus =
+              rawStatus === 'pending' || rawStatus === 'running' || rawStatus === 'completed' || rawStatus === 'failed'
+                ? rawStatus
+                : 'completed';
+
+            let toolOutput: string | undefined;
+            if (typeof toolPart.state?.output === 'string') {
+              toolOutput = toolPart.state.output;
+            } else if (toolPart.state?.output !== undefined) {
+              try {
+                toolOutput = JSON.stringify(toolPart.state.output);
+              } catch {
+                toolOutput = String(toolPart.state.output);
               }
+            }
+
+            finalData.tools.push({
+              name: toolName,
+              status: toolStatus,
+              ...(toolOutput ? { output: toolOutput } : {}),
+            });
           }
-      }
-      
-      const buffer = outputBuffer.get(`chat:${chatId}`);
-      let msgId = buffer?.messageId;
-      const wasCard = buffer?.isCard;
-
-      const mergeWithLiveCardData = (candidate: StreamCardData, targetMsgId: string | null | undefined): StreamCardData => {
-        if (!targetMsgId) {
-          return candidate;
         }
-
-        const liveInteraction = chatSessionStore.findInteractionByBotMsgId(chatId, targetMsgId);
-        const liveCard = liveInteraction?.cardData as Partial<StreamCardData> | undefined;
-        if (!liveCard) {
-          return candidate;
-        }
-
-        const merged: StreamCardData = {
-          ...candidate,
-          text:
-            typeof liveCard.text === 'string' && liveCard.text.length > candidate.text.length
-              ? liveCard.text
-              : candidate.text,
-          thinking:
-            typeof liveCard.thinking === 'string' && liveCard.thinking.length > candidate.thinking.length
-              ? liveCard.thinking
-              : candidate.thinking,
-          showThinking:
-            typeof liveCard.showThinking === 'boolean'
-              ? liveCard.showThinking
-              : candidate.showThinking,
-        };
-
-        if (Array.isArray(liveCard.tools) && liveCard.tools.length > merged.tools.length) {
-          merged.tools = liveCard.tools as StreamCardData['tools'];
-        }
-
-        return merged;
-      };
-
-      let mergedFinalData: StreamCardData = mergeWithLiveCardData({ ...finalData, chatId }, msgId);
-      
-      // Use card if we have thinking, tools, or if we were already using a card
-      const shouldUseCard = !!mergedFinalData.thinking || mergedFinalData.tools.length > 0 || wasCard;
-
-      const buildFinalCard = (targetMsgId?: string) => buildStreamCard({
-        ...mergedFinalData,
-        chatId,
-        ...(targetMsgId ? { messageId: targetMsgId } : {}),
-      });
-      
-      if (shouldUseCard) {
-          const card = buildFinalCard(msgId || undefined);
-          if (msgId) {
-             // 尝试更新
-             // 如果之前是 Card (wasCard=true), 必须 updateCard
-              if (wasCard) {
-                  await feishuClient.updateCard(msgId, card);
-              } else {
-                 // 之前可能是 text (msgId created by reply/sendText)
-                 // 但现在决定用 Card
-                 // 飞书不支持 updateMessage (text) -> updateCard (interactive)
-                 // 如果之前发送了 text，现在想转 card，需要撤回再发，或者...
-                 // 实际上，如果我们决定用 Card，之前 streaming 阶段应该已经是 Card 了 (因为 thinking/tools 触发)
-                 // 如果 streaming 阶段没有触发 thinking (e.g. fast response or no thinking), outputBuffer sent text.
-                 // 现在 finalData 决定要 card (e.g. tools appeared at end).
-                 // 这时候我们无法原地变身。只能发新的 Card。
-                 // 或者只能放弃 card 格式，用 text 展示 tools (ugly).
-                 // 策略：如果 buffer.isCard 为 false，且 finalData 需要 Card -> 发新消息
-                 // 为了用户体验，我们最好尽量保持一致。
-                 // 如果 msgId 存在且 wasCard=false，我们只能 updateText (tool output append to text).
-                 // 但 finalData.thinking 必须显示。如果 text mode，thinking 怎么显示？
-                 // 如果 text mode，我们把 thinking prepend/append 到 text?
-                 
-                 // 修改策略：
-                 // 如果 buffer.isCard 为 false，但 finalData 需要 Card (thinking/tools)，
-                 // 我们尝试 deleteMessage(msgId) 然后 sendCard。
-                  try {
-                      await feishuClient.deleteMessage(msgId);
-                  } catch (e) { console.warn('Delete failed', e); }
-                  msgId = await feishuClient.sendCard(chatId, card);
-                  if (msgId) {
-                    await feishuClient.updateCard(msgId, buildFinalCard(msgId));
-                  }
-                  mergedFinalData = mergeWithLiveCardData(mergedFinalData, msgId);
-              }
-          } else {
-             msgId = await feishuClient.sendCard(chatId, card);
-             if (msgId) {
-               await feishuClient.updateCard(msgId, buildFinalCard(msgId));
-             }
-             mergedFinalData = mergeWithLiveCardData(mergedFinalData, msgId);
-          }
-      } else {
-          // 纯文本
-          const text = mergedFinalData.text || '(无输出)';
-          if (msgId) {
-             // 如果 buffer.isCard = true，不能 updateMessage (text)
-              if (wasCard) {
-                  // 同样逻辑：delete old card, send new text? Or just update card to show only text?
-                  // Update card is better (smoother).
-                  // Re-use buildStreamCard with empty thinking/tools.
-                  const card = buildStreamCard({ ...mergedFinalData, chatId, ...(msgId ? { messageId: msgId } : {}) }); // finalData has empty thinking/tools
-                  await feishuClient.updateCard(msgId, card);
-              } else {
-                  await feishuClient.updateMessage(msgId, text);
-             }
-          } else {
-             msgId = await feishuClient.reply(messageId, text);
-             if (!msgId) msgId = await feishuClient.sendText(chatId, text);
-          }
       }
 
-      // 记录交互
-      if (msgId) {
-          const existing = chatSessionStore.findInteractionByBotMsgId(chatId, msgId);
-          if (existing) {
-              chatSessionStore.updateInteraction(
-                chatId,
-                r => r.botFeishuMsgIds.includes(msgId as string),
-                r => {
-                  r.userFeishuMsgId = messageId;
-                  r.openCodeMsgId = result.info?.id || r.openCodeMsgId;
-                  r.type = 'normal';
-                  r.cardData = shouldUseCard ? { ...mergedFinalData, chatId, ...(msgId ? { messageId: msgId } : {}) } : r.cardData;
-                  r.timestamp = Date.now();
-                }
-              );
-          } else {
-              chatSessionStore.addInteraction(chatId, {
-                  userFeishuMsgId: messageId,
-                  openCodeMsgId: result.info?.id || '',
-                  botFeishuMsgIds: [msgId],
-                  type: 'normal',
-                  cardData: shouldUseCard ? { ...mergedFinalData, chatId, ...(msgId ? { messageId: msgId } : {}) } : undefined,
-                  timestamp: Date.now()
-              });
-          }
-      }
-
-      outputBuffer.setStatus(`chat:${chatId}`, 'completed');
+      const bufferKey = `chat:${chatId}`;
+      outputBuffer.setTools(bufferKey, finalData.tools);
+      outputBuffer.setFinalSnapshot(bufferKey, finalData.text, finalData.thinking);
+      outputBuffer.setOpenCodeMsgId(bufferKey, result.info?.id || '');
+      outputBuffer.setStatus(bufferKey, 'completed');
 
     } catch (error) {
 
