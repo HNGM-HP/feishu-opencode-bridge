@@ -12,6 +12,36 @@ export interface PermissionRequestEvent {
   risk?: string;
 }
 
+interface PermissionEventProperties {
+  sessionID?: string;
+  sessionId?: string;
+  id?: string;
+  tool?: unknown;
+  permission?: unknown;
+  description?: string;
+  risk?: string;
+  metadata?: Record<string, unknown>;
+}
+
+function getPermissionLabel(props: PermissionEventProperties): string {
+  if (typeof props.permission === 'string' && props.permission.trim()) {
+    return props.permission;
+  }
+
+  if (typeof props.tool === 'string' && props.tool.trim()) {
+    return props.tool;
+  }
+
+  if (props.tool && typeof props.tool === 'object') {
+    const toolObj = props.tool as Record<string, unknown>;
+    if (typeof toolObj.name === 'string' && toolObj.name.trim()) {
+      return toolObj.name;
+    }
+  }
+
+  return 'unknown';
+}
+
 // 消息部分类型
 export interface MessagePart {
   type: string;
@@ -95,24 +125,13 @@ class OpencodeClientWrapper extends EventEmitter {
   private handleEvent(event: { type: string; properties?: Record<string, unknown> }): void {
     // 权限请求事件 (compat: support both 'permission.request' and 'permission.asked')
     if ((event.type === 'permission.request' || event.type === 'permission.asked') && event.properties) {
-      const props = event.properties as {
-        sessionID?: string;
-        sessionId?: string;
-        id?: string;
-        tool?: any;
-        permission?: string;
-        description?: string;
-        risk?: string;
-        metadata?: any;
-      };
+      const props = event.properties as PermissionEventProperties;
 
       const permissionEvent: PermissionRequestEvent = {
         sessionId: props.sessionID || props.sessionId || '',
         permissionId: props.id || '',
-        // Ensure tool/permission is a string
-        tool: (typeof props.tool === 'string' ? props.tool : 
-               (props.tool && typeof props.tool === 'object' && (props.tool as any).name) ? (props.tool as any).name :
-               (typeof props.permission === 'string' ? props.permission : 'unknown')),
+        // permission.asked 的 tool 常为对象（messageID/callID），显示/判断应优先用 permission
+        tool: getPermissionLabel(props),
         // If description is missing, try to construct one from metadata
         description: props.description || (props.metadata ? JSON.stringify(props.metadata) : ''),
         risk: props.risk,
@@ -328,14 +347,14 @@ class OpencodeClientWrapper extends EventEmitter {
     remember?: boolean
   ): Promise<boolean> {
     try {
+      const responseType = allow ? (remember ? 'always' : 'once') : 'reject';
       const response = await fetch(
         `${opencodeConfig.baseUrl}/session/${sessionId}/permissions/${permissionId}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            response: allow ? 'allow' : 'deny',
-            remember: remember || false,
+            response: responseType,
           }),
         }
       );

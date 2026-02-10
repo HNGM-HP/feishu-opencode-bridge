@@ -17,17 +17,30 @@ class PermissionHandler {
   // 待处理的权限请求（userId -> 权限请求）
   private pendingPermissions: Map<string, PendingPermission> = new Map();
 
-  // 检查工具是否在白名单中
-  isToolWhitelisted(toolName: any): boolean {
-    if (typeof toolName !== 'string') {
-        if (toolName && typeof toolName === 'object' && typeof toolName.name === 'string') {
-            toolName = toolName.name;
-        } else {
-            return false;
-        }
+  private normalizeToolName(toolName: unknown): string | null {
+    if (typeof toolName === 'string') {
+      const normalized = toolName.trim();
+      return normalized ? normalized : null;
     }
+
+    if (toolName && typeof toolName === 'object') {
+      const toolObj = toolName as Record<string, unknown>;
+      if (typeof toolObj.name === 'string') {
+        const normalized = toolObj.name.trim();
+        return normalized ? normalized : null;
+      }
+    }
+
+    return null;
+  }
+
+  // 检查工具是否在白名单中
+  isToolWhitelisted(toolName: unknown): boolean {
+    const normalizedToolName = this.normalizeToolName(toolName);
+    if (!normalizedToolName) return false;
+
     return permissionConfig.toolWhitelist.some(
-      t => t.toLowerCase() === toolName.toLowerCase()
+      t => t.trim().toLowerCase() === normalizedToolName.toLowerCase()
     );
   }
 

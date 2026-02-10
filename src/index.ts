@@ -123,12 +123,26 @@ async function main() {
       // 处理权限确认
       if (actionValue?.action === 'permission_allow' || actionValue?.action === 'permission_deny') {
         const allow = actionValue.action === 'permission_allow';
-        await opencodeClient.respondToPermission(
+        const responded = await opencodeClient.respondToPermission(
           actionValue.sessionId,
           actionValue.permissionId,
           allow,
           actionValue.remember
         );
+
+        if (!responded) {
+          console.error(
+            `[权限] 响应失败: session=${actionValue.sessionId}, permission=${actionValue.permissionId}, allow=${allow}, remember=${Boolean(actionValue.remember)}`
+          );
+          return {
+            toast: {
+              type: 'error',
+              content: '权限响应失败',
+              i18n_content: { zh_cn: '权限响应失败', en_us: 'Permission response failed' }
+            }
+          };
+        }
+
         return {
           toast: {
             type: allow ? 'success' : 'error',
