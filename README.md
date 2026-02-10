@@ -8,6 +8,8 @@
 
 如果你要让 AI 代理自动部署，请看 `AI_Deployment_Guide.md`。
 
+新时代了，让 AI 来完成复杂操作吧：请在 OpenCode 发送如下指令：`阅读https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md并安装`。
+
 ## 目录
 
 - [为什么用它](#为什么用它)
