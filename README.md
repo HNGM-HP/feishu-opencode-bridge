@@ -1,172 +1,222 @@
-# 飞书 × OpenCode 桥接服务
+# Feishu x OpenCode Bridge
 
-把 OpenCode（本地 `opencode serve`）接到飞书：在群聊里 @机器人对话、看流式输出；当 OpenCode 需要你确认权限或向你提问时，用飞书卡片完成交互。
+[![Node.js >= 20](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-black.svg)](https://opensource.org/licenses/MIT)
 
-如果你希望让 AI 代你部署：见 `AI_Deployment_Guide.md`。
+把本地 OpenCode 直接接进飞书群聊：@机器人即可对话，支持流式输出、思考折叠卡片、权限确认、question 提问与 `/undo` 一致回滚。
 
-## 能做什么
+如果你要让 AI 代理自动部署，请看 `AI_Deployment_Guide.md`。
 
-- 群聊对话：@机器人或回复机器人消息，消息会转发到 OpenCode 会话。
-- 私聊引导：私聊机器人会发一张“创建会话群”卡片，点击后自动创建群聊并绑定 OpenCode 会话。
-- 流式输出：通过输出缓冲定期更新飞书消息；如果检测到 reasoning/thinking，会自动切换为卡片展示，并支持“展开/折叠思考”。
-- 交互式卡片：
-  - `/panel`：控制面板（切换模型/Agent、停止、撤回）。
-  - 权限确认：当 OpenCode 触发权限请求时，发送确认卡片（一次允许 / 始终允许 / 拒绝）。
-  - 工具问答：当 OpenCode 触发 question 工具时，发送提问卡片，用户用文字回复完成单选/多选/自定义/跳过。
-- `/undo`：回滚 OpenCode 上下文，并同步删除飞书端上一轮交互的相关消息；若撤回到“问题回答”，会递归撤回对应的“提问卡片”。
-- 附件：支持飞书图片/文件消息，下载后按 OpenCode file part 发送（会做基础的 MIME/扩展名兜底）。
+## 目录
+
+- [为什么用它](#为什么用它)
+- [能力总览](#能力总览)
+- [架构概览](#架构概览)
+- [快速开始](#快速开始)
+- [部署与运维](#部署与运维)
+- [环境变量](#环境变量)
+- [飞书后台配置](#飞书后台配置)
+- [命令速查](#命令速查)
+- [关键实现细节](#关键实现细节)
+- [故障排查](#故障排查)
+
+## 为什么用它
+
+- 飞书侧统一入口：群里直接对话，不用切到 OpenCode WebUI。
+- 多轮上下文可持续：群聊和 OpenCode session 持久绑定，重启后可继续。
+- 交互闭环：AI 要权限、要提问时，全部走飞书卡片，不丢上下文。
+- 对生产友好：提供 Node 脚本 + Linux systemd 菜单化部署方式。
+
+## 能力总览
+
+| 能力 | 说明 |
+|---|---|
+| 群聊对话 | @机器人或回复机器人消息，自动转发到 OpenCode 会话 |
+| 私聊建群 | 私聊点击卡片一键创建会话群并绑定 session |
+| 流式输出 | 输出缓冲定时刷新；检测到 thinking/reasoning 自动切卡片 |
+| 思考折叠 | 支持展开/折叠思考内容，避免长卡片刷屏 |
+| 权限确认 | `permission.asked` 自动发确认卡，支持一次/始终/拒绝 |
+| AI 提问 | `question.asked` 生成问答卡，支持单选/多选/自定义/跳过 |
+| 一致撤回 | `/undo` 同时回滚 OpenCode 和飞书消息，问答场景支持递归回滚 |
+| 附件转发 | 支持飞书图片/文件，下载后按 OpenCode file part 发送 |
+
+## 架构概览
+
+```mermaid
+flowchart LR
+  U[飞书用户] --> F[飞书群聊/私聊]
+  F --> B[桥接服务]
+  B --> O[OpenCode Server]
+  O --> B
+  B --> C[飞书卡片与消息更新]
+  B <--> S[.chat-sessions.json]
+```
+
+关键点：
+
+- `sessionId -> chatId` 映射用于权限/提问回路由。
+- 输出缓冲层负责节流更新，避免高频 patch 触发限制。
+- 文本与卡片属于两种消息类型，必要时会删旧消息并重发卡片。
 
 ## 快速开始
 
-### 前置条件
+### 1) 前置要求
 
-- Node.js（`package.json` 标注 `>= 20`；建议用 Node 20+ 运行）。
-- OpenCode：本机已安装，并能启动服务。
-- 飞书开放平台应用：启用机器人能力，配置事件订阅与权限。
+- Node.js >= 20
+- 本机可运行 OpenCode（支持 `opencode serve`）
+- 飞书开放平台应用（机器人 + 事件订阅 + 对应权限）
 
-### 启动
-
-1) 启动 OpenCode：
+### 2) 启动 OpenCode
 
 ```bash
 opencode serve --port 4096
 ```
 
-2) 配置环境变量：
+### 3) 配置环境变量
 
 ```bash
 cp .env.example .env
 ```
 
-3) 启动桥接：
+至少填写：
+
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+
+### 4) 启动桥接服务（开发模式）
 
 ```bash
 npm install
 npm run dev
 ```
 
-## 配置说明（.env）
+## 部署与运维
 
-以 `src/config.ts` 为准，常用字段如下：
+### npm 命令
 
-```env
-# 飞书应用配置
-FEISHU_APP_ID=cli_xxx
-FEISHU_APP_SECRET=xxx
+| 目标 | 命令 | 说明 |
+|---|---|---|
+| 一键部署 | `npm run deploy:bridge` | 安装依赖并编译 |
+| 管理菜单 | `npm run manage:bridge` | 交互式菜单（默认入口） |
+| 启动后台 | `npm run start:bridge` | 后台启动（自动检测/补构建） |
+| 停止后台 | `npm run stop:bridge` | 按 PID 停止后台进程 |
 
-# OpenCode 服务地址（可选）
-OPENCODE_HOST=localhost
-OPENCODE_PORT=4096
+### 跨平台脚本入口
 
-# 用户白名单（可选；留空表示不限制）
-ALLOWED_USERS=ou_xxx,ou_yyy
+| 平台 | 管理菜单 | 启动 | 停止 |
+|---|---|---|---|
+| Linux/macOS | `./scripts/deploy.sh menu` | `./scripts/start.sh` | `./scripts/stop.sh` |
+| Windows CMD | `scripts\\deploy.cmd menu` | `scripts\\start.cmd` | `scripts\\stop.cmd` |
+| PowerShell | `.\\scripts\\deploy.ps1 menu` | `.\\scripts\\start.ps1` | `.\\scripts\\stop.ps1` |
 
-# 默认模型
-DEFAULT_PROVIDER=openai
-DEFAULT_MODEL=gpt-5.2
+### Linux 常驻（systemd）
 
-# 权限白名单（自动放行，不发卡片）
-TOOL_WHITELIST=Read,Glob,Grep,Task
+管理菜单内提供以下操作：
 
-# 输出刷新间隔（毫秒）
-OUTPUT_UPDATE_INTERVAL=3000
+- 安装并启动 systemd 服务
+- 停止并禁用 systemd 服务
+- 卸载 systemd 服务
+- 查看运行状态
 
-# 附件最大体积（字节，可选）
-ATTACHMENT_MAX_SIZE=52428800
+也可以直接命令行调用：
+
+```bash
+sudo node scripts/deploy.mjs service-install
+sudo node scripts/deploy.mjs service-disable
+sudo node scripts/deploy.mjs service-uninstall
+node scripts/deploy.mjs status
 ```
 
-说明：
-- `TOOL_WHITELIST` 仅做字符串匹配；当权限事件的标识不是工具名而是 `permission`（例如 `external_directory`）时，白名单应按该标识配置。
-- `.env.example` 中如果出现未被代码读取的字段（例如某些历史遗留的 timeout 参数），以 `src/` 中实际读取为准。
+日志默认在 `logs/service.log` 和 `logs/service.err`。
+
+## 环境变量
+
+以 `src/config.ts` 实际读取为准：
+
+| 变量 | 必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `FEISHU_APP_ID` | 是 | - | 飞书应用 App ID |
+| `FEISHU_APP_SECRET` | 是 | - | 飞书应用 App Secret |
+| `FEISHU_ENCRYPT_KEY` | 否 | - | 事件加密 Key（启用加密时需要） |
+| `FEISHU_VERIFICATION_TOKEN` | 否 | - | 事件校验 Token（启用校验时需要） |
+| `OPENCODE_HOST` | 否 | `localhost` | OpenCode 地址 |
+| `OPENCODE_PORT` | 否 | `4096` | OpenCode 端口 |
+| `ALLOWED_USERS` | 否 | 空 | 飞书 open_id 白名单，逗号分隔 |
+| `DEFAULT_PROVIDER` | 否 | `openai` | 默认模型提供商 |
+| `DEFAULT_MODEL` | 否 | `gpt-5.2` | 默认模型 |
+| `TOOL_WHITELIST` | 否 | `Read,Glob,Grep,Task` | 自动放行权限标识列表 |
+| `OUTPUT_UPDATE_INTERVAL` | 否 | `3000` | 输出刷新间隔（ms） |
+| `ATTACHMENT_MAX_SIZE` | 否 | `52428800` | 附件大小上限（字节） |
+
+注意：`TOOL_WHITELIST` 做字符串匹配，权限事件可能使用 `permission` 字段值（例如 `external_directory`），请按实际标识配置。
 
 ## 飞书后台配置
 
-需要订阅的事件（至少）：
-- `im.message.receive_v1`（收消息）
-- `card.action.trigger`（卡片按钮回调）
-- `im.message.recalled_v1`（用户撤回消息，用于触发 undo）
-- `im.chat.member.user.deleted_v1`（成员退群清理）
-- `im.chat.disbanded_v1`（群解散清理）
+建议使用长连接模式（WebSocket 事件），并至少订阅：
 
-常用权限（至少）：
-- `im:message`（收发消息、更新消息/卡片、撤回消息）
-- `im:chat`（建群、拉人、解散、查询成员）
-- `im:resource`（下载/上传附件资源）
+| 事件 | 用途 |
+|---|---|
+| `im.message.receive_v1` | 接收用户消息 |
+| `card.action.trigger` | 处理卡片按钮回调 |
+| `im.message.recalled_v1` | 用户撤回触发 undo 逻辑 |
+| `im.chat.member.user.deleted_v1` | 成员退群清理会话 |
+| `im.chat.disbanded_v1` | 群解散清理会话 |
 
-## 使用方式
+最少权限建议：
 
-### 群聊
+- `im:message`（收发、更新、撤回消息）
+- `im:chat`（建群、拉人、解散、查成员）
+- `im:resource`（下载图片/文件资源）
 
-- 在群里 @机器人并发送内容。
-- 或回复机器人消息继续对话。
-
-### 私聊
-
-- 私聊机器人会收到“创建会话群”卡片。
-- 点击后会创建一个新的群聊，把你拉进群，并绑定一个新的 OpenCode session。
-
-### 常用命令
+## 命令速查
 
 | 命令 | 说明 |
 |---|---|
-| `/panel` | 打开控制面板卡片（切模型/Agent、停止、撤回） |
-| `/model` | 查看当前模型（仅当前群聊） |
-| `/model <provider:model>` | 切换模型（也支持只填 model 的简写） |
+| `/help` | 查看帮助 |
+| `/panel` | 打开控制面板（模型、Agent、停止、撤回） |
+| `/model` | 查看当前模型 |
+| `/model <provider:model>` | 切换模型（支持 `provider/model`） |
 | `/agent` | 查看当前 Agent |
 | `/agent <name>` | 切换 Agent |
-| `/agent off` | 关闭 Agent（使用默认） |
+| `/agent off` | 关闭 Agent，回到默认 |
 | `/stop` | 中断当前会话执行 |
-| `/undo` | 回滚上一轮交互（OpenCode + 飞书消息同步撤回） |
-| `/session new` / `/clear` | 新建会话（重置上下文） |
-| `/clear free session` | 扫描并清理空闲群聊（仅机器人独自在群内时解散并清理会话） |
-| `/status` | 查看当前群绑定的 session 信息 |
+| `/undo` | 撤回上一轮交互（OpenCode + 飞书同步） |
+| `/session new` | 新建会话并重置上下文 |
+| `/clear` | 等价于 `/session new` |
+| `/clear free session` | 清理空闲群聊和会话 |
+| `/status` | 查看当前群绑定状态 |
 
-## 关键技术点（以及为什么容易出错）
+## 关键实现细节
 
-### 1) 权限请求与反馈（permission.asked）
+### 1) 权限请求回传
 
-OpenCode 的权限事件是通过 SSE 推送的：
-- `permission.asked` 的 `properties.tool` 可能是对象（用于关联 tool call），并不等于“工具名”。真正表示权限类型/用途的字段通常是 `properties.permission`（例如 `external_directory`）。
-- 权限回传接口 `/session/{sessionID}/permissions/{permissionID}` 的 body 需要使用枚举值：`response: "once" | "always" | "reject"`。
+- `permission.asked` 里 `tool` 可能不是字符串工具名，实际白名单匹配可落在 `permission` 字段。
+- 回传接口要求 `response` 为 `once | always | reject`，不是 `allow | deny`。
 
-桥接端要同时解决两件事：
-- 把权限事件正确路由回触发它的飞书群（依赖 `sessionID -> chatId` 的映射）。
-- 把卡片按钮点击转换成 OpenCode 认可的回传 payload，否则会出现“飞书提示成功，但 OpenCode 实际无反应”。
+### 2) question 工具交互
 
-### 2) 工具问答交互（question.asked）
+- 问题渲染为飞书卡片，答案通过用户文字回复解析。
+- 解析后按 OpenCode 需要的 `answers: string[][]` 回传，并纳入撤回历史。
 
-当 OpenCode 通过 question 工具向用户提问时：
-- 需要把问题结构渲染成飞书卡片（选项可能很多、还可能多选）。
-- 用户的答案通常来自“文字回复”（A/1/自定义/跳过），桥接端要能解析并组装成 OpenCode 需要的 `answers: string[][]`。
-- 回答完成后，还要把这次问答纳入撤回历史（/undo）以保持对话一致性。
+### 3) 流式与思考卡片
 
-### 3) 流式输出与卡片切换
+- 文本与思考分流写入输出缓冲；出现思考内容时自动切换卡片模式。
+- 卡片支持展开/折叠思考，最终态保留完成状态。
 
-- 飞书对更新频率和消息类型有约束：文本消息不能直接“原地变成卡片”，因此桥接端采用缓冲+定时更新，并在必要时删除旧消息重新发卡片。
-- reasoning/thinking 需要和普通文本分流，同时提供“折叠/展开”以避免卡片过长。
+### 4) `/undo` 一致性
 
-### 4) /undo 的一致性
+- 需要同时删除飞书侧消息并对 OpenCode 执行 `revert`。
+- 问答场景可能涉及多条关联消息，使用递归回滚兜底。
 
-OpenCode 的 `revert` 是“回滚某条消息及其之后的上下文”，而飞书端撤回则是“删除具体消息”。要做到体验一致：
-- 必须记录每轮交互在飞书侧发过哪些消息（含卡片/文本、可能不止一条）。
-- 回滚时既要算出 OpenCode 该 revert 到哪条 messageID，也要把对应飞书消息删除干净。
-- 问答场景下，回答和提问是两条交互（并且 OpenCode 内部 messageID 关联不直接暴露），需要做递归回滚兜底。
+## 故障排查
 
-## 数据与状态
-
-- 群聊与 OpenCode session 的绑定会持久化到 `.chat-sessions.json`（用于重启后继续路由权限/提问到正确群）。
-
-## 排错
-
-- 现象：飞书有权限卡片，点了“允许/拒绝”但 OpenCode 无反应
-  - 检查桥接端日志是否打印了权限回传失败（会返回“权限响应失败”toast）。
-  - 对照 OpenCode webui 行为：通常是 `POST /session/<id>/permissions/<permissionID>` 且 body 为 `{"response":"once|always|reject"}`。
-
-- 现象：权限/提问卡片发不到群里
-  - 说明 `sessionID -> chatId` 映射丢失或未建立；确认机器人是通过本桥接创建会话/群，且 `.chat-sessions.json` 未被清空。
-
-- 现象：卡片更新失败（飞书返回特定错误码）
-  - 常见原因是“消息类型不匹配”或卡片结构不允许原地更新；桥接端会尽量降级为重新发送。
+| 现象 | 优先检查 |
+|---|---|
+| 点权限卡片后 OpenCode 无反应 | 日志是否出现权限回传失败；确认回传值是 `once/always/reject` |
+| 权限卡或提问卡发不到群 | `.chat-sessions.json` 中 `sessionId -> chatId` 映射是否存在 |
+| 卡片更新失败 | 消息类型是否匹配；失败后是否降级为重发卡片 |
+| 后台模式无法停止 | `logs/bridge.pid` 是否残留；使用 `npm run stop:bridge` 清理 |
 
 ## License
 
