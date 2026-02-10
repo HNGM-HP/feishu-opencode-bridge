@@ -73,6 +73,26 @@ flowchart LR
 opencode serve --port 4096
 ```
 
+提示（可选）：如果你希望 OpenCode 裸启动（不带 `--port` 参数），可以在 OpenCode 配置文件 `opencode.json` 的根对象中添加/合并 `server` 字段：
+
+```json
+"server": {
+  "port": 4096,
+  "hostname": "0.0.0.0",
+  "cors": [
+    "*"
+  ]
+}
+```
+
+配置后可直接运行：
+
+```bash
+opencode serve
+```
+
+如果由 AI 代理执行部署，建议先询问用户是否需要写入这段配置，再进行修改。
+
 ### 3) 配置环境变量
 
 ```bash
