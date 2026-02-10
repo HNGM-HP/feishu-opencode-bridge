@@ -11,7 +11,7 @@ import { lifecycleHandler } from './handlers/lifecycle.js';
 import { commandHandler } from './handlers/command.js';
 import { cardActionHandler } from './handlers/card-action.js';
 import { validateConfig } from './config.js';
-import { buildStreamCard, buildThinkingCard, type StreamCardData } from './feishu/cards-stream.js';
+import { buildStreamCard, type StreamCardData } from './feishu/cards-stream.js';
 
 async function main() {
   console.log('╔════════════════════════════════════════════════╗');
@@ -155,103 +155,54 @@ async function main() {
           ? 'completed'
           : 'processing';
 
-    let bodyMessageId = buffer.messageId;
-    let thinkingMessageId = buffer.thinkingMessageId;
+    let messageId = buffer.messageId;
 
     const cardData: StreamCardData = {
       text: current.text,
       thinking: current.thinking,
       chatId: buffer.chatId,
-      messageId: bodyMessageId || undefined,
-      thinkingMessageId: thinkingMessageId || undefined,
+      messageId: messageId || undefined,
       tools: [...buffer.tools],
       status,
       showThinking: false,
     };
 
-    const hadBodyBeforeThinking = Boolean(bodyMessageId);
-    let createdThinkingCard = false;
-    const buildThinkingOnlyCard = (targetMessageId?: string): object => {
-      return buildThinkingCard({
-        ...cardData,
-        messageId: targetMessageId || thinkingMessageId || undefined,
-        thinkingMessageId: targetMessageId || thinkingMessageId || undefined,
-      });
-    };
-
-    const hasThinkingContent = current.thinking.trim().length > 0;
-    const hasThinkingDelta = thinking.length > 0;
-    const isFinalFlush = buffer.status !== 'running';
-    const shouldUpdateThinkingCard = hasThinkingContent && (!thinkingMessageId || hasThinkingDelta || isFinalFlush);
-
-    if (shouldUpdateThinkingCard) {
-      if (thinkingMessageId) {
-        const updated = await feishuClient.updateCard(thinkingMessageId, buildThinkingOnlyCard(thinkingMessageId));
-        if (!updated) {
-          console.warn(`[Index] 思考卡片更新失败，保留原消息ID: msgId=${thinkingMessageId}`);
-        }
-      } else {
-        const newThinkingMessageId = await feishuClient.sendCard(buffer.chatId, buildThinkingOnlyCard());
-        if (newThinkingMessageId) {
-          thinkingMessageId = newThinkingMessageId;
-          createdThinkingCard = true;
-          outputBuffer.setThinkingMessageId(buffer.key, newThinkingMessageId);
-          cardData.thinkingMessageId = newThinkingMessageId;
-        }
-      }
-    }
-
-    const buildBodyCard = (): object => {
+    const buildCard = (): object => {
       return buildStreamCard({
         ...cardData,
-        messageId: bodyMessageId || undefined,
-        thinkingMessageId: thinkingMessageId || undefined,
+        messageId: messageId || undefined,
       });
     };
 
-    if (bodyMessageId) {
-      const shouldReorderBody = createdThinkingCard && hadBodyBeforeThinking;
-      if (shouldReorderBody) {
-        const oldBodyMessageId = bodyMessageId;
-        const newBodyMessageId = await feishuClient.sendCard(buffer.chatId, buildBodyCard());
-        if (newBodyMessageId) {
-          bodyMessageId = newBodyMessageId;
-          outputBuffer.setMessageId(buffer.key, newBodyMessageId);
-          cardData.messageId = newBodyMessageId;
-          void feishuClient.deleteMessage(oldBodyMessageId).catch(() => undefined);
-        } else {
-          await feishuClient.updateCard(bodyMessageId, buildBodyCard());
-        }
-      } else {
-        const updated = await feishuClient.updateCard(bodyMessageId, buildBodyCard());
-        if (!updated) {
-          const newBodyMessageId = await feishuClient.sendCard(buffer.chatId, buildBodyCard());
-          if (newBodyMessageId) {
-            void feishuClient.deleteMessage(bodyMessageId).catch(() => undefined);
-            bodyMessageId = newBodyMessageId;
-            outputBuffer.setMessageId(buffer.key, newBodyMessageId);
-            cardData.messageId = newBodyMessageId;
-          }
+    if (messageId) {
+      const updated = await feishuClient.updateCard(messageId, buildCard());
+      if (!updated) {
+        const newMessageId = await feishuClient.sendCard(buffer.chatId, buildCard());
+        if (newMessageId) {
+          void feishuClient.deleteMessage(messageId).catch(() => undefined);
+          messageId = newMessageId;
+          outputBuffer.setMessageId(buffer.key, newMessageId);
+          cardData.messageId = newMessageId;
         }
       }
     } else {
-      const newBodyMessageId = await feishuClient.sendCard(buffer.chatId, buildBodyCard());
-      if (newBodyMessageId) {
-        bodyMessageId = newBodyMessageId;
-        outputBuffer.setMessageId(buffer.key, newBodyMessageId);
-        cardData.messageId = newBodyMessageId;
+      const newMessageId = await feishuClient.sendCard(buffer.chatId, buildCard());
+      if (newMessageId) {
+        messageId = newMessageId;
+        outputBuffer.setMessageId(buffer.key, newMessageId);
+        cardData.messageId = newMessageId;
       }
     }
 
-    cardData.messageId = bodyMessageId || undefined;
-    cardData.thinkingMessageId = thinkingMessageId || undefined;
+    cardData.messageId = messageId || undefined;
+    cardData.thinkingMessageId = undefined;
 
     upsertLiveCardInteraction(
       buffer.chatId,
       buffer.replyMessageId,
       cardData,
-      bodyMessageId,
-      thinkingMessageId,
+      messageId,
+      null,
       buffer.openCodeMsgId
     );
 
