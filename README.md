@@ -6,9 +6,7 @@
 
 把本地 OpenCode 直接接进飞书群聊：@机器人即可对话，支持流式输出、思考折叠卡片、权限确认、question 提问与 `/undo` 一致回滚。
 
-如果你要让 AI 代理自动部署，请看 `AI_Deployment_Guide.md`。
-
-新时代了，让 AI 来完成复杂操作吧：请在 OpenCode 发送如下指令：`阅读https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md并安装`。
+新时代了，让 AI 代理自动部署吧：请在 OpenCode 执行如下指令：`阅读https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md并安装`。
 
 ## 目录
 
@@ -160,8 +158,6 @@ node scripts/deploy.mjs status
 |---|---|---|---|
 | `FEISHU_APP_ID` | 是 | - | 飞书应用 App ID |
 | `FEISHU_APP_SECRET` | 是 | - | 飞书应用 App Secret |
-| `FEISHU_ENCRYPT_KEY` | 否 | - | 事件加密 Key（启用加密时需要） |
-| `FEISHU_VERIFICATION_TOKEN` | 否 | - | 事件校验 Token（启用校验时需要） |
 | `OPENCODE_HOST` | 否 | `localhost` | OpenCode 地址 |
 | `OPENCODE_PORT` | 否 | `4096` | OpenCode 端口 |
 | `ALLOWED_USERS` | 否 | 空 | 飞书 open_id 白名单，逗号分隔 |
