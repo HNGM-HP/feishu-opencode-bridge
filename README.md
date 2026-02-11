@@ -77,8 +77,9 @@ flowchart LR
 ```bash
 opencode serve --port 4096
 ```
+- 新版本带参数启动opencode 不再显示CLI界面，如果你希望同时展示，请参考下方方法；
 
-提示（可选）：如果你希望 OpenCode 裸启动（不带 `--port` 参数），可以在 OpenCode 配置文件 `opencode.json` 的根对象中添加/合并 `server` 字段：
+- 提示（推荐）： OpenCode 裸启动（不带 `serve --port` 参数），可以在 OpenCode 配置文件 `opencode.json` 的根对象中添加/合并 `server` 字段：
 
 ```json
 "server": {
@@ -93,7 +94,7 @@ opencode serve --port 4096
 配置后可直接运行：
 
 ```bash
-opencode serve
+opencode
 ```
 
 如果由 AI 代理执行部署，建议先询问用户是否需要写入这段配置，再进行修改。
@@ -188,10 +189,10 @@ node scripts/deploy.mjs status
 | 事件 | 必需 | 用途 |
 |---|---|---|
 | `im.message.receive_v1` | 是 | 接收群聊/私聊消息 |
-| `card.action.trigger` | 是 | 处理控制面板、权限确认、提问卡片回调 |
 | `im.message.recalled_v1` | 是 | 用户撤回触发 `/undo` 回滚 |
 | `im.chat.member.user.deleted_v1` | 是 | 成员退群后触发生命周期清理 |
 | `im.chat.disbanded_v1` | 是 | 群解散后清理本地会话映射 |
+| `card.action.trigger` | 是 | 处理控制面板、权限确认、提问卡片回调 |
 | `im.message.message_read_v1` | 否 | 已读回执兼容（可不开启） |
 
 ### 应用权限（按实际调用接口梳理）
@@ -204,6 +205,26 @@ node scripts/deploy.mjs status
 | 群管理员设置（可选） | `im.chatManagers.addManagers` | 预留能力，当前流程默认不依赖 |
 
 注意：飞书后台不同版本的权限名称可能略有差异，按上表接口能力逐项对齐即可；若只需文本对话且不处理附件，可暂不开启 `im:resource`。
+- 可以复制下方参数保存至qx.json，然后在飞书`开发者后台`--`权限管理`--`批量导入/导出权限`
+```json
+{
+  "scopes": {
+    "tenant": [
+      "im:message.p2p_msg:readonly",
+      "im:chat",
+      "im:chat.members:read",
+      "im:chat.members:write_only",
+      "im:message",
+      "im:message.group_at_msg:readonly",
+      "im:message.group_msg",
+      "im:message.reactions:read",
+      "im:message.reactions:write_only",
+      "im:resource"
+    ],
+    "user": []
+  }
+}
+```
 
 ## 📖 命令速查
 
