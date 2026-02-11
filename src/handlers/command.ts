@@ -58,6 +58,42 @@ const ROLE_TOOL_ALIAS: Record<string, RoleTool> = {
 const ROLE_CREATE_USAGE = '用法: 创建角色 名称=旅行助手; 描述=擅长制定旅行计划; 类型=主; 工具=webfetch; 提示词=先给出预算再做路线';
 const INTERNAL_HIDDEN_AGENT_NAMES = new Set(['compaction', 'title', 'summary']);
 
+interface BuiltinAgentTranslationRule {
+  names: string[];
+  descriptionStartsWith: string;
+  translated: string;
+}
+
+const BUILTIN_AGENT_TRANSLATION_RULES: BuiltinAgentTranslationRule[] = [
+  {
+    names: ['build', 'default'],
+    descriptionStartsWith: 'the default agent. executes tools based on configured permissions.',
+    translated: '默认执行角色（按权限自动调用工具）',
+  },
+  {
+    names: ['plan'],
+    descriptionStartsWith: 'plan mode. disallows all edit tools.',
+    translated: '规划模式（禁用编辑类工具）',
+  },
+  {
+    names: ['general'],
+    descriptionStartsWith: 'general-purpose agent for researching complex questions and executing multi-step tasks.',
+    translated: '通用研究子角色（复杂任务/并行执行）',
+  },
+  {
+    names: ['explore'],
+    descriptionStartsWith: 'fast agent specialized for exploring codebases.',
+    translated: '代码库探索子角色（快速检索与定位）',
+  },
+];
+
+function normalizeAgentText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 interface RoleCreatePayload {
   name: string;
   description: string;
@@ -374,7 +410,10 @@ export class CommandHandler {
 
       // 1. 如果没有提供模型名称，显示当前状态
       if (!modelName) {
-        const currentModel = session?.preferredModel || `${modelConfig.defaultProvider}:${modelConfig.defaultModel}`;
+        const envDefaultModel = modelConfig.defaultProvider && modelConfig.defaultModel
+          ? `${modelConfig.defaultProvider}:${modelConfig.defaultModel}`
+          : undefined;
+        const currentModel = session?.preferredModel || envDefaultModel || '跟随 OpenCode 默认模型';
         await feishuClient.reply(messageId, `当前模型: ${currentModel}`);
         return;
       }
@@ -448,7 +487,28 @@ export class CommandHandler {
     return agent.mode === 'subagent' ? '（子）' : '（主）';
   }
 
+  private getBuiltinAgentTranslation(agent: OpencodeAgentInfo): string | undefined {
+    const normalizedName = normalizeAgentText(agent.name);
+    const normalizedDescription = normalizeAgentText(typeof agent.description === 'string' ? agent.description : '');
+
+    for (const rule of BUILTIN_AGENT_TRANSLATION_RULES) {
+      const byName = rule.names.includes(normalizedName);
+      const byDescription = normalizedDescription.length > 0
+        && normalizedDescription.startsWith(rule.descriptionStartsWith);
+      if (byName || byDescription) {
+        return rule.translated;
+      }
+    }
+
+    return undefined;
+  }
+
   private getAgentDisplayName(agent: OpencodeAgentInfo): string {
+    const translatedBuiltinName = this.getBuiltinAgentTranslation(agent);
+    if (translatedBuiltinName) {
+      return translatedBuiltinName;
+    }
+
     const description = typeof agent.description === 'string' ? agent.description.trim() : '';
     return description || agent.name;
   }
@@ -471,6 +531,9 @@ export class CommandHandler {
     });
     if (byDescription) return byDescription;
 
+    const byDisplayName = agents.find(agent => this.getAgentDisplayName(agent).toLowerCase() === lowered);
+    if (byDisplayName) return byDisplayName;
+
     return agents.find(agent => this.getAgentDisplayText(agent).toLowerCase() === lowered);
   }
 
@@ -479,6 +542,53 @@ export class CommandHandler {
     const found = agents.find(agent => agent.name === currentAgentName);
     if (found) return this.getAgentDisplayText(found);
     return currentAgentName;
+  }
+
+  private getRuntimeDefaultAgentName(config: OpencodeRuntimeConfig): string | undefined {
+    const record = config as Record<string, unknown>;
+    const rawValue = record.default_agent ?? record.defaultAgent;
+    if (typeof rawValue !== 'string') {
+      return undefined;
+    }
+
+    const normalized = rawValue.trim();
+    return normalized.length > 0 ? normalized : undefined;
+  }
+
+  private findAgentByNameInsensitive(agents: OpencodeAgentInfo[], name: string): OpencodeAgentInfo | undefined {
+    const target = name.trim().toLowerCase();
+    if (!target) return undefined;
+    return agents.find(agent => agent.name.toLowerCase() === target);
+  }
+
+  private shouldHideDefaultRoleOption(defaultAgentName: string | undefined, agents: OpencodeAgentInfo[]): boolean {
+    const buildAgent = this.findAgentByNameInsensitive(agents, 'build');
+    if (!buildAgent) {
+      return false;
+    }
+
+    if (!defaultAgentName) {
+      return true;
+    }
+
+    return defaultAgentName.trim().toLowerCase() === 'build';
+  }
+
+  private getDefaultRoleDisplay(defaultAgentName: string | undefined, agents: OpencodeAgentInfo[]): string {
+    if (defaultAgentName) {
+      const defaultAgent = this.findAgentByNameInsensitive(agents, defaultAgentName);
+      if (defaultAgent) {
+        return this.getAgentDisplayText(defaultAgent);
+      }
+      return defaultAgentName;
+    }
+
+    const buildAgent = this.findAgentByNameInsensitive(agents, 'build');
+    if (buildAgent) {
+      return this.getAgentDisplayText(buildAgent);
+    }
+
+    return '默认角色';
   }
 
   private getRoleAgentMap(config: OpencodeRuntimeConfig): Record<string, OpencodeAgentConfig> {
@@ -603,10 +713,18 @@ export class CommandHandler {
     const currentModel = session?.preferredModel || '默认';
 
     // 获取列表供卡片使用
-    const { providers } = await opencodeClient.getProviders();
-    const allAgents = await opencodeClient.getAgents();
+    const [{ providers }, allAgents, runtimeConfig] = await Promise.all([
+      opencodeClient.getProviders(),
+      opencodeClient.getAgents(),
+      opencodeClient.getConfig(),
+    ]);
+
     const visibleAgents = this.getVisibleAgents(allAgents);
-    const currentAgent = this.getCurrentRoleDisplay(session?.preferredAgent, visibleAgents);
+    const defaultAgentName = this.getRuntimeDefaultAgentName(runtimeConfig);
+    const hideDefaultRoleOption = this.shouldHideDefaultRoleOption(defaultAgentName, visibleAgents);
+    const currentAgent = session?.preferredAgent
+      ? this.getCurrentRoleDisplay(session.preferredAgent, visibleAgents)
+      : this.getDefaultRoleDisplay(defaultAgentName, visibleAgents);
 
     const modelOptions: { label: string; value: string }[] = [];
     const safeProviders = Array.isArray(providers) ? providers : [];
@@ -630,13 +748,14 @@ export class CommandHandler {
       }
     }
 
-    const agentOptions = [
-      { label: '（主）默认角色', value: 'none' },
-      ...visibleAgents.map(agent => ({
-        label: this.getAgentDisplayText(agent),
-        value: agent.name,
-      })),
-    ];
+    const mappedAgentOptions = visibleAgents.map(agent => ({
+      label: this.getAgentDisplayText(agent),
+      value: agent.name,
+    }));
+
+    const agentOptions = hideDefaultRoleOption
+      ? mappedAgentOptions
+      : [{ label: '（主）默认角色', value: 'none' }, ...mappedAgentOptions];
 
     return buildControlCard({
       conversationKey: `chat:${chatId}`,

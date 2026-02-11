@@ -342,17 +342,25 @@ export class GroupHandler {
       }
 
       // 提取 providerId 和 modelId
-      let providerId = modelConfig.defaultProvider;
-      let modelId = modelConfig.defaultModel;
-      
+      let providerId: string | undefined;
+      let modelId: string | undefined;
+
+      if (modelConfig.defaultProvider && modelConfig.defaultModel) {
+        providerId = modelConfig.defaultProvider;
+        modelId = modelConfig.defaultModel;
+      }
+
       if (config?.preferredModel) {
         const [p, m] = config.preferredModel.split(':');
         if (p && m) {
           providerId = p;
           modelId = m;
         } else {
-            // 简单的模型名，默认provider?
+            // 兼容历史数据：仅模型名时，尝试复用环境中声明的 provider
+            // 若未声明 provider，则不显式传 model，交由 OpenCode 默认模型决策
+          if (providerId) {
             modelId = config.preferredModel;
+          }
         }
       }
 

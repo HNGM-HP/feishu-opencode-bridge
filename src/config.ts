@@ -32,9 +32,14 @@ export const userConfig = {
 };
 
 // 模型配置
+const configuredDefaultProvider = process.env.DEFAULT_PROVIDER?.trim();
+const configuredDefaultModel = process.env.DEFAULT_MODEL?.trim();
+const hasConfiguredDefaultModel = Boolean(configuredDefaultProvider && configuredDefaultModel);
+
 export const modelConfig = {
-  defaultProvider: process.env.DEFAULT_PROVIDER || 'openai',
-  defaultModel: process.env.DEFAULT_MODEL || 'gpt-5.2',
+  // 不配置时交由 OpenCode 自身默认模型决策
+  defaultProvider: hasConfiguredDefaultModel ? configuredDefaultProvider : undefined,
+  defaultModel: hasConfiguredDefaultModel ? configuredDefaultModel : undefined,
 };
 
 // 权限配置

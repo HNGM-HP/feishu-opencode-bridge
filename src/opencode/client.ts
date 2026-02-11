@@ -240,6 +240,28 @@ class OpencodeClientWrapper extends EventEmitter {
     return newSession.data!;
   }
 
+  private resolveModelOption(options?: { providerId?: string; modelId?: string }): { providerID: string; modelID: string } | undefined {
+    const providerId = options?.providerId?.trim();
+    const modelId = options?.modelId?.trim();
+    if (providerId && modelId) {
+      return {
+        providerID: providerId,
+        modelID: modelId,
+      };
+    }
+
+    const defaultProvider = modelConfig.defaultProvider;
+    const defaultModel = modelConfig.defaultModel;
+    if (defaultProvider && defaultModel) {
+      return {
+        providerID: defaultProvider,
+        modelID: defaultModel,
+      };
+    }
+
+    return undefined;
+  }
+
   // 发送消息并等待响应
   async sendMessage(
     sessionId: string,
@@ -251,12 +273,7 @@ class OpencodeClientWrapper extends EventEmitter {
     }
   ): Promise<{ info: Message; parts: Part[] }> {
     const client = this.getClient();
-
-    const providerId = options?.providerId || modelConfig.defaultProvider;
-    const modelId = options?.modelId || modelConfig.defaultModel;
-    const model = providerId && modelId
-      ? { providerID: providerId, modelID: modelId }
-      : undefined;
+    const model = this.resolveModelOption(options);
 
     const response = await client.session.prompt({
       path: { id: sessionId },
@@ -282,12 +299,7 @@ class OpencodeClientWrapper extends EventEmitter {
     messageId?: string
   ): Promise<{ info: Message; parts: Part[] }> {
     const client = this.getClient();
-
-    const providerId = options?.providerId || modelConfig.defaultProvider;
-    const modelId = options?.modelId || modelConfig.defaultModel;
-    const model = providerId && modelId
-      ? { providerID: providerId, modelID: modelId }
-      : undefined;
+    const model = this.resolveModelOption(options);
 
     const response = await client.session.prompt({
       path: { id: sessionId },
@@ -313,12 +325,7 @@ class OpencodeClientWrapper extends EventEmitter {
     }
   ): Promise<void> {
     const client = this.getClient();
-
-    const providerId = options?.providerId || modelConfig.defaultProvider;
-    const modelId = options?.modelId || modelConfig.defaultModel;
-    const model = providerId && modelId
-      ? { providerID: providerId, modelID: modelId }
-      : undefined;
+    const model = this.resolveModelOption(options);
 
     await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/prompt_async`, {
       method: 'POST',

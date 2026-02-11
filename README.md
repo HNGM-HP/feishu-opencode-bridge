@@ -167,13 +167,15 @@ node scripts/deploy.mjs status
 | `OPENCODE_HOST` | 否 | `localhost` | OpenCode 地址 |
 | `OPENCODE_PORT` | 否 | `4096` | OpenCode 端口 |
 | `ALLOWED_USERS` | 否 | 空 | 飞书 open_id 白名单，逗号分隔；为空时不启用白名单 |
-| `DEFAULT_PROVIDER` | 否 | `openai` | 默认模型提供商 |
-| `DEFAULT_MODEL` | 否 | `gpt-5.2` | 默认模型 |
+| `DEFAULT_PROVIDER` | 否 | 空 | 默认模型提供商;与 `DEFAULT_MODEL` 同时配置才生效 |
+| `DEFAULT_MODEL` | 否 | 空 | 默认模型;未配置时跟随 OpenCode 自身默认模型 |
 | `TOOL_WHITELIST` | 否 | `Read,Glob,Grep,Task` | 自动放行权限标识列表 |
 | `OUTPUT_UPDATE_INTERVAL` | 否 | `3000` | 输出刷新间隔（ms） |
 | `ATTACHMENT_MAX_SIZE` | 否 | `52428800` | 附件大小上限（字节） |
 
 注意：`TOOL_WHITELIST` 做字符串匹配，权限事件可能使用 `permission` 字段值（例如 `external_directory`），请按实际标识配置。
+
+模型默认策略:仅当 `DEFAULT_PROVIDER` 与 `DEFAULT_MODEL` 同时配置时，桥接才会显式指定模型;否则由 OpenCode 自身默认模型决定。
 
 `ALLOWED_USERS` 说明：
 
@@ -199,10 +201,9 @@ node scripts/deploy.mjs status
 
 | 能力分组 | 代码中调用的接口 | 用途 |
 |---|---|---|
-| 消息读写与撤回（`im:message`） | `im.message.create` / `im.message.reply` / `im.message.patch` / `im.message.delete` | 发送文本/卡片、流式更新卡片、撤回消息 |
+| 消息读写与撤回（`im:message`） | `im:message.p2p_msg:readonly` / `im:message.group_at_msg:readonly` / `im:message.group_msg` / `im:message.reactions:read` / `im:message.reactions:write_only` | 发送文本/卡片、流式更新卡片、撤回消息 |
 | 消息资源下载（`im:resource`） | `im.messageResource.get` | 下载图片/文件附件并转发给 OpenCode |
-| 群与成员管理（`im:chat`） | `im.chat.create` / `im.chat.delete` / `im.chat.list` / `im.chat.get` / `im.chatMembers.get` / `im.chatMembers.create` | 私聊建群、拉人进群、查群成员、自动清理无效群 |
-| 群管理员设置（可选） | `im.chatManagers.addManagers` | 预留能力，当前流程默认不依赖 |
+| 群与成员管理（`im:chat`） | `im:chat.members:read` / `im:chat.members:write_only` | 私聊建群、拉人进群、查群成员、自动清理无效群 |
 
 注意：飞书后台不同版本的权限名称可能略有差异，按上表接口能力逐项对齐即可；若只需文本对话且不处理附件，可暂不开启 `im:resource`。
 - 可以复制下方参数保存至qx.json，然后在飞书`开发者后台`--`权限管理`--`批量导入/导出权限`
