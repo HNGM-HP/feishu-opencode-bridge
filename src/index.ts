@@ -36,6 +36,102 @@ async function main() {
   // 3. 配置输出缓冲 (流式响应)
   const streamContentMap = new Map<string, { text: string; thinking: string }>();
   const reasoningSnapshotMap = new Map<string, string>();
+  const textSnapshotMap = new Map<string, string>();
+  const streamToolStateMap = new Map<string, Map<string, { name: string; status: 'pending' | 'running' | 'completed' | 'failed'; output?: string }>>();
+  const retryNoticeMap = new Map<string, string>();
+  const errorNoticeMap = new Map<string, string>();
+
+  const toSessionId = (value: unknown): string => {
+    return typeof value === 'string' ? value : '';
+  };
+
+  const normalizeToolStatus = (status: unknown): 'pending' | 'running' | 'completed' | 'failed' => {
+    if (status === 'pending' || status === 'running' || status === 'completed') {
+      return status;
+    }
+    if (status === 'error' || status === 'failed') {
+      return 'failed';
+    }
+    return 'running';
+  };
+
+  const stringifyToolOutput = (value: unknown): string | undefined => {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value === 'string') return value;
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  const getOrCreateToolStateBucket = (bufferKey: string): Map<string, { name: string; status: 'pending' | 'running' | 'completed' | 'failed'; output?: string }> => {
+    let bucket = streamToolStateMap.get(bufferKey);
+    if (!bucket) {
+      bucket = new Map();
+      streamToolStateMap.set(bufferKey, bucket);
+    }
+    return bucket;
+  };
+
+  const syncToolsToBuffer = (bufferKey: string): void => {
+    const bucket = streamToolStateMap.get(bufferKey);
+    if (!bucket) {
+      outputBuffer.setTools(bufferKey, []);
+      return;
+    }
+    outputBuffer.setTools(bufferKey, Array.from(bucket.values()));
+  };
+
+  const upsertToolState = (
+    bufferKey: string,
+    toolKey: string,
+    nextState: { name: string; status: 'pending' | 'running' | 'completed' | 'failed'; output?: string }
+  ): void => {
+    const bucket = getOrCreateToolStateBucket(bufferKey);
+    const previous = bucket.get(toolKey);
+    bucket.set(toolKey, {
+      name: nextState.name,
+      status: nextState.status,
+      output: nextState.output ?? previous?.output,
+    });
+    syncToolsToBuffer(bufferKey);
+  };
+
+  const markActiveToolsCompleted = (bufferKey: string): void => {
+    const bucket = streamToolStateMap.get(bufferKey);
+    if (!bucket) return;
+    for (const [toolKey, item] of bucket.entries()) {
+      if (item.status === 'running' || item.status === 'pending') {
+        bucket.set(toolKey, {
+          ...item,
+          status: 'completed',
+        });
+      }
+    }
+    syncToolsToBuffer(bufferKey);
+  };
+
+  const appendTextFromPart = (sessionID: string, part: { id?: unknown; text?: unknown }, chatId: string): void => {
+    if (typeof part.text !== 'string') return;
+    if (typeof part.id !== 'string' || !part.id) {
+      outputBuffer.append(`chat:${chatId}`, part.text);
+      return;
+    }
+
+    const key = `${sessionID}:${part.id}`;
+    const prev = textSnapshotMap.get(key) || '';
+    const current = part.text;
+    if (current.startsWith(prev)) {
+      const deltaText = current.slice(prev.length);
+      if (deltaText) {
+        outputBuffer.append(`chat:${chatId}`, deltaText);
+      }
+    } else if (current !== prev) {
+      outputBuffer.append(`chat:${chatId}`, current);
+    }
+    textSnapshotMap.set(key, current);
+  };
 
   const appendReasoningFromPart = (sessionID: string, part: { id?: unknown; text?: unknown }, chatId: string): void => {
     if (typeof part.text !== 'string') return;
@@ -58,13 +154,60 @@ async function main() {
     reasoningSnapshotMap.set(key, current);
   };
 
-  const clearReasoningSnapshotsForSession = (sessionID: string): void => {
+  const clearPartSnapshotsForSession = (sessionID: string): void => {
     const prefix = `${sessionID}:`;
     for (const key of reasoningSnapshotMap.keys()) {
       if (key.startsWith(prefix)) {
         reasoningSnapshotMap.delete(key);
       }
     }
+    for (const key of textSnapshotMap.keys()) {
+      if (key.startsWith(prefix)) {
+        textSnapshotMap.delete(key);
+      }
+    }
+    retryNoticeMap.delete(sessionID);
+    errorNoticeMap.delete(sessionID);
+  };
+
+  const formatProviderError = (raw: unknown): string => {
+    if (!raw || typeof raw !== 'object') {
+      return '模型执行失败';
+    }
+
+    const error = raw as { name?: unknown; data?: Record<string, unknown> };
+    const name = typeof error.name === 'string' ? error.name : 'UnknownError';
+    const data = error.data && typeof error.data === 'object' ? error.data : {};
+
+    if (name === 'APIError') {
+      const message = typeof data.message === 'string' ? data.message : '上游接口报错';
+      const statusCode = typeof data.statusCode === 'number' ? data.statusCode : undefined;
+      if (statusCode === 429) {
+        return `模型请求过快（429）：${message}`;
+      }
+      if (statusCode === 408 || statusCode === 504) {
+        return `模型响应超时：${message}`;
+      }
+      return statusCode ? `模型接口错误（${statusCode}）：${message}` : `模型接口错误：${message}`;
+    }
+
+    if (name === 'ProviderAuthError') {
+      const providerID = typeof data.providerID === 'string' ? data.providerID : 'unknown';
+      const message = typeof data.message === 'string' ? data.message : '鉴权失败';
+      return `模型鉴权失败（${providerID}）：${message}`;
+    }
+
+    if (name === 'MessageOutputLengthError') {
+      return '模型输出超过长度限制，已中断';
+    }
+
+    if (name === 'MessageAbortedError') {
+      const message = typeof data.message === 'string' ? data.message : '会话已中断';
+      return `会话已中断：${message}`;
+    }
+
+    const generic = typeof data.message === 'string' ? data.message : '';
+    return generic ? `${name}：${generic}` : `${name}`;
   };
 
   const upsertLiveCardInteraction = (
@@ -208,7 +351,9 @@ async function main() {
 
     if (buffer.status !== 'running') {
       streamContentMap.delete(buffer.key);
-      clearReasoningSnapshotsForSession(buffer.sessionId);
+      streamToolStateMap.delete(buffer.key);
+      clearPartSnapshotsForSession(buffer.sessionId);
+      outputBuffer.clear(buffer.key);
     }
   });
 
@@ -410,6 +555,114 @@ async function main() {
           console.warn(`[权限] ⚠️ 未找到关联的群聊 (Session: ${event.sessionId})，无法发送确认卡片`);
       }
   });
+
+  const applyFailureToSession = async (sessionID: string, errorText: string): Promise<void> => {
+    const chatId = chatSessionStore.getChatId(sessionID);
+    if (!chatId) return;
+
+    const dedupeKey = `${sessionID}:${errorText}`;
+    if (errorNoticeMap.get(sessionID) === dedupeKey) {
+      return;
+    }
+    errorNoticeMap.set(sessionID, dedupeKey);
+
+    const bufferKey = `chat:${chatId}`;
+    const existingBuffer = outputBuffer.get(bufferKey) || outputBuffer.getOrCreate(bufferKey, chatId, sessionID, null);
+
+    outputBuffer.append(bufferKey, `\n\n❌ ${errorText}`);
+    outputBuffer.setStatus(bufferKey, 'failed');
+
+    if (!existingBuffer.messageId) {
+      await feishuClient.sendText(chatId, `❌ ${errorText}`);
+    }
+  };
+
+  // 监听会话状态变化（重试提示）
+  opencodeClient.on('sessionStatus', (event: any) => {
+    const sessionID = toSessionId(event?.sessionID || event?.sessionId);
+    const status = event?.status;
+    if (!sessionID || !status || typeof status !== 'object') return;
+
+    const chatId = chatSessionStore.getChatId(sessionID);
+    if (!chatId) return;
+
+    const bufferKey = `chat:${chatId}`;
+    if (!outputBuffer.get(bufferKey)) {
+      outputBuffer.getOrCreate(bufferKey, chatId, sessionID, null);
+    }
+
+    if (status.type === 'retry') {
+      const attempt = typeof status.attempt === 'number' ? status.attempt : 0;
+      const message = typeof status.message === 'string' ? status.message : '上游模型请求失败，正在重试';
+      const signature = `${attempt}:${message}`;
+      if (retryNoticeMap.get(sessionID) !== signature) {
+        retryNoticeMap.set(sessionID, signature);
+        outputBuffer.appendThinking(bufferKey, `\n⚠️ 模型重试（第 ${attempt} 次）：${message}\n`);
+      }
+      return;
+    }
+
+    if (status.type === 'idle') {
+      markActiveToolsCompleted(bufferKey);
+      const buffer = outputBuffer.get(bufferKey);
+      if (buffer && buffer.status === 'running') {
+        outputBuffer.setStatus(bufferKey, 'completed');
+      }
+    }
+  });
+
+  // 监听会话空闲事件（完成兜底）
+  opencodeClient.on('sessionIdle', (event: any) => {
+    const sessionID = toSessionId(event?.sessionID || event?.sessionId);
+    if (!sessionID) return;
+
+    const chatId = chatSessionStore.getChatId(sessionID);
+    if (!chatId) return;
+
+    const bufferKey = `chat:${chatId}`;
+    markActiveToolsCompleted(bufferKey);
+    const buffer = outputBuffer.get(bufferKey);
+    if (buffer && buffer.status === 'running') {
+      outputBuffer.setStatus(bufferKey, 'completed');
+    }
+  });
+
+  // 监听消息更新（记录 openCodeMsgId / 处理 assistant error）
+  opencodeClient.on('messageUpdated', async (event: any) => {
+    const info = event?.info;
+    if (!info || typeof info !== 'object') return;
+
+    const role = typeof info.role === 'string' ? info.role : '';
+    if (role !== 'assistant') return;
+
+    const sessionID = toSessionId(info.sessionID);
+    if (!sessionID) return;
+
+    const chatId = chatSessionStore.getChatId(sessionID);
+    if (!chatId) return;
+
+    const bufferKey = `chat:${chatId}`;
+    if (!outputBuffer.get(bufferKey)) {
+      outputBuffer.getOrCreate(bufferKey, chatId, sessionID, null);
+    }
+
+    if (typeof info.id === 'string' && info.id) {
+      outputBuffer.setOpenCodeMsgId(bufferKey, info.id);
+    }
+
+    if (info.error) {
+      const text = formatProviderError(info.error);
+      await applyFailureToSession(sessionID, text);
+    }
+  });
+
+  // 监听会话级错误（网络超时、模型限流等）
+  opencodeClient.on('sessionError', async (event: any) => {
+    const sessionID = toSessionId(event?.sessionID || event?.sessionId);
+    if (!sessionID) return;
+    const text = formatProviderError(event?.error);
+    await applyFailureToSession(sessionID, text);
+  });
   
   // 监听流式输出
   opencodeClient.on('messagePartUpdated', (event: any) => {
@@ -421,10 +674,66 @@ async function main() {
       const chatId = chatSessionStore.getChatId(sessionID);
       if (!chatId) return;
 
+      const bufferKey = `chat:${chatId}`;
+      if (!outputBuffer.get(bufferKey)) {
+        outputBuffer.getOrCreate(bufferKey, chatId, sessionID, null);
+      }
+
+      if (part?.type === 'tool') {
+          const toolName = typeof part.tool === 'string' && part.tool.trim() ? part.tool.trim() : 'tool';
+          const status = normalizeToolStatus(part?.state?.status);
+          const output = status === 'failed'
+            ? stringifyToolOutput(part?.state?.error)
+            : stringifyToolOutput(part?.state?.output);
+          const toolKey = typeof part.callID === 'string' && part.callID
+            ? part.callID
+            : typeof part.id === 'string' && part.id
+              ? part.id
+              : `${toolName}:${Date.now()}`;
+
+          upsertToolState(bufferKey, toolKey, {
+            name: toolName,
+            status,
+            ...(output ? { output } : {}),
+          });
+      }
+
+      if (part?.type === 'subtask') {
+          const taskName = typeof part.description === 'string' && part.description.trim()
+            ? part.description.trim()
+            : 'Subtask';
+          const outputParts: string[] = [];
+          if (typeof part.agent === 'string' && part.agent.trim()) {
+            outputParts.push(`agent=${part.agent.trim()}`);
+          }
+          if (typeof part.prompt === 'string' && part.prompt.trim()) {
+            const normalizedPrompt = part.prompt.trim().replace(/\s+/g, ' ');
+            outputParts.push(`prompt=${normalizedPrompt.slice(0, 120)}`);
+          }
+          const output = outputParts.join(' | ');
+          const toolKey = typeof part.id === 'string' && part.id ? `subtask:${part.id}` : `subtask:${Date.now()}`;
+          upsertToolState(bufferKey, toolKey, {
+            name: taskName,
+            status: 'running',
+            ...(output ? { output } : {}),
+          });
+      }
+
+      if (part?.type === 'retry') {
+          const retryMessage = part?.error?.data?.message;
+          if (typeof retryMessage === 'string' && retryMessage.trim()) {
+            outputBuffer.appendThinking(bufferKey, `\n⚠️ 模型请求重试：${retryMessage.trim()}\n`);
+          }
+      }
+
+      if (part?.type === 'compaction') {
+          outputBuffer.appendThinking(bufferKey, '\n🗜️ 会话上下文已压缩\n');
+      }
+
       if (typeof delta === 'string') {
           if (delta.length > 0) {
             if (part?.type === 'reasoning') {
-                outputBuffer.appendThinking(`chat:${chatId}`, delta);
+                outputBuffer.appendThinking(bufferKey, delta);
                 if (typeof part?.id === 'string') {
                   const key = `${sessionID}:${part.id}`;
                   const prev = reasoningSnapshotMap.get(key) || '';
@@ -432,12 +741,22 @@ async function main() {
                 }
                 return;
             }
-            outputBuffer.append(`chat:${chatId}`, delta);
+            if (part?.type === 'text' && typeof part?.id === 'string') {
+              const key = `${sessionID}:${part.id}`;
+              const prev = textSnapshotMap.get(key) || '';
+              textSnapshotMap.set(key, `${prev}${delta}`);
+            }
+            outputBuffer.append(bufferKey, delta);
             return;
           }
 
           if (part?.type === 'reasoning') {
             appendReasoningFromPart(sessionID, part, chatId);
+            return;
+          }
+
+          if (part?.type === 'text') {
+            appendTextFromPart(sessionID, part, chatId);
             return;
           }
       }
@@ -451,14 +770,14 @@ async function main() {
                     ? delta.reasoning
                     : '';
               if (reasoningText) {
-                outputBuffer.appendThinking(`chat:${chatId}`, reasoningText);
+                outputBuffer.appendThinking(bufferKey, reasoningText);
               }
           } else if (delta.type === 'thinking' && typeof delta.thinking === 'string') {
-              outputBuffer.appendThinking(`chat:${chatId}`, delta.thinking);
+              outputBuffer.appendThinking(bufferKey, delta.thinking);
           } else if (delta.type === 'text' && delta.text) {
-              outputBuffer.append(`chat:${chatId}`, delta.text);
+              outputBuffer.append(bufferKey, delta.text);
           } else if (delta.text) {
-              outputBuffer.append(`chat:${chatId}`, delta.text);
+              outputBuffer.append(bufferKey, delta.text);
           }
           return;
       }
@@ -467,7 +786,7 @@ async function main() {
       if (part?.type === 'reasoning' && typeof part.text === 'string') {
           appendReasoningFromPart(sessionID, part, chatId);
       } else if (part?.type === 'text' && typeof part.text === 'string') {
-          outputBuffer.append(`chat:${chatId}`, part.text);
+          appendTextFromPart(sessionID, part, chatId);
       }
   });
 

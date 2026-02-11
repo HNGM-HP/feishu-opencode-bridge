@@ -5,7 +5,6 @@ import { outputBuffer } from '../opencode/output-buffer.js';
 import { questionHandler } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
 import { buildQuestionCardV2, buildQuestionAnsweredCard } from '../feishu/cards.js';
-import { type StreamCardData } from '../feishu/cards-stream.js';
 import { parseCommand } from '../commands/parser.js';
 import { commandHandler } from './command.js';
 import { modelConfig, attachmentConfig } from '../config.js';
@@ -16,7 +15,6 @@ import { promises as fs } from 'fs';
 
 // 附件相关配置
 const ATTACHMENT_BASE_DIR = path.resolve(process.cwd(), 'tmp', 'feishu-uploads');
-const OPENCODE_WAIT_REMINDER_MS = 180000;
 const ALLOWED_ATTACHMENT_EXTENSIONS = new Set([
   '.png', '.jpg', '.jpeg', '.gif', '.webp', '.pdf',
   '.pjp', '.pjpeg', '.jfif', '.jpe'
@@ -91,6 +89,33 @@ type OpencodePartInput = { type: 'text'; text: string } | OpencodeFilePartInput;
 export type QuestionSkipActionResult = 'applied' | 'not_found' | 'stale_card' | 'invalid_state';
 
 export class GroupHandler {
+  private ensureStreamingBuffer(chatId: string, sessionId: string, replyMessageId: string | null): void {
+    const key = `chat:${chatId}`;
+    const current = outputBuffer.get(key);
+    if (current && current.status !== 'running') {
+      outputBuffer.clear(key);
+    }
+
+    if (!outputBuffer.get(key)) {
+      outputBuffer.getOrCreate(key, chatId, sessionId, replyMessageId);
+    }
+  }
+
+  private formatDispatchError(error: unknown): string {
+    const message = error instanceof Error ? error.message : String(error);
+    const normalized = message.toLowerCase();
+
+    if (normalized.includes('fetch failed') || normalized.includes('networkerror')) {
+      return '与 OpenCode 的连接失败，请检查服务是否在线或网络是否超时';
+    }
+
+    if (normalized.includes('timed out') || normalized.includes('timeout')) {
+      return '请求 OpenCode 超时，请稍后重试';
+    }
+
+    return `请求失败: ${message}`;
+  }
+
   // 处理群聊消息
   async handleMessage(event: FeishuMessageEvent): Promise<void> {
     const { chatId, content, messageId, senderId, attachments } = event;
@@ -269,6 +294,13 @@ export class GroupHandler {
       }
 
       console.log(`[Group] 提交问题回答: requestId=${pending.request.id.slice(0, 8)}...`);
+
+      this.ensureStreamingBuffer(
+        chatId,
+        pending.request.sessionID,
+        interactionUserMessageId || replyMessageId || null
+      );
+
       const success = await opencodeClient.replyQuestion(pending.request.id, answers);
       
       if (success) {
@@ -315,9 +347,8 @@ export class GroupHandler {
     attachments?: FeishuAttachment[],
     config?: { preferredModel?: string; preferredAgent?: string }
   ): Promise<void> {
-    // 注册输出缓冲
-    outputBuffer.getOrCreate(`chat:${chatId}`, chatId, sessionId, messageId);
-    let waitReminderTimer: NodeJS.Timeout | null = null;
+    const bufferKey = `chat:${chatId}`;
+    this.ensureStreamingBuffer(chatId, sessionId, messageId);
 
     try {
       console.log(`[Group] 发送消息: chat=${chatId}, session=${sessionId.slice(0, 8)}...`);
@@ -364,113 +395,28 @@ export class GroupHandler {
         }
       }
 
-      // 发送请求（不中断主请求，仅在等待过久时提示）
-      waitReminderTimer = setTimeout(() => {
-        void feishuClient.reply(messageId, '⏳ OpenCode 正在处理中，请稍候...').catch(() => undefined);
-      }, OPENCODE_WAIT_REMINDER_MS);
-
-      const result = await opencodeClient.sendMessageParts(
+      // 异步触发 OpenCode 请求，后续输出通过事件流持续推送
+      await opencodeClient.sendMessagePartsAsync(
         sessionId,
         parts,
         {
           providerId,
           modelId,
           agent: config?.preferredAgent
-        },
-        messageId
+        }
       );
 
-      if (waitReminderTimer) {
-        clearTimeout(waitReminderTimer);
-        waitReminderTimer = null;
-      }
-
-      // 处理结果：只更新缓冲区元数据，由统一的流式渲染器输出卡片
-      const finalData: StreamCardData = {
-        thinking: '',
-        text: '',
-        tools: [],
-        status: 'completed',
-        showThinking: false,
-      };
-
-      if (result.parts) {
-        for (const part of result.parts) {
-          if (part.type === 'reasoning') {
-            const reasoningText =
-              typeof (part as { text?: unknown }).text === 'string'
-                ? (part as { text: string }).text
-                : '';
-            if (reasoningText) {
-              finalData.thinking += reasoningText;
-            }
-            continue;
-          }
-
-          if (part.type === 'text') {
-            const textPart = part as { text?: unknown };
-            if (typeof textPart.text === 'string') {
-              finalData.text += textPart.text;
-            }
-            continue;
-          }
-
-          if (part.type === 'tool') {
-            const toolPart = part as {
-              tool?: unknown;
-              state?: {
-                status?: unknown;
-                output?: unknown;
-              };
-            };
-
-            const toolName = typeof toolPart.tool === 'string' ? toolPart.tool : 'tool';
-            const rawStatus = toolPart.state?.status;
-            const toolStatus =
-              rawStatus === 'pending' || rawStatus === 'running' || rawStatus === 'completed' || rawStatus === 'failed'
-                ? rawStatus
-                : 'completed';
-
-            let toolOutput: string | undefined;
-            if (typeof toolPart.state?.output === 'string') {
-              toolOutput = toolPart.state.output;
-            } else if (toolPart.state?.output !== undefined) {
-              try {
-                toolOutput = JSON.stringify(toolPart.state.output);
-              } catch {
-                toolOutput = String(toolPart.state.output);
-              }
-            }
-
-            finalData.tools.push({
-              name: toolName,
-              status: toolStatus,
-              ...(toolOutput ? { output: toolOutput } : {}),
-            });
-          }
-        }
-      }
-
-      const bufferKey = `chat:${chatId}`;
-      outputBuffer.setTools(bufferKey, finalData.tools);
-      outputBuffer.setFinalSnapshot(bufferKey, finalData.text, finalData.thinking);
-      outputBuffer.setOpenCodeMsgId(bufferKey, result.info?.id || '');
-      outputBuffer.setStatus(bufferKey, 'completed');
-
     } catch (error) {
+      const errorMessage = this.formatDispatchError(error);
+      console.error('[Group] 请求派发失败:', error);
 
-      const message = error instanceof Error ? error.message : String(error);
-      console.error('[Group] 处理失败:', message);
+      outputBuffer.append(bufferKey, `\n\n❌ ${errorMessage}`);
+      outputBuffer.setStatus(bufferKey, 'failed');
 
-      await feishuClient.reply(messageId, `❌ 处理出错: ${message}`);
-      
-      outputBuffer.setStatus(`chat:${chatId}`, 'completed'); // 即使出错也标记完成以清理 buffer
-    } finally {
-      if (waitReminderTimer) {
-        clearTimeout(waitReminderTimer);
-        waitReminderTimer = null;
+      const currentBuffer = outputBuffer.get(bufferKey);
+      if (!currentBuffer?.messageId) {
+        await feishuClient.reply(messageId, `❌ ${errorMessage}`);
       }
-      outputBuffer.clear(`chat:${chatId}`);
     }
   }
 

@@ -200,6 +200,11 @@ class OpencodeClientWrapper extends EventEmitter {
       this.emit('sessionIdle', event.properties);
     }
 
+    // 会话错误事件
+    if (event.type === 'session.error' && event.properties) {
+      this.emit('sessionError', event.properties);
+    }
+
     // 消息部分更新事件（流式输出）
     if (event.type === 'message.part.updated' && event.properties) {
       this.emit('messagePartUpdated', event.properties);
@@ -324,10 +329,10 @@ class OpencodeClientWrapper extends EventEmitter {
       agent?: string;
     }
   ): Promise<void> {
-    const client = this.getClient();
+    this.getClient();
     const model = this.resolveModelOption(options);
 
-    await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/prompt_async`, {
+    const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/prompt_async`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -336,6 +341,42 @@ class OpencodeClientWrapper extends EventEmitter {
         ...(model ? { model } : {}),
       }),
     });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+      throw new Error(`prompt_async 请求失败 (${response.status} ${response.statusText})${suffix}`);
+    }
+  }
+
+  // 异步发送多 parts 消息（立即返回，结果通过事件流推送）
+  async sendMessagePartsAsync(
+    sessionId: string,
+    parts: Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; url: string; filename?: string }>,
+    options?: {
+      providerId?: string;
+      modelId?: string;
+      agent?: string;
+    }
+  ): Promise<void> {
+    this.getClient();
+    const model = this.resolveModelOption(options);
+
+    const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/prompt_async`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        parts,
+        ...(options?.agent ? { agent: options.agent } : {}),
+        ...(model ? { model } : {}),
+      }),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+      throw new Error(`prompt_async 请求失败 (${response.status} ${response.statusText})${suffix}`);
+    }
   }
 
   // 发送命令
