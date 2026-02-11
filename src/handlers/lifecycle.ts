@@ -23,14 +23,21 @@ export class LifecycleHandler {
   // 检查群是否为空，为空则解散
   private async checkAndDisbandIfEmpty(chatId: string): Promise<void> {
     const members = await feishuClient.getChatMembers(chatId);
-    
-    // 飞书 API getChatMembers 返回的是用户成员列表
-    // 机器人可能包含在列表中（取决于 API 行为），也可能不包含
-    // 安全起见，我们检查是否有非机器人用户
-    // 如果成员数为 0（无用户）或只有 1 个成员（可能是机器人本身），则解散
-    // 更准确的判断：如果没有人类用户，则解散
-    
+
     console.log(`[Lifecycle] 检查群 ${chatId} 成员数: ${members.length}`);
+
+    // 未配置白名单时：只要群里还有任意成员，就不自动解散
+    // 仅在成员数为 0 时才执行清理，避免误删仅剩 1 名用户的群
+    if (!userConfig.isWhitelistEnabled) {
+      if (members.length > 0) {
+        console.log(`[Lifecycle] 群 ${chatId} 未启用白名单且仍有成员，跳过解散`);
+        return;
+      }
+
+      console.log(`[Lifecycle] 群 ${chatId} 未启用白名单且成员为 0，准备解散...`);
+      await this.cleanupAndDisband(chatId);
+      return;
+    }
 
     // 检查是否有白名单用户在群内
     const hasAllowedUser = members.some(memberId => userConfig.allowedUsers.includes(memberId));
@@ -50,22 +57,25 @@ export class LifecycleHandler {
     // 如果成员数 <= 1，认为群为空（只有机器人或无人）
     if (members.length <= 1) {
       console.log(`[Lifecycle] 群 ${chatId} 成员不足且无白名单用户，准备解散...`);
-      
-      // 1. 清理 OpenCode 会话
-      const sessionId = chatSessionStore.getSessionId(chatId);
-      if (sessionId) {
-        // 尝试删除会话（如果 API 支持）
-        try {
-          await opencodeClient.deleteSession(sessionId);
-        } catch (e) {
-          console.warn(`[Lifecycle] 删除 OpenCode 会话 ${sessionId} 失败:`, e);
-        }
-        chatSessionStore.removeSession(chatId);
-      }
-
-      // 2. 解散飞书群
-      await feishuClient.disbandChat(chatId);
+      await this.cleanupAndDisband(chatId);
     }
+  }
+
+  private async cleanupAndDisband(chatId: string): Promise<void> {
+    // 1. 清理 OpenCode 会话
+    const sessionId = chatSessionStore.getSessionId(chatId);
+    if (sessionId) {
+      // 尝试删除会话（如果 API 支持）
+      try {
+        await opencodeClient.deleteSession(sessionId);
+      } catch (e) {
+        console.warn(`[Lifecycle] 删除 OpenCode 会话 ${sessionId} 失败:`, e);
+      }
+      chatSessionStore.removeSession(chatId);
+    }
+
+    // 2. 解散飞书群
+    await feishuClient.disbandChat(chatId);
   }
 }
 

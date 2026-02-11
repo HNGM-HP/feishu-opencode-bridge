@@ -20,7 +20,10 @@ export const opencodeConfig = {
 // 用户配置
 export const userConfig = {
   // 允许使用机器人的用户open_id列表
-  allowedUsers: (process.env.ALLOWED_USERS || '').split(',').filter(Boolean),
+  allowedUsers: (process.env.ALLOWED_USERS || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(item => item.length > 0),
   
   // 是否启用用户白名单（如果为空则不限制）
   get isWhitelistEnabled() {
