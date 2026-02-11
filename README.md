@@ -1,4 +1,4 @@
-# Feishu x OpenCode Bridge
+# Feishu x OpenCode Bridge ✨🤖✨
 
 [![Node.js >= 20](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -11,7 +11,7 @@
 请阅读 https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md 文档并安装程序
 ```
 
-## 目录
+## 📋 目录
 
 - [为什么用它](#为什么用它)
 - [能力总览](#能力总览)
@@ -24,14 +24,15 @@
 - [关键实现细节](#关键实现细节)
 - [故障排查](#故障排查)
 
-## 为什么用它
+## 💡为什么用它
 
-- 飞书侧统一入口：群里直接对话，不用切到 OpenCode WebUI。
-- 多轮上下文可持续：群聊和 OpenCode session 持久绑定，重启后可继续。
-- 交互闭环：AI 要权限、要提问时，全部走飞书卡片，不丢上下文。
-- 对生产友好：提供 Node 脚本 + Linux systemd 菜单化部署方式。
+- 💖 不从“零”开始：不需要你再次配置、构建新的项目，不增加学习成本，不增加设备成本。
+- 💬 飞书侧统一入口：群里直接对话，不用切到 OpenCode WebUI。
+- 👥 多轮上下文可持续：群聊和 OpenCode session 持久绑定，重启后可继续。
+- 📋 交互闭环：AI 要权限、要提问时，全部走飞书卡片，不丢上下文。
+- 🐳 对生产友好：提供 Node 脚本 + Linux systemd 菜单化部署方式。
 
-## 能力总览
+## 📸 能力总览
 
 | 能力 | 说明 |
 |---|---|
@@ -45,7 +46,7 @@
 | 一致撤回 | `/undo` 同时回滚 OpenCode 和飞书消息，问答场景支持递归回滚 |
 | 附件转发 | 支持飞书图片/文件，下载后按 OpenCode file part 发送 |
 
-## 架构概览
+## 📌 架构概览
 
 ```mermaid
 flowchart LR
@@ -63,7 +64,7 @@ flowchart LR
 - 输出缓冲层负责节流更新，避免高频 patch 触发限制。
 - 文本与卡片属于两种消息类型，必要时会删旧消息并重发卡片。
 
-## 快速开始
+## 🚀 快速开始
 
 ### 1) 前置要求
 
@@ -115,7 +116,7 @@ npm install
 npm run dev
 ```
 
-## 部署与运维
+## 💻 部署与运维
 
 ### npm 命令
 
@@ -154,7 +155,7 @@ node scripts/deploy.mjs status
 
 日志默认在 `logs/service.log` 和 `logs/service.err`。
 
-## 环境变量
+## ⚙️ 环境变量
 
 以 `src/config.ts` 实际读取为准：
 
@@ -173,7 +174,7 @@ node scripts/deploy.mjs status
 
 注意：`TOOL_WHITELIST` 做字符串匹配，权限事件可能使用 `permission` 字段值（例如 `external_directory`），请按实际标识配置。
 
-## 飞书后台配置
+## ⚙️ 飞书后台配置
 
 建议使用长连接模式（WebSocket 事件），并至少订阅：
 
@@ -191,7 +192,7 @@ node scripts/deploy.mjs status
 - `im:chat`（建群、拉人、解散、查成员）
 - `im:resource`（下载图片/文件资源）
 
-## 命令速查
+## 📖 命令速查
 
 | 命令 | 说明 |
 |---|---|
@@ -211,7 +212,7 @@ node scripts/deploy.mjs status
 | `/clear free session` | 清理空闲群聊和会话 |
 | `/status` | 查看当前群绑定状态 |
 
-## Agent（角色）使用
+## 🤖 Agent（角色）使用
 
 ### 1) 查看与切换
 
@@ -248,7 +249,7 @@ node scripts/deploy.mjs status
 
 - 修改后如果 `/panel` 未立即显示新角色，重启 OpenCode 即可。
 
-## 关键实现细节
+## 📌 关键实现细节
 
 ### 1) 权限请求回传
 
@@ -270,7 +271,7 @@ node scripts/deploy.mjs status
 - 需要同时删除飞书侧消息并对 OpenCode 执行 `revert`。
 - 问答场景可能涉及多条关联消息，使用递归回滚兜底。
 
-## 故障排查
+## 🛠️ 故障排查
 
 | 现象 | 优先检查 |
 |---|---|
@@ -279,6 +280,15 @@ node scripts/deploy.mjs status
 | 卡片更新失败 | 消息类型是否匹配；失败后是否降级为重发卡片 |
 | 后台模式无法停止 | `logs/bridge.pid` 是否残留；使用 `npm run stop:bridge` 清理 |
 | 私聊一直发你好 | 私聊无法做会话隔离，所以私聊的功能就是创建新会话群 |
-## License
+## 📝 许可证
 
-MIT
+本项目采用 [GNU General Public License v3.0](LICENSE)
+
+**GPL v3 意味着：**
+- ✅ 可自由使用、修改和分发
+- ✅ 可用于商业目的
+- 📝 必须开源修改版本
+- 📝 必须保留原作者版权
+- 📝 衍生作品必须使用 GPL v3 协议
+
+如果这个项目对你有帮助，请给个 ⭐️ Star！
