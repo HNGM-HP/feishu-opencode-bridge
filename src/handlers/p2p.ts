@@ -177,8 +177,18 @@ export class P2PHandler {
       const sent = await this.safeReply(messageId, chatId, '✅ 会话群已创建！\n正在为您跳转...');
       // 发送群名片或链接（飞书会自动把群显示在列表里）
       
-      // 在新群里发一条欢迎消息
-      await feishuClient.sendText(newChatId, '👋 会话已就绪，请直接在这里发送消息与 AI 对话。');
+      // 在新群里发送开场说明
+      const onboardingText = [
+        '👋 会话已就绪，直接发送需求即可开始。',
+        '🎭 使用 /panel 选择角色，使用 /help 查看完整命令。',
+        '🧩 可创建自定义角色：创建角色 名称=旅行助手; 描述=擅长规划行程; 类型=主; 工具=webfetch',
+      ].join('\n');
+      await feishuClient.sendText(newChatId, onboardingText);
+      try {
+        await commandHandler.pushPanelCard(newChatId);
+      } catch (error) {
+        console.warn('[P2P] 发送开场控制面板失败:', error);
+      }
 
       if (!sent) {
         return {

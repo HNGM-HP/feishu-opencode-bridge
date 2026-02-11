@@ -21,7 +21,7 @@ export interface InteractionRecord {
   userFeishuMsgId: string;
   openCodeMsgId: string; // The ID of the user message in OpenCode (to revert to/from)
   botFeishuMsgIds: string[]; // All bot messages generated in this turn
-  type: 'normal' | 'question_answer';
+  type: 'normal' | 'question_prompt' | 'question_answer';
   cardData?: any; // Store StreamCardData or other card data for UI interactions
   timestamp: number;
 }
@@ -101,10 +101,46 @@ class ChatSessionStore {
   updateConfig(chatId: string, config: { preferredModel?: string; preferredAgent?: string }): void {
     const session = this.data.get(chatId);
     if (session) {
-      if (config.preferredModel !== undefined) session.preferredModel = config.preferredModel;
-      if (config.preferredAgent !== undefined) session.preferredAgent = config.preferredAgent;
+      if ('preferredModel' in config) {
+        if (config.preferredModel) {
+          session.preferredModel = config.preferredModel;
+        } else {
+          delete session.preferredModel;
+        }
+      }
+
+      if ('preferredAgent' in config) {
+        if (config.preferredAgent) {
+          session.preferredAgent = config.preferredAgent;
+        } else {
+          delete session.preferredAgent;
+        }
+      }
       this.save();
     }
+  }
+
+  private updateLegacyPointers(session: ChatSessionData): void {
+    let lastUserMsgId: string | undefined;
+    for (let i = session.interactionHistory.length - 1; i >= 0; i--) {
+      const msgId = session.interactionHistory[i].userFeishuMsgId;
+      if (msgId) {
+        lastUserMsgId = msgId;
+        break;
+      }
+    }
+
+    let lastAiMsgId: string | undefined;
+    for (let i = session.interactionHistory.length - 1; i >= 0; i--) {
+      const msgIds = session.interactionHistory[i].botFeishuMsgIds;
+      if (msgIds.length > 0) {
+        lastAiMsgId = msgIds[msgIds.length - 1];
+        break;
+      }
+    }
+
+    session.lastFeishuUserMsgId = lastUserMsgId;
+    session.lastFeishuAiMsgId = lastAiMsgId;
   }
 
   // Push a new interaction to history
@@ -115,16 +151,14 @@ class ChatSessionStore {
         session.interactionHistory = [];
       }
       session.interactionHistory.push(record);
-      
+
       // Sync legacy fields for backward compatibility
-      session.lastFeishuUserMsgId = record.userFeishuMsgId;
-      if (record.botFeishuMsgIds.length > 0) {
-        session.lastFeishuAiMsgId = record.botFeishuMsgIds[record.botFeishuMsgIds.length - 1];
-      }
+      this.updateLegacyPointers(session);
       
       // Limit history size (e.g., keep last 20)
       if (session.interactionHistory.length > 20) {
         session.interactionHistory.shift();
+        this.updateLegacyPointers(session);
       }
       
       this.save();
@@ -136,16 +170,9 @@ class ChatSessionStore {
     const session = this.data.get(chatId);
     if (session && session.interactionHistory && session.interactionHistory.length > 0) {
       const record = session.interactionHistory.pop();
-      
+
       // Update legacy fields
-      const last = session.interactionHistory[session.interactionHistory.length - 1];
-      if (last) {
-        session.lastFeishuUserMsgId = last.userFeishuMsgId;
-        session.lastFeishuAiMsgId = last.botFeishuMsgIds[last.botFeishuMsgIds.length - 1];
-      } else {
-        session.lastFeishuUserMsgId = undefined;
-        session.lastFeishuAiMsgId = undefined;
-      }
+      this.updateLegacyPointers(session);
       
       this.save();
       return record;

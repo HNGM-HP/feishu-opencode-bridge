@@ -88,6 +88,8 @@ type OpencodeFilePartInput = { type: 'file'; mime: string; url: string; filename
 
 type OpencodePartInput = { type: 'text'; text: string } | OpencodeFilePartInput;
 
+export type QuestionSkipActionResult = 'applied' | 'not_found' | 'stale_card' | 'invalid_state';
+
 export class GroupHandler {
   // 处理群聊消息
   async handleMessage(event: FeishuMessageEvent): Promise<void> {
@@ -141,7 +143,8 @@ export class GroupHandler {
     chatId: string, 
     text: string, 
     messageId: string, 
-    attachments?: FeishuAttachment[]
+    attachments?: FeishuAttachment[],
+    source: 'text' | 'button' = 'text'
   ): Promise<boolean> {
     const pending = questionHandler.getByConversationKey(`chat:${chatId}`);
     if (!pending) return false;
@@ -194,17 +197,64 @@ export class GroupHandler {
         const cardMsgId = await feishuClient.sendCard(chatId, card);
         if (cardMsgId) {
             questionHandler.setCardMessageId(pending.request.id, cardMsgId);
+            chatSessionStore.addInteraction(chatId, {
+              userFeishuMsgId: '',
+              openCodeMsgId: '',
+              botFeishuMsgIds: [cardMsgId],
+              type: 'question_prompt',
+              timestamp: Date.now()
+            });
         }
     } else {
       // 提交所有答案
-      await this.submitQuestionAnswers(pending, messageId, chatId);
+      const interactionUserMessageId = source === 'text' ? messageId : '';
+      await this.submitQuestionAnswers(pending, messageId, chatId, interactionUserMessageId);
     }
 
     return true;
   }
 
+  // 处理题目卡片中的“跳过本题”按钮
+  async handleQuestionSkipAction(params: {
+    chatId: string;
+    messageId?: string;
+    requestId?: string;
+    questionIndex?: number;
+  }): Promise<QuestionSkipActionResult> {
+    const pending = questionHandler.getByConversationKey(`chat:${params.chatId}`);
+    if (!pending) {
+      return 'not_found';
+    }
+
+    if (params.requestId && params.requestId !== pending.request.id) {
+      return 'stale_card';
+    }
+
+    if (typeof params.questionIndex === 'number' && params.questionIndex !== pending.currentQuestionIndex) {
+      return 'stale_card';
+    }
+
+    const messageId = params.messageId || pending.feishuCardMessageId;
+    if (!messageId) {
+      return 'invalid_state';
+    }
+
+    try {
+      const handled = await this.checkPendingQuestion(params.chatId, '跳过', messageId, undefined, 'button');
+      return handled ? 'applied' : 'not_found';
+    } catch (error) {
+      console.error('[Group] 处理跳过按钮失败:', error);
+      return 'invalid_state';
+    }
+  }
+
   // 提交问题答案
-  private async submitQuestionAnswers(pending: any, replyMessageId: string, chatId: string): Promise<void> {
+  private async submitQuestionAnswers(
+    pending: any,
+    replyMessageId: string,
+    chatId: string,
+    interactionUserMessageId: string
+  ): Promise<void> {
       const answers: string[][] = [];
 
       const totalQuestions = pending.request.questions.length;
@@ -226,14 +276,14 @@ export class GroupHandler {
           const answeredCard = buildQuestionAnsweredCard(answers);
           const msgId = await feishuClient.sendCard(pending.chatId, answeredCard);
           
-          if (msgId) {
-             // 记录交互历史
-             chatSessionStore.addInteraction(chatId, {
-                 userFeishuMsgId: replyMessageId,
-                 openCodeMsgId: '', // 暂时无法获取，Undo时需动态查找
-                 botFeishuMsgIds: [msgId],
-                 type: 'question_answer',
-                 timestamp: Date.now()
+           if (msgId) {
+              // 记录交互历史
+              chatSessionStore.addInteraction(chatId, {
+                  userFeishuMsgId: interactionUserMessageId,
+                  openCodeMsgId: '', // 暂时无法获取，Undo时需动态查找
+                  botFeishuMsgIds: [msgId],
+                  type: 'question_answer',
+                  timestamp: Date.now()
              });
           }
       } else {

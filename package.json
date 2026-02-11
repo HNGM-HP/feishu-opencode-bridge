@@ -8,8 +8,10 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "start:bridge": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\start.ps1",
-    "stop:bridge": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\stop.ps1"
+    "deploy:bridge": "node scripts/deploy.mjs deploy",
+    "manage:bridge": "node scripts/deploy.mjs menu",
+    "start:bridge": "node scripts/start.mjs",
+    "stop:bridge": "node scripts/stop.mjs"
   },
   "keywords": ["feishu", "opencode", "chatbot", "ai"],
   "author": "",

@@ -1,4 +1,4 @@
 @echo off
 setlocal
-node "%~dp0stop.mjs" %*
+node "%~dp0deploy.mjs" %*
 endlocal

@@ -24,6 +24,17 @@ function formatError(error: unknown): { message: string; responseData?: unknown 
   return { message, responseData };
 }
 
+function extractApiCode(responseData: unknown): number | undefined {
+  if (!responseData || typeof responseData !== 'object') return undefined;
+  const value = (responseData as { code?: unknown }).code;
+  if (typeof value === 'number') return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isNaN(parsed) ? undefined : parsed;
+  }
+  return undefined;
+}
+
 // 飞书事件数据类型（SDK 未导出，手动定义）
 interface FeishuEventData {
   event_id?: string;
@@ -512,6 +523,12 @@ class FeishuClient extends EventEmitter {
     } catch (error) {
       const formatted = formatError(error);
       const errCode = typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: number }).code : undefined;
+      const apiCode = extractApiCode(formatted.responseData);
+      if (apiCode === 230002) {
+        console.warn(`[飞书] 群不可用，发送文字失败: chatId=${chatId}`);
+        this.emit('chatUnavailable', chatId);
+        return null;
+      }
       console.error(`[飞书] 发送文字失败: code=${errCode}, ${formatted.message}`);
       return null;
     }
@@ -655,6 +672,12 @@ class FeishuClient extends EventEmitter {
     } catch (error) {
       const formatted = formatError(error);
       const errCode = typeof error === 'object' && error !== null && 'code' in error ? (error as { code?: number }).code : undefined;
+      const apiCode = extractApiCode(formatted.responseData);
+      if (apiCode === 230002) {
+        console.warn(`[飞书] 群不可用，发送卡片失败: chatId=${chatId}`);
+        this.emit('chatUnavailable', chatId);
+        return null;
+      }
       console.error(`[飞书] 发送卡片失败: code=${errCode}, ${formatted.message}`);
       return null;
     }

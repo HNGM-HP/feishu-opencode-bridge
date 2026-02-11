@@ -5,6 +5,7 @@ export type CommandType =
   | 'undo'         // 撤回上一步
   | 'model'        // 切换模型
   | 'agent'        // 切换Agent
+  | 'role'         // 角色相关操作
   | 'session'      // 会话操作
   | 'sessions'     // 列出会话
   | 'clear'        // 清空对话
@@ -21,6 +22,8 @@ export interface ParsedCommand {
   text?: string;           // prompt类型的文本内容
   modelName?: string;      // model类型的模型名称
   agentName?: string;      // agent类型的名称
+  roleAction?: 'create';
+  roleSpec?: string;
   sessionAction?: 'new' | 'switch' | 'list';
   sessionId?: string;      // session switch的目标ID
   clearScope?: 'all' | 'free_session'; // 清理范围
@@ -34,6 +37,16 @@ export interface ParsedCommand {
 export function parseCommand(text: string): ParsedCommand {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
+
+  // 中文自然语言创建角色（不带 /）
+  const textRoleCreateMatch = trimmed.match(/^创建角色\s+([\s\S]+)$/);
+  if (textRoleCreateMatch) {
+    return {
+      type: 'role',
+      roleAction: 'create',
+      roleSpec: textRoleCreateMatch[1].trim(),
+    };
+  }
 
   // 权限响应（单独处理y/n）
   if (lower === 'y' || lower === 'yes') {
@@ -70,6 +83,18 @@ export function parseCommand(text: string): ParsedCommand {
           return { type: 'agent', agentName: args.join(' ') };
         }
         return { type: 'agent' }; // 无参数时显示当前agent
+
+      case 'role':
+      case '角色': {
+        if (args.length > 0 && (args[0].toLowerCase() === 'create' || args[0] === '创建')) {
+          return {
+            type: 'role',
+            roleAction: 'create',
+            roleSpec: args.slice(1).join(' ').trim(),
+          };
+        }
+        return { type: 'role' };
+      }
 
       case 'session':
         if (args.length === 0) {
@@ -132,9 +157,10 @@ export function getHelpText(): string {
 🛠️ **常用命令**
 • \`/model\` 查看当前模型
 • \`/model <名称>\` 切换模型 (e.g. \`/model gpt-4\`)
-• \`/agent\` 查看当前 Agent
-• \`/agent <名称>\` 切换 Agent (e.g. \`/agent web-search\`)
-• \`/agent off\` 关闭 Agent
+• \`/agent\` 查看当前角色
+• \`/agent <名称>\` 切换角色 (e.g. \`/agent general\`)
+• \`/agent off\` 切回默认角色
+• \`创建角色 名称=旅行助手; 描述=帮我做行程规划; 类型=主; 工具=webfetch\` 新建自定义角色
 • \`/panel\` 打开交互式控制面板 ✨
 • \`/undo\` 撤回上一轮对话 (如果你发错或 AI 答错)
 • \`/stop\` 停止当前正在生成的回答
@@ -146,6 +172,6 @@ export function getHelpText(): string {
 • \`/status\` 查看连接状态
 
 💡 **提示**
-• 切换的模型/Agent 仅对**当前群聊**生效。
+• 切换的模型/角色仅对**当前群聊**生效。
 • 如果遇到问题，试着使用 \`/panel\` 面板操作更方便。`;
 }

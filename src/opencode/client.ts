@@ -52,6 +52,50 @@ export interface MessagePart {
   error?: string;
 }
 
+export type AgentMode = 'primary' | 'subagent' | 'all';
+
+export interface OpencodeAgentInfo {
+  name: string;
+  description?: string;
+  mode?: AgentMode;
+  hidden?: boolean;
+  builtIn?: boolean;
+  native?: boolean;
+}
+
+export interface OpencodeAgentConfig {
+  description?: string;
+  mode?: AgentMode;
+  prompt?: string;
+  tools?: Record<string, boolean>;
+  [key: string]: unknown;
+}
+
+export interface OpencodeRuntimeConfig {
+  agent?: Record<string, OpencodeAgentConfig>;
+  [key: string]: unknown;
+}
+
+function parseBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0') return false;
+  }
+  return undefined;
+}
+
+function parseAgentMode(value: unknown): AgentMode | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'primary' || normalized === 'subagent' || normalized === 'all') {
+    return normalized;
+  }
+  return undefined;
+}
+
 class OpencodeClientWrapper extends EventEmitter {
   private client: SdkOpencodeClient | null = null;
   private eventAbortController: AbortController | null = null;
@@ -418,11 +462,58 @@ class OpencodeClientWrapper extends EventEmitter {
     };
   }
 
+  // 获取完整配置
+  async getConfig(): Promise<OpencodeRuntimeConfig> {
+    const client = this.getClient();
+    const result = await client.config.get();
+    return (result.data || {}) as OpencodeRuntimeConfig;
+  }
+
+  // 更新完整配置
+  async updateConfig(config: OpencodeRuntimeConfig): Promise<OpencodeRuntimeConfig | null> {
+    const client = this.getClient();
+    try {
+      const result = await client.config.update({
+        body: config as unknown as never,
+      });
+      return (result.data || null) as OpencodeRuntimeConfig | null;
+    } catch (error) {
+      console.error('[OpenCode] 更新配置失败:', error);
+      return null;
+    }
+  }
+
   // 获取可用 Agent 列表
-  async getAgents(): Promise<Array<{ name: string; description?: string }>> {
+  async getAgents(): Promise<OpencodeAgentInfo[]> {
     const client = this.getClient();
     const result = await client.app.agents();
-    const agents = (result.data || []) as Array<{ name: string; description?: string }>;
+    const rawAgents = Array.isArray(result.data) ? result.data : [];
+    const agents: OpencodeAgentInfo[] = [];
+
+    for (const item of rawAgents) {
+      if (!item || typeof item !== 'object') continue;
+      const record = item as Record<string, unknown>;
+      const name = typeof record.name === 'string' ? record.name.trim() : '';
+      if (!name) continue;
+
+      const description = typeof record.description === 'string' && record.description.trim().length > 0
+        ? record.description.trim()
+        : undefined;
+      const mode = parseAgentMode(record.mode);
+      const hidden = parseBoolean(record.hidden);
+      const builtIn = parseBoolean(record.builtIn);
+      const native = parseBoolean(record.native);
+
+      agents.push({
+        name,
+        description,
+        mode,
+        ...(hidden !== undefined ? { hidden } : {}),
+        ...(builtIn !== undefined ? { builtIn } : {}),
+        ...(native !== undefined ? { native } : {}),
+      });
+    }
+
     return agents;
   }
 

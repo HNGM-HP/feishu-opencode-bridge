@@ -36,7 +36,8 @@
 | 能力 | 说明 |
 |---|---|
 | 群聊对话 | @机器人或回复机器人消息，自动转发到 OpenCode 会话 |
-| 私聊建群 | 私聊点击卡片一键创建会话群并绑定 session |
+| 私聊建群 | 私聊点击卡片一键创建会话群并绑定 session 注意！私聊无法做会话隔离，所以唯一作用就只能是建群！ |
+| Agent 角色 | 支持内置与自定义角色；可在当前群通过 `/panel` 或 `/agent` 自由切换 |
 | 流式输出 | 输出缓冲定时刷新；检测到 thinking/reasoning 自动切卡片 |
 | 思考折叠 | 支持展开/折叠思考内容，避免长卡片刷屏 |
 | 权限确认 | `permission.asked` 自动发确认卡，支持一次/始终/拒绝 |
@@ -201,12 +202,51 @@ node scripts/deploy.mjs status
 | `/agent` | 查看当前 Agent |
 | `/agent <name>` | 切换 Agent |
 | `/agent off` | 关闭 Agent，回到默认 |
+| `/role create <规格>` | 斜杠形式创建自定义角色 |
+| `创建角色 名称=...; 描述=...; 类型=...; 工具=...` | 自然语言创建自定义角色并切换 |
 | `/stop` | 中断当前会话执行 |
 | `/undo` | 撤回上一轮交互（OpenCode + 飞书同步） |
 | `/session new` | 新建会话并重置上下文 |
 | `/clear` | 等价于 `/session new` |
 | `/clear free session` | 清理空闲群聊和会话 |
 | `/status` | 查看当前群绑定状态 |
+
+## Agent（角色）使用
+
+### 1) 查看与切换
+
+- 推荐使用 `/panel` 可视化切换角色（当前群即时生效）。
+- 也可用命令：`/agent`（查看当前）、`/agent <name>`（切换）、`/agent off`（回到默认）。
+
+### 2) 自定义 Agent
+
+- 支持自然语言直接创建并切换：
+
+```text
+创建角色 名称=旅行助手; 描述=擅长制定旅行计划; 类型=主; 工具=webfetch; 提示词=先询问预算和时间，再给三套方案
+```
+
+- 也支持斜杠形式：
+
+```text
+/role create 名称=代码审查员; 描述=关注可维护性和安全; 类型=子; 工具=read,grep; 提示词=先列风险，再给最小改动建议
+```
+
+- `类型` 支持 `主/子`（或 `primary/subagent`）。
+
+### 3) 配置默认 Agent（提醒）
+
+- 可在 OpenCode 配置文件 `opencode.json` 设置 `default_agent`。
+- 当桥接侧未显式指定角色时，会跟随 OpenCode 的默认 Agent。
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "companion"
+}
+```
+
+- 修改后如果 `/panel` 未立即显示新角色，重启 OpenCode 即可。
 
 ## 关键实现细节
 
@@ -238,7 +278,7 @@ node scripts/deploy.mjs status
 | 权限卡或提问卡发不到群 | `.chat-sessions.json` 中 `sessionId -> chatId` 映射是否存在 |
 | 卡片更新失败 | 消息类型是否匹配；失败后是否降级为重发卡片 |
 | 后台模式无法停止 | `logs/bridge.pid` 是否残留；使用 `npm run stop:bridge` 清理 |
-
+| 私聊一直发你好 | 私聊无法做会话隔离，所以私聊的功能就是创建新会话群 |
 ## License
 
 MIT

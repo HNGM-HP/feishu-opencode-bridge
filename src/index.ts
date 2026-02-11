@@ -225,29 +225,65 @@ async function main() {
     }
   });
 
+  feishuClient.on('chatUnavailable', (chatId: string) => {
+    console.warn(`[Index] 检测到不可用群聊，移除会话绑定: ${chatId}`);
+    chatSessionStore.removeSession(chatId);
+  });
+
   // 5. 监听飞书卡片动作
   feishuClient.setCardActionHandler(async (event) => {
     try {
-      const actionValue = event.action.value as any;
+      const actionValue = event.action.value && typeof event.action.value === 'object'
+        ? event.action.value as Record<string, unknown>
+        : {};
+      const action = typeof actionValue.action === 'string' ? actionValue.action : '';
+      const toString = (value: unknown): string | undefined => {
+        if (typeof value !== 'string') return undefined;
+        const trimmed = value.trim();
+        return trimmed.length > 0 ? trimmed : undefined;
+      };
+      const toInteger = (value: unknown): number | undefined => {
+        if (typeof value === 'number' && Number.isInteger(value)) {
+          return value;
+        }
+        if (typeof value === 'string' && value.trim().length > 0) {
+          const parsed = Number(value);
+          return Number.isInteger(parsed) ? parsed : undefined;
+        }
+        return undefined;
+      };
 
       // 特殊处理创建会话动作 (P2P)
-      if (actionValue?.action === 'create_chat') {
+      if (action === 'create_chat') {
         return await p2pHandler.handleCardAction(event);
       }
 
       // 处理权限确认
-      if (actionValue?.action === 'permission_allow' || actionValue?.action === 'permission_deny') {
-        const allow = actionValue.action === 'permission_allow';
+      if (action === 'permission_allow' || action === 'permission_deny') {
+        const sessionId = toString(actionValue.sessionId);
+        const permissionId = toString(actionValue.permissionId);
+        if (!sessionId || !permissionId) {
+          return {
+            toast: {
+              type: 'error',
+              content: '权限参数缺失',
+              i18n_content: { zh_cn: '权限参数缺失', en_us: 'Missing permission params' }
+            }
+          };
+        }
+
+        const allow = action === 'permission_allow';
+        const remember = actionValue.remember === true || actionValue.remember === 'true';
         const responded = await opencodeClient.respondToPermission(
-          actionValue.sessionId,
-          actionValue.permissionId,
+          sessionId,
+          permissionId,
           allow,
-          actionValue.remember
+          remember
         );
 
         if (!responded) {
           console.error(
-            `[权限] 响应失败: session=${actionValue.sessionId}, permission=${actionValue.permissionId}, allow=${allow}, remember=${Boolean(actionValue.remember)}`
+            `[权限] 响应失败: session=${sessionId}, permission=${permissionId}, allow=${allow}, remember=${remember}`
           );
           return {
             toast: {
@@ -263,6 +299,68 @@ async function main() {
             type: allow ? 'success' : 'error',
             content: allow ? '已允许' : '已拒绝',
             i18n_content: { zh_cn: allow ? '已允许' : '已拒绝', en_us: allow ? 'Allowed' : 'Denied' }
+          }
+        };
+      }
+
+      // 处理 question 跳过按钮
+      if (action === 'question_skip') {
+        const chatId = toString(actionValue.chatId) || event.chatId;
+        const requestId = toString(actionValue.requestId);
+        const questionIndex = toInteger(actionValue.questionIndex);
+
+        if (!chatId) {
+          return {
+            toast: {
+              type: 'error',
+              content: '无法定位会话',
+              i18n_content: { zh_cn: '无法定位会话', en_us: 'Failed to locate chat' }
+            }
+          };
+        }
+
+        const result = await groupHandler.handleQuestionSkipAction({
+          chatId,
+          messageId: event.messageId,
+          requestId,
+          questionIndex,
+        });
+
+        if (result === 'applied') {
+          return {
+            toast: {
+              type: 'success',
+              content: '已跳过本题',
+              i18n_content: { zh_cn: '已跳过本题', en_us: 'Question skipped' }
+            }
+          };
+        }
+
+        if (result === 'stale_card') {
+          return {
+            toast: {
+              type: 'error',
+              content: '请操作最新问题卡片',
+              i18n_content: { zh_cn: '请操作最新问题卡片', en_us: 'Please use latest question card' }
+            }
+          };
+        }
+
+        if (result === 'not_found') {
+          return {
+            toast: {
+              type: 'error',
+              content: '当前没有待回答问题',
+              i18n_content: { zh_cn: '当前没有待回答问题', en_us: 'No pending question' }
+            }
+          };
+        }
+
+        return {
+          toast: {
+            type: 'error',
+            content: '跳过失败，请重试',
+            i18n_content: { zh_cn: '跳过失败，请重试', en_us: 'Skip failed, try again' }
           }
         };
       }
@@ -402,6 +500,13 @@ async function main() {
           const msgId = await feishuClient.sendCard(chatId, card);
           if (msgId) {
               questionHandler.setCardMessageId(request.id, msgId);
+              chatSessionStore.addInteraction(chatId, {
+                userFeishuMsgId: '',
+                openCodeMsgId: '',
+                botFeishuMsgIds: [msgId],
+                type: 'question_prompt',
+                timestamp: Date.now()
+              });
           }
       }
   });

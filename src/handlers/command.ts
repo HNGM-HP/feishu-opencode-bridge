@@ -1,9 +1,228 @@
 import { type ParsedCommand, getHelpText } from '../commands/parser.js';
 import { feishuClient } from '../feishu/client.js';
-import { opencodeClient } from '../opencode/client.js';
+import {
+  opencodeClient,
+  type OpencodeAgentConfig,
+  type OpencodeAgentInfo,
+  type OpencodeRuntimeConfig,
+} from '../opencode/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { buildControlCard, buildStatusCard } from '../feishu/cards.js';
 import { modelConfig } from '../config.js';
+
+const SUPPORTED_ROLE_TOOLS = [
+  'bash',
+  'read',
+  'write',
+  'edit',
+  'list',
+  'glob',
+  'grep',
+  'webfetch',
+  'task',
+  'todowrite',
+  'todoread',
+] as const;
+
+type RoleTool = typeof SUPPORTED_ROLE_TOOLS[number];
+
+const ROLE_TOOL_ALIAS: Record<string, RoleTool> = {
+  bash: 'bash',
+  shell: 'bash',
+  命令行: 'bash',
+  终端: 'bash',
+  read: 'read',
+  读取: 'read',
+  阅读: 'read',
+  write: 'write',
+  写入: 'write',
+  edit: 'edit',
+  编辑: 'edit',
+  list: 'list',
+  列表: 'list',
+  glob: 'glob',
+  文件匹配: 'glob',
+  grep: 'grep',
+  搜索: 'grep',
+  webfetch: 'webfetch',
+  网页: 'webfetch',
+  抓取网页: 'webfetch',
+  task: 'task',
+  子代理: 'task',
+  todowrite: 'todowrite',
+  待办写入: 'todowrite',
+  todoread: 'todoread',
+  待办读取: 'todoread',
+};
+
+const ROLE_CREATE_USAGE = '用法: 创建角色 名称=旅行助手; 描述=擅长制定旅行计划; 类型=主; 工具=webfetch; 提示词=先给出预算再做路线';
+const INTERNAL_HIDDEN_AGENT_NAMES = new Set(['compaction', 'title', 'summary']);
+
+interface RoleCreatePayload {
+  name: string;
+  description: string;
+  mode: 'primary' | 'subagent';
+  tools?: Record<string, boolean>;
+  prompt?: string;
+}
+
+type RoleCreateParseResult =
+  | { ok: true; payload: RoleCreatePayload }
+  | { ok: false; message: string };
+
+type RoleToolsParseResult =
+  | { ok: true; tools?: Record<string, boolean> }
+  | { ok: false; message: string };
+
+function stripWrappingQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) return trimmed;
+  const first = trimmed[0];
+  const last = trimmed[trimmed.length - 1];
+  if ((first === '"' && last === '"') || (first === '\'' && last === '\'')) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
+function normalizeRoleMode(value: string): 'primary' | 'subagent' | undefined {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === '主' || normalized === 'primary') return 'primary';
+  if (normalized === '子' || normalized === 'subagent') return 'subagent';
+  return undefined;
+}
+
+function buildToolsConfig(value: string): RoleToolsParseResult {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized || normalized === '默认' || normalized === 'default' || normalized === '继承' || normalized === 'all' || normalized === '全部') {
+    return { ok: true };
+  }
+
+  const toolsConfig: Record<string, boolean> = Object.fromEntries(
+    SUPPORTED_ROLE_TOOLS.map(tool => [tool, false])
+  );
+
+  if (normalized === 'none' || normalized === '无' || normalized === '关闭' || normalized === 'off') {
+    return { ok: true, tools: toolsConfig };
+  }
+
+  const rawItems = value.split(/[，,\s]+/).map(item => item.trim()).filter(Boolean);
+  if (rawItems.length === 0) {
+    return { ok: true };
+  }
+
+  const unsupported: string[] = [];
+  for (const rawItem of rawItems) {
+    const aliasKey = rawItem.toLowerCase();
+    const mapped = ROLE_TOOL_ALIAS[aliasKey] || ROLE_TOOL_ALIAS[rawItem];
+    if (!mapped) {
+      unsupported.push(rawItem);
+      continue;
+    }
+    toolsConfig[mapped] = true;
+  }
+
+  if (unsupported.length > 0) {
+    return {
+      ok: false,
+      message: `不支持的工具: ${unsupported.join(', ')}\n可用工具: ${SUPPORTED_ROLE_TOOLS.join(', ')}`,
+    };
+  }
+
+  return { ok: true, tools: toolsConfig };
+}
+
+function parseRoleCreateSpec(spec: string): RoleCreateParseResult {
+  const raw = spec.trim();
+  if (!raw) {
+    return { ok: false, message: `缺少角色参数\n${ROLE_CREATE_USAGE}` };
+  }
+
+  const segments = raw.split(/[;；\n]+/).map(item => item.trim()).filter(Boolean);
+  if (segments.length === 0) {
+    return { ok: false, message: `缺少角色参数\n${ROLE_CREATE_USAGE}` };
+  }
+
+  let name = '';
+  let description = '';
+  let modeRaw = '';
+  let toolsRaw = '';
+  let prompt = '';
+
+  for (const segment of segments) {
+    const sepIndex = segment.search(/[=:：]/);
+    if (sepIndex < 0) {
+      if (!name) {
+        name = stripWrappingQuotes(segment);
+      }
+      continue;
+    }
+
+    const key = segment.slice(0, sepIndex).trim().toLowerCase();
+    const value = stripWrappingQuotes(segment.slice(sepIndex + 1));
+    if (!value) continue;
+
+    if (key === '名称' || key === '名字' || key === '角色' || key === 'name' || key === 'role') {
+      name = value;
+      continue;
+    }
+
+    if (key === '描述' || key === '说明' || key === 'description' || key === 'desc') {
+      description = value;
+      continue;
+    }
+
+    if (key === '类型' || key === '模式' || key === 'mode') {
+      modeRaw = value;
+      continue;
+    }
+
+    if (key === '工具' || key === 'tools' || key === 'tool') {
+      toolsRaw = value;
+      continue;
+    }
+
+    if (key === '提示词' || key === 'prompt' || key === '系统提示' || key === '指令') {
+      prompt = value;
+    }
+  }
+
+  name = name.trim();
+  if (!name) {
+    return { ok: false, message: `缺少角色名称\n${ROLE_CREATE_USAGE}` };
+  }
+
+  if (/\s/.test(name)) {
+    return { ok: false, message: '角色名称不能包含空格，请使用连续字符（可含中文）。' };
+  }
+
+  if (name.length > 40) {
+    return { ok: false, message: '角色名称长度不能超过 40 个字符。' };
+  }
+
+  let mode: 'primary' | 'subagent' = 'primary';
+  if (modeRaw) {
+    const parsedMode = normalizeRoleMode(modeRaw);
+    if (!parsedMode) {
+      return { ok: false, message: '角色类型仅支持 主 / 子（或 primary / subagent）。' };
+    }
+    mode = parsedMode;
+  }
+
+  const toolsResult = buildToolsConfig(toolsRaw);
+  if (!toolsResult.ok) return toolsResult;
+
+  return {
+    ok: true,
+    payload: {
+      name,
+      description: description || `${name}（自定义角色）`,
+      mode,
+      ...(toolsResult.tools ? { tools: toolsResult.tools } : {}),
+      ...(prompt ? { prompt } : {}),
+    },
+  };
+}
 
 export class CommandHandler {
   async handle(
@@ -69,6 +288,14 @@ export class CommandHandler {
 
         case 'agent':
           await this.handleAgent(chatId, messageId, context.senderId, command.agentName);
+          break;
+
+        case 'role':
+          if (command.roleAction === 'create') {
+            await this.handleRoleCreate(chatId, messageId, context.senderId, command.roleSpec || '');
+          } else {
+            await feishuClient.reply(messageId, `支持的角色命令:\n- ${ROLE_CREATE_USAGE}`);
+          }
           break;
 
         case 'undo':
@@ -213,106 +440,228 @@ export class CommandHandler {
     }
   }
 
+  private getVisibleAgents(agents: OpencodeAgentInfo[]): OpencodeAgentInfo[] {
+    return agents.filter(agent => agent.hidden !== true && !INTERNAL_HIDDEN_AGENT_NAMES.has(agent.name));
+  }
+
+  private getAgentModePrefix(agent: OpencodeAgentInfo): string {
+    return agent.mode === 'subagent' ? '（子）' : '（主）';
+  }
+
+  private getAgentDisplayName(agent: OpencodeAgentInfo): string {
+    const description = typeof agent.description === 'string' ? agent.description.trim() : '';
+    return description || agent.name;
+  }
+
+  private getAgentDisplayText(agent: OpencodeAgentInfo): string {
+    return `${this.getAgentModePrefix(agent)} ${this.getAgentDisplayName(agent)}`;
+  }
+
+  private resolveAgentByInput(agents: OpencodeAgentInfo[], rawInput: string): OpencodeAgentInfo | undefined {
+    const input = rawInput.trim();
+    if (!input) return undefined;
+
+    const lowered = input.toLowerCase();
+    const byName = agents.find(agent => agent.name.toLowerCase() === lowered);
+    if (byName) return byName;
+
+    const byDescription = agents.find(agent => {
+      const description = typeof agent.description === 'string' ? agent.description.trim().toLowerCase() : '';
+      return description.length > 0 && description === lowered;
+    });
+    if (byDescription) return byDescription;
+
+    return agents.find(agent => this.getAgentDisplayText(agent).toLowerCase() === lowered);
+  }
+
+  private getCurrentRoleDisplay(currentAgentName: string | undefined, agents: OpencodeAgentInfo[]): string {
+    if (!currentAgentName) return '默认角色';
+    const found = agents.find(agent => agent.name === currentAgentName);
+    if (found) return this.getAgentDisplayText(found);
+    return currentAgentName;
+  }
+
+  private getRoleAgentMap(config: OpencodeRuntimeConfig): Record<string, OpencodeAgentConfig> {
+    if (!config.agent || typeof config.agent !== 'object') {
+      return {};
+    }
+    return config.agent;
+  }
+
+  private async handleRoleCreate(chatId: string, messageId: string, userId: string, roleSpec: string): Promise<void> {
+    const parsed = parseRoleCreateSpec(roleSpec);
+    if (!parsed.ok) {
+      await feishuClient.reply(messageId, `❌ 创建角色失败\n${parsed.message}`);
+      return;
+    }
+
+    let session = chatSessionStore.getSession(chatId);
+    if (!session) {
+      const title = `群聊会话-${chatId.slice(-4)}`;
+      const newSession = await opencodeClient.createSession(title);
+      if (!newSession) {
+        await feishuClient.reply(messageId, '❌ 无法创建会话以保存角色设置');
+        return;
+      }
+      chatSessionStore.setSession(chatId, newSession.id, userId, title);
+      session = chatSessionStore.getSession(chatId);
+    }
+
+    const payload = parsed.payload;
+    const [agents, config] = await Promise.all([
+      opencodeClient.getAgents(),
+      opencodeClient.getConfig(),
+    ]);
+
+    const roleAgentMap = this.getRoleAgentMap(config);
+    const existingConfig = roleAgentMap[payload.name];
+    const nameConflict = agents.find(agent => agent.name.toLowerCase() === payload.name.toLowerCase());
+    if (nameConflict && !existingConfig) {
+      await feishuClient.reply(messageId, `❌ 角色名称已被占用: ${payload.name}\n请更换一个名称后重试。`);
+      return;
+    }
+
+    const nextAgentConfig: OpencodeAgentConfig = {
+      description: payload.description,
+      mode: payload.mode,
+      ...(payload.prompt ? { prompt: payload.prompt } : {}),
+      ...(payload.tools ? { tools: payload.tools } : {}),
+    };
+
+    const nextConfig: OpencodeRuntimeConfig = {
+      ...config,
+      agent: {
+        ...roleAgentMap,
+        [payload.name]: nextAgentConfig,
+      },
+    };
+
+    const updated = await opencodeClient.updateConfig(nextConfig);
+    if (!updated) {
+      await feishuClient.reply(messageId, '❌ 创建角色失败：写入 OpenCode 配置失败');
+      return;
+    }
+
+    if (session) {
+      chatSessionStore.updateConfig(chatId, { preferredAgent: payload.name });
+    }
+    const actionText = existingConfig ? '已更新' : '已创建';
+    const modeText = payload.mode === 'subagent' ? '子角色' : '主角色';
+    await feishuClient.reply(
+      messageId,
+      `✅ ${actionText}角色: ${payload.name}\n类型: ${modeText}\n当前群已切换到该角色。\n若 /panel 未立即显示新角色，请重启 OpenCode。`
+    );
+  }
+
   private async handleAgent(chatId: string, messageId: string, userId: string, agentName?: string): Promise<void> {
     try {
       // 0. 确保会话存在
       let session = chatSessionStore.getSession(chatId);
       if (!session) {
-         // 自动创建会话
-         const title = `群聊会话-${chatId.slice(-4)}`;
-         const newSession = await opencodeClient.createSession(title);
-         if (newSession) {
-             chatSessionStore.setSession(chatId, newSession.id, userId, title);
-             session = chatSessionStore.getSession(chatId);
-         } else {
-             await feishuClient.reply(messageId, '❌ 无法创建会话以保存配置');
-             return;
-         }
+        // 自动创建会话
+        const title = `群聊会话-${chatId.slice(-4)}`;
+        const newSession = await opencodeClient.createSession(title);
+        if (newSession) {
+          chatSessionStore.setSession(chatId, newSession.id, userId, title);
+          session = chatSessionStore.getSession(chatId);
+        } else {
+          await feishuClient.reply(messageId, '❌ 无法创建会话以保存配置');
+          return;
+        }
       }
 
-      const currentAgent = session?.preferredAgent || '(无)';
+      const visibleAgents = this.getVisibleAgents(await opencodeClient.getAgents());
+      const currentAgent = session?.preferredAgent;
 
       if (!agentName) {
-        await feishuClient.reply(messageId, `当前Agent: ${currentAgent}`);
+        await feishuClient.reply(messageId, `当前角色: ${this.getCurrentRoleDisplay(currentAgent, visibleAgents)}`);
         return;
       }
 
       // 特殊值处理
       if (agentName === 'none' || agentName === 'off' || agentName === 'default') {
-         chatSessionStore.updateConfig(chatId, { preferredAgent: undefined });
-         await feishuClient.reply(messageId, `✅ 已关闭 Agent (使用默认)`);
-         return;
-      }
-
-      // 校验 Agent 是否存在 (这个校验是值得保留的)
-      const agents = await opencodeClient.getAgents();
-      const exists = agents.find(a => a.name === agentName);
-      
-      if (!exists) {
-        await feishuClient.reply(messageId, '❌ 未找到该Agent\n请使用 /agent 查看可用列表');
+        chatSessionStore.updateConfig(chatId, { preferredAgent: undefined });
+        await feishuClient.reply(messageId, '✅ 已切换为默认角色');
         return;
       }
 
-      chatSessionStore.updateConfig(chatId, { preferredAgent: exists.name });
-      await feishuClient.reply(messageId, `✅ 已切换Agent: ${exists.name}`);
+      const matched = this.resolveAgentByInput(visibleAgents, agentName);
+      if (!matched) {
+        await feishuClient.reply(messageId, '❌ 未找到该角色\n请使用 /panel 查看可用角色');
+        return;
+      }
 
+      chatSessionStore.updateConfig(chatId, { preferredAgent: matched.name });
+      await feishuClient.reply(messageId, `✅ 已切换角色: ${this.getAgentDisplayText(matched)}`);
     } catch (error) {
-      await feishuClient.reply(messageId, `❌ 设置Agent失败: ${error}`);
+      await feishuClient.reply(messageId, `❌ 设置角色失败: ${error}`);
     }
   }
 
-  private async handlePanel(chatId: string, messageId: string): Promise<void> {
-      // 简单显示面板说明，或者实现卡片
-      // 这里为了简单且符合用户"逻辑"的要求，我们尽量复用旧逻辑的风格
-      // 旧逻辑构建了一个 ControlCard
-      const session = chatSessionStore.getSession(chatId);
-      const currentModel = session?.preferredModel || '默认';
-      const currentAgent = session?.preferredAgent || '默认';
-      
-      const { buildControlCard } = await import('../feishu/cards.js');
-      
-      // 获取列表供卡片使用
-      const { providers } = await opencodeClient.getProviders();
-      const agents = await opencodeClient.getAgents();
-      
-      const modelOptions: { label: string; value: string }[] = [];
-      const safeProviders = Array.isArray(providers) ? providers : [];
+  private async buildPanelCard(chatId: string): Promise<object> {
+    const session = chatSessionStore.getSession(chatId);
+    const currentModel = session?.preferredModel || '默认';
 
-      for (const p of safeProviders) {
-          // 安全获取 models，兼容数组和对象
-          const modelsRaw = (p as any).models;
-          const models = Array.isArray(modelsRaw) 
-              ? modelsRaw 
-              : (modelsRaw && typeof modelsRaw === 'object' ? Object.values(modelsRaw) : []);
+    // 获取列表供卡片使用
+    const { providers } = await opencodeClient.getProviders();
+    const allAgents = await opencodeClient.getAgents();
+    const visibleAgents = this.getVisibleAgents(allAgents);
+    const currentAgent = this.getCurrentRoleDisplay(session?.preferredAgent, visibleAgents);
 
-          for (const m of models) {
-              const modelId = (m as any).id || (m as any).modelID || (m as any).name;
-              const modelName = (m as any).name || modelId;
-              const providerId = (p as any).id || (p as any).providerID;
-              
-              if (modelId && providerId) {
-                  // 在标签中增加 Provider 前缀，例如 "[OpenAI] gpt-4"
-                  const label = `[${p.name || providerId}] ${modelName}`;
-                  modelOptions.push({ label, value: `${providerId}:${modelId}` });
-              }
-          }
+    const modelOptions: { label: string; value: string }[] = [];
+    const safeProviders = Array.isArray(providers) ? providers : [];
+
+    for (const p of safeProviders) {
+      // 安全获取 models，兼容数组和对象
+      const modelsRaw = (p as any).models;
+      const models = Array.isArray(modelsRaw)
+        ? modelsRaw
+        : (modelsRaw && typeof modelsRaw === 'object' ? Object.values(modelsRaw) : []);
+
+      for (const m of models) {
+        const modelId = (m as any).id || (m as any).modelID || (m as any).name;
+        const modelName = (m as any).name || modelId;
+        const providerId = (p as any).id || (p as any).providerID;
+
+        if (modelId && providerId) {
+          const label = `[${p.name || providerId}] ${modelName}`;
+          modelOptions.push({ label, value: `${providerId}:${modelId}` });
+        }
       }
-      
-      const agentOptions = Array.isArray(agents) 
-        ? agents.map(a => ({ label: a.name, value: a.name })) 
-        : [];
-      
-      const card = buildControlCard({
-          conversationKey: `chat:${chatId}`,
-          chatId,
-          chatType: 'group', // 假设群组
-          currentModel,
-          currentAgent,
-          models: modelOptions.slice(0, 100), // 限制数量
-          agents: agentOptions.length > 0 ? agentOptions : [{ label: '无', value: 'none' }]
-      });
-      
+    }
+
+    const agentOptions = [
+      { label: '（主）默认角色', value: 'none' },
+      ...visibleAgents.map(agent => ({
+        label: this.getAgentDisplayText(agent),
+        value: agent.name,
+      })),
+    ];
+
+    return buildControlCard({
+      conversationKey: `chat:${chatId}`,
+      chatId,
+      chatType: 'group',
+      currentModel,
+      currentAgent,
+      models: modelOptions.slice(0, 100),
+      agents: agentOptions,
+    });
+  }
+
+  public async pushPanelCard(chatId: string): Promise<void> {
+    const card = await this.buildPanelCard(chatId);
+    await feishuClient.sendCard(chatId, card);
+  }
+
+  private async handlePanel(chatId: string, messageId: string): Promise<void> {
+    const card = await this.buildPanelCard(chatId);
+    if (messageId) {
       await feishuClient.replyCard(messageId, card);
+      return;
+    }
+
+    await feishuClient.sendCard(chatId, card);
   }
 
   private async handlePassthroughCommand(chatId: string, messageId: string, commandName: string, commandArgs: string): Promise<void> {
@@ -408,11 +757,13 @@ export class CommandHandler {
 
     const session = chatSessionStore.getSession(chatId);
     if (!session || !session.sessionId) {
-      // 无法回复因为消息已删，或者发个临时消息?
-      // 如果 triggerMessageId 被删了，我们发的新消息就是独立的。
-      // 但如果失败，最好还是提示一下。
+      // 撤回事件触发时，如果会话已失效则静默返回，避免在不可用群里再次报错。
+      if (!triggerMessageId) {
+        console.warn(`[Undo] 跳过撤回: chat=${chatId} 无活跃会话`);
+        return;
+      }
+
       const msg = await feishuClient.sendText(chatId, '❌ 当前没有活跃的会话');
-      // 5秒后删除提示
       setTimeout(() => msg && feishuClient.deleteMessage(msg), 5000);
       return;
     }
@@ -481,12 +832,11 @@ export class CommandHandler {
         
         // 4. Recursive check for question answer
         if (lastInteraction.type === 'question_answer') {
-            // The previous fallback revert (length-2) targeting the Question (AI msg)
-            // has already removed the Question and the Answer.
-            // So we need to clean up the previous interaction (the Question one) from our local store
-            // and delete its Feishu card.
-            // But we MUST NOT revert again in OpenCode because the Question is already gone.
-            await performUndo(true);
+            // Question 回答通常会在本地历史里对应若干 question_prompt 卡片。
+            // 这里仅清理 question_prompt，避免误删上一轮 normal 交互。
+            while (chatSessionStore.getLastInteraction(chatId)?.type === 'question_prompt') {
+                await performUndo(true);
+            }
         }
         
         return true;

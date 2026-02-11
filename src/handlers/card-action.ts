@@ -123,14 +123,14 @@ export class CardActionHandler {
 
     const agentName = selectedOption === 'none' ? undefined : selectedOption;
     chatSessionStore.updateConfig(chatId, { preferredAgent: agentName });
-    console.log(`[CardAction] 已切换Agent: ${agentName || '默认'}`);
+    console.log(`[CardAction] 已切换角色: ${agentName || '默认'}`);
 
     // 只返回toast，不更新卡片
     return {
       toast: {
         type: 'success',
-        content: agentName ? `已切换Agent: ${agentName}` : '已关闭Agent',
-        i18n_content: { zh_cn: agentName ? `已切换Agent: ${agentName}` : '已关闭Agent', en_us: agentName ? `Agent changed: ${agentName}` : 'Agent disabled' }
+        content: agentName ? `已切换角色: ${agentName}` : '已切换为默认角色',
+        i18n_content: { zh_cn: agentName ? `已切换角色: ${agentName}` : '已切换为默认角色', en_us: agentName ? `Role changed: ${agentName}` : 'Role reset to default' }
       }
     };
   }
