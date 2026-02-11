@@ -14,6 +14,7 @@ logs/
 
 # 会话数据（用户隐私）
 .session-*.json
+.chat-sessions.json
 
 # 编辑器配置
 .vscode/
