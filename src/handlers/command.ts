@@ -261,6 +261,20 @@ function parseRoleCreateSpec(spec: string): RoleCreateParseResult {
 }
 
 export class CommandHandler {
+  private getPrivateSessionShortId(userId: string): string {
+    const normalized = userId.startsWith('ou_') ? userId.slice(3) : userId;
+    return normalized.slice(0, 4);
+  }
+
+  private buildSessionTitle(chatType: 'p2p' | 'group', userId: string): string {
+    if (chatType === 'p2p') {
+      const shortUserId = this.getPrivateSessionShortId(userId);
+      return `飞书私聊${shortUserId || '用户'}`;
+    }
+
+    return `群聊重置-${Date.now().toString().slice(-4)}`;
+  }
+
   async handle(
     command: ParsedCommand,
     context: {
@@ -284,11 +298,11 @@ export class CommandHandler {
 
         case 'session':
           if (command.sessionAction === 'new') {
-            await this.handleNewSession(chatId, messageId, context.senderId);
+            await this.handleNewSession(chatId, messageId, context.senderId, context.chatType);
           } else if (command.sessionAction === 'list') {
             await this.handleListSessions(chatId, messageId);
           } else {
-            await feishuClient.reply(messageId, '群聊模式下仅支持 /session new (重置并新建)');
+            await feishuClient.reply(messageId, '当前仅支持 /session new (重置并新建)');
           }
           break;
 
@@ -299,7 +313,7 @@ export class CommandHandler {
             await this.handleClearFreeSession(chatId, messageId);
           } else {
             // 清空当前对话上下文（默认行为）
-            await this.handleNewSession(chatId, messageId, context.senderId); 
+            await this.handleNewSession(chatId, messageId, context.senderId, context.chatType); 
           }
           break;
 
@@ -339,7 +353,7 @@ export class CommandHandler {
           break;
 
         case 'panel':
-          await this.handlePanel(chatId, messageId);
+          await this.handlePanel(chatId, messageId, context.chatType);
           break;
         
         case 'sessions':
@@ -371,15 +385,20 @@ export class CommandHandler {
     await feishuClient.reply(messageId, `🤖 **OpenCode 状态**\n\n${status}\n${extra}`);
   }
 
-  private async handleNewSession(chatId: string, messageId: string, userId: string): Promise<void> {
+  private async handleNewSession(
+    chatId: string,
+    messageId: string,
+    userId: string,
+    chatType: 'p2p' | 'group'
+  ): Promise<void> {
     // 1. 创建新会话
-    const title = `群聊重置-${Date.now().toString().slice(-4)}`;
+    const title = this.buildSessionTitle(chatType, userId);
     const session = await opencodeClient.createSession(title);
     
     if (session) {
       // 2. 更新绑定
       chatSessionStore.setSession(chatId, session.id, userId, title);
-      await feishuClient.reply(messageId, `✅ 已创建新对话\nID: ${session.id}`);
+      await feishuClient.reply(messageId, `✅ 已创建新会话窗口\nID: ${session.id}`);
     } else {
       await feishuClient.reply(messageId, '❌ 创建会话失败');
     }
@@ -708,7 +727,7 @@ export class CommandHandler {
     }
   }
 
-  private async buildPanelCard(chatId: string): Promise<object> {
+  private async buildPanelCard(chatId: string, chatType: 'p2p' | 'group' = 'group'): Promise<object> {
     const session = chatSessionStore.getSession(chatId);
     const currentModel = session?.preferredModel || '默认';
 
@@ -760,7 +779,7 @@ export class CommandHandler {
     return buildControlCard({
       conversationKey: `chat:${chatId}`,
       chatId,
-      chatType: 'group',
+      chatType,
       currentModel,
       currentAgent,
       models: modelOptions.slice(0, 100),
@@ -768,13 +787,13 @@ export class CommandHandler {
     });
   }
 
-  public async pushPanelCard(chatId: string): Promise<void> {
-    const card = await this.buildPanelCard(chatId);
+  public async pushPanelCard(chatId: string, chatType: 'p2p' | 'group' = 'group'): Promise<void> {
+    const card = await this.buildPanelCard(chatId, chatType);
     await feishuClient.sendCard(chatId, card);
   }
 
-  private async handlePanel(chatId: string, messageId: string): Promise<void> {
-    const card = await this.buildPanelCard(chatId);
+  private async handlePanel(chatId: string, messageId: string, chatType: 'p2p' | 'group'): Promise<void> {
+    const card = await this.buildPanelCard(chatId, chatType);
     if (messageId) {
       await feishuClient.replyCard(messageId, card);
       return;

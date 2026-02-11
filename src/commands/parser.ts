@@ -48,6 +48,14 @@ export function parseCommand(text: string): ParsedCommand {
     };
   }
 
+  // 中文自然语言新建会话窗口（不带 /）
+  if (trimmed === '新建会话窗口' || trimmed === '创建新会话') {
+    return {
+      type: 'session',
+      sessionAction: 'new',
+    };
+  }
+
   // 权限响应（单独处理y/n）
   if (lower === 'y' || lower === 'yes') {
     return { type: 'permission', permissionResponse: 'y' };
@@ -152,7 +160,10 @@ export function getHelpText(): string {
   return `📖 **飞书 × OpenCode 机器人指南**
 
 💬 **如何对话**
-直接在群里 @机器人 或回复机器人消息，即可与 AI 对话。
+群聊中 @机器人 或回复机器人消息，私聊中直接发送内容，即可与 AI 对话。
+
+🪄 **私聊首次使用**
+首次私聊会自动完成会话绑定（标题：飞书私聊{OpenID去掉 ou_ 前缀后的前4位}），并推送建群卡片、帮助文档和 /panel 卡片。
 
 🛠️ **常用命令**
 • \`/model\` 查看当前模型
@@ -161,17 +172,21 @@ export function getHelpText(): string {
 • \`/agent <名称>\` 切换角色 (e.g. \`/agent general\`)
 • \`/agent off\` 切回默认角色
 • \`创建角色 名称=旅行助手; 描述=帮我做行程规划; 类型=主; 工具=webfetch\` 新建自定义角色
-• \`/panel\` 打开交互式控制面板 ✨
+• \`/panel\` 推送交互式控制面板卡片 ✨
 • \`/undo\` 撤回上一轮对话 (如果你发错或 AI 答错)
 • \`/stop\` 停止当前正在生成的回答
+• \`/compact\` 压缩当前会话上下文（透传 OpenCode）
 
 ⚙️ **会话管理**
+• \`/create_chat\` 或 \`/建群\` 直接创建新会话群（等同点击建群卡片）
 • \`/session new\` 开启新话题 (重置上下文)
+• \`新建会话窗口\` 自然语言触发 \`/session new\`
 • \`/clear\` 清空当前上下文 (同上)
 • \`/clear free session\` 清理所有空闲/无人群聊
 • \`/status\` 查看连接状态
 
 💡 **提示**
-• 切换的模型/角色仅对**当前群聊**生效。
+• 切换的模型/角色仅对**当前会话**生效。
+• 其他未知 \`/xxx\` 命令会自动透传给 OpenCode（会话已绑定时生效）。
 • 如果遇到问题，试着使用 \`/panel\` 面板操作更方便。`;
 }

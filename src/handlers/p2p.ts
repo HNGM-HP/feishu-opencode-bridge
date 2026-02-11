@@ -2,8 +2,13 @@ import { feishuClient, type FeishuMessageEvent, type FeishuCardActionEvent } fro
 import { opencodeClient } from '../opencode/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { buildWelcomeCard } from '../feishu/cards.js';
-import { parseCommand } from '../commands/parser.js';
+import { parseCommand, getHelpText, type ParsedCommand } from '../commands/parser.js';
 import { commandHandler } from './command.js';
+import { groupHandler } from './group.js';
+
+interface EnsurePrivateSessionResult {
+  firstBinding: boolean;
+}
 
 export class P2PHandler {
   private async safeReply(
@@ -24,26 +29,122 @@ export class P2PHandler {
     return false;
   }
 
+  private getPrivateSessionShortId(openId: string): string {
+    const normalized = openId.startsWith('ou_') ? openId.slice(3) : openId;
+    return normalized.slice(0, 4);
+  }
+
+  private getPrivateSessionTitle(openId: string): string {
+    const shortOpenId = this.getPrivateSessionShortId(openId);
+    return `飞书私聊${shortOpenId || '用户'}`;
+  }
+
+  private isCreateGroupCommand(text: string): boolean {
+    const trimmed = text.trim();
+    const lowered = trimmed.toLowerCase();
+    return (
+      lowered === '/create_chat' ||
+      lowered === '/create-chat' ||
+      lowered === '/chat new' ||
+      lowered === '/group new' ||
+      trimmed === '/建群' ||
+      trimmed === '建群'
+    );
+  }
+
+  private async isSessionMissingInOpenCode(sessionId: string): Promise<boolean> {
+    try {
+      const sessions = await opencodeClient.listSessions();
+      return !sessions.some(session => session.id === sessionId);
+    } catch (error) {
+      console.warn('[P2P] 校验会话存在性失败，保持当前绑定:', error);
+      return false;
+    }
+  }
+
+  private async ensurePrivateSession(chatId: string, senderId: string): Promise<EnsurePrivateSessionResult | null> {
+    const current = chatSessionStore.getSession(chatId);
+    if (current?.sessionId) {
+      const missing = await this.isSessionMissingInOpenCode(current.sessionId);
+      if (!missing) {
+        return {
+          firstBinding: false,
+        };
+      }
+
+      console.log(`[P2P] 检测到绑定会话已删除，重新初始化: chat=${chatId}, session=${current.sessionId}`);
+      chatSessionStore.removeSession(chatId);
+    }
+
+    try {
+      const sessionTitle = this.getPrivateSessionTitle(senderId);
+      const session = await opencodeClient.createSession(sessionTitle);
+      chatSessionStore.setSession(chatId, session.id, senderId, sessionTitle);
+      return {
+        firstBinding: true,
+      };
+    } catch (error) {
+      console.error('[P2P] 初始化私聊会话失败:', error);
+      return null;
+    }
+  }
+
+  private shouldSkipImmediateCommand(command: ParsedCommand): boolean {
+    if (command.type === 'help' || command.type === 'panel') {
+      return true;
+    }
+
+    return command.type === 'session' && command.sessionAction === 'new';
+  }
+
+  private async pushFirstContactGuidance(chatId: string, senderId: string, messageId: string): Promise<void> {
+    const card = buildWelcomeCard(senderId);
+    await feishuClient.sendCard(chatId, card);
+    await this.safeReply(messageId, chatId, getHelpText());
+
+    try {
+      await commandHandler.pushPanelCard(chatId, 'p2p');
+    } catch (error) {
+      console.warn('[P2P] 发送私聊控制面板失败:', error);
+    }
+  }
+
   // 处理私聊消息
   async handleMessage(event: FeishuMessageEvent): Promise<void> {
     const { chatId, content, senderId, messageId } = event;
+    const trimmedContent = content.trim();
 
     // 1. 检查命令
     const command = parseCommand(content);
-    
-    // 特殊处理 /session new 或 "创建新会话" 文本命令，使其行为等同于点击卡片
-    if (content.trim() === '/session new' || content.trim() === '创建新会话') {
+
+    // 2. 首次私聊（或绑定会话在 OpenCode 中已被删除）时，自动初始化并推送引导
+    const ensured = await this.ensurePrivateSession(chatId, senderId);
+    if (!ensured) {
+      await this.safeReply(messageId, chatId, '❌ 初始化私聊会话失败，请稍后重试');
+      return;
+    }
+
+    if (ensured.firstBinding) {
+      await this.pushFirstContactGuidance(chatId, senderId, messageId);
+      if (this.shouldSkipImmediateCommand(command)) {
+        return;
+      }
+    }
+
+    // 3.1 私聊专属建群快捷命令
+    if (this.isCreateGroupCommand(trimmedContent)) {
       await this.handleCardAction({
         openId: senderId,
         action: { tag: 'button', value: { action: 'create_chat' } },
         token: '',
         chatId,
         messageId,
-        rawEvent: event.rawEvent
+        rawEvent: event.rawEvent,
       });
       return;
     }
 
+    // 3. 私聊命令
     if (command.type !== 'prompt') {
       console.log(`[P2P] 收到命令: ${command.type}`);
       await commandHandler.handle(command, {
@@ -55,13 +156,9 @@ export class P2PHandler {
       return;
     }
 
-    // 否则默认发送欢迎卡片
+    // 4. 私聊普通消息：按群聊同样逻辑转发到 OpenCode
     console.log(`[P2P] 收到私聊消息: user=${senderId}, content=${content.slice(0, 20)}...`);
-
-    // 获取发送者名字（暂时无法获取，除非有API，这里用OpenID或默认称呼）
-    // TODO: 可以调用API获取用户信息，这里暂时用OpenID
-    const card = buildWelcomeCard(senderId);
-    await feishuClient.sendCard(chatId, card);
+    await groupHandler.handleMessage(event);
   }
 
   // 处理私聊中的卡片动作

@@ -477,7 +477,7 @@ export function buildWelcomeCard(userName: string): object {
         tag: 'div',
         text: {
           tag: 'lark_md',
-          content: `你好 **${userName}**，我是你的 AI 助手。\n\n私聊里的多任务会共享同一上下文，容易出现记忆串线和指令混杂，影响回答稳定性与编码效果。\n\n需要创建专属会话群继续使用，每个群独立上下文更清晰。`,
+          content: `你好 **${userName}**，我是你的 AI 助手。\n\n你现在可以直接在私聊继续对话。\n\n如果你需要并行处理多个任务，建议创建专属会话群：每个群独立上下文，任务更清晰、不易串线。`,
         },
       },
       {
@@ -487,7 +487,7 @@ export function buildWelcomeCard(userName: string): object {
             tag: 'button',
             text: {
               tag: 'plain_text',
-              content: '➕ 创建新会话',
+              content: '➕ 创建新会话群',
             },
             type: 'primary',
             value: {

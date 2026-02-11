@@ -4,7 +4,31 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-把本地 OpenCode 直接接进飞书群聊：@机器人即可对话，支持流式输出、思考折叠卡片、权限确认、question 提问与 `/undo` 一致回滚。
+把本地 OpenCode 直接接进飞书，不只是“能聊”，而是把权限确认、question 答题、流式卡片、会话绑定、`/undo` 双端回滚与运维部署做成完整闭环。
+
+## 🎯 先看痛点
+
+- 只做消息转发不够：OpenCode 在真实任务中会发起权限请求、追问问题，很多桥接方案在这里断链。
+- 交互断链会直接影响可用性：权限无法确认、题目无法作答，任务会卡住或只能回到本地控制台。
+- 会话与撤回容易错位：如果没有稳定的 `chat <-> session` 映射和一致回滚，群聊多轮很容易串上下文。
+- 部署可维护性常被忽略：缺少后台运行、日志与清理策略，导致“能跑一次”但不适合长期使用。
+
+这个项目聚焦工程落地：在飞书里尽量完整承接 OpenCode 的关键交互链路，减少切换上下文和人工兜底。
+
+## 🥊 与 OpenClaw 和同类桥接对比
+
+> 结论：如果你只需要基础消息转发，很多方案都能用；如果你需要权限交互、答题交互、回滚一致性和运维闭环，本项目更偏生产实用。
+
+| 维度 | 常见桥接方案（含部分通用方案） | 本项目 |
+|---|---|---|
+| 权限请求（`permission.asked`） | 常见为日志输出或缺少飞书侧确认 | 飞书权限确认卡，支持一次允许/始终允许/拒绝并回传 |
+| AI 提问（`question.asked`） | 常见缺少飞书侧答题闭环 | 提问卡 + 文本作答 + 跳过，自动回传 OpenCode |
+| 撤回一致性 | 常见仅单端撤回 | `/undo` 同步回滚 OpenCode 与飞书消息 |
+| 会话管理 | 绑定策略较轻，复杂场景易串线 | `chat <-> session` 持久映射，支持清理与恢复 |
+| 运维落地 | 偏 Demo 脚本 | 提供启动/停止/部署脚本、systemd 与日志 |
+| 附件能力 | 常见不完整 | 支持图片/文件转 OpenCode file part |
+
+注：同类项目实现差异较大，上表描述的是常见缺口，不是绝对判断。
 
 新时代了，让 AI 代理自动部署吧：请在 OpenCode 执行如下指令：
 ```bash
@@ -13,6 +37,8 @@
 
 ## 📋 目录
 
+- [先看痛点](#先看痛点)
+- [与 OpenClaw 和同类桥接对比](#与-openclaw-和同类桥接对比)
 - [为什么用它](#为什么用它)
 - [能力总览](#能力总览)
 - [架构概览](#架构概览)
@@ -37,7 +63,7 @@
 | 能力 | 说明 |
 |---|---|
 | 群聊对话 | @机器人或回复机器人消息，自动转发到 OpenCode 会话 |
-| 私聊建群 | 私聊点击卡片一键创建会话群并绑定 session 注意！私聊无法做会话隔离，所以唯一作用就只能是建群！ |
+| 私聊会话 | 私聊可直接对话；首次自动建会话并推送建群卡片、`/help`、`/panel`；支持 `/create_chat` 或 `/建群` 一键建群 |
 | Agent 角色 | 支持内置与自定义角色；可在当前群通过 `/panel` 或 `/agent` 自由切换 |
 | 流式输出 | 输出缓冲定时刷新；检测到 thinking/reasoning 自动切卡片 |
 | 思考折叠 | 支持展开/折叠思考内容，避免长卡片刷屏 |
@@ -243,8 +269,11 @@ node scripts/deploy.mjs status
 | `/stop` | 中断当前会话执行 |
 | `/undo` | 撤回上一轮交互（OpenCode + 飞书同步） |
 | `/session new` | 新建会话并重置上下文 |
+| `新建会话窗口` | 自然语言触发新建会话（等价 `/session new`） |
 | `/clear` | 等价于 `/session new` |
 | `/clear free session` | 清理空闲群聊和会话 |
+| `/compact` | 透传到 OpenCode，压缩当前会话上下文 |
+| `/create_chat` / `/建群` | 私聊中直接创建新会话群（等价建群卡片按钮） |
 | `/status` | 查看当前群绑定状态 |
 
 ## 🤖 Agent（角色）使用
@@ -314,7 +343,7 @@ node scripts/deploy.mjs status
 | 权限卡或提问卡发不到群 | `.chat-sessions.json` 中 `sessionId -> chatId` 映射是否存在 |
 | 卡片更新失败 | 消息类型是否匹配；失败后是否降级为重发卡片 |
 | 后台模式无法停止 | `logs/bridge.pid` 是否残留；使用 `npm run stop:bridge` 清理 |
-| 私聊一直发你好 | 私聊无法做会话隔离，所以私聊的功能就是创建新会话群 |
+| 私聊首次会推送多条引导消息 | 这是首次流程（建群卡片 + `/help` + `/panel`）；后续会按已绑定会话正常对话 |
 ## 📝 许可证
 
 本项目采用 [GNU General Public License v3.0](LICENSE)
