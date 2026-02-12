@@ -1,4 +1,4 @@
-import { feishuClient } from './feishu/client.js';
+import { feishuClient, type FeishuMessageEvent } from './feishu/client.js';
 import { opencodeClient } from './opencode/client.js';
 import { outputBuffer } from './opencode/output-buffer.js';
 import { delayedResponseHandler } from './opencode/delayed-handler.js';
@@ -11,7 +11,13 @@ import { lifecycleHandler } from './handlers/lifecycle.js';
 import { commandHandler } from './handlers/command.js';
 import { cardActionHandler } from './handlers/card-action.js';
 import { validateConfig } from './config.js';
-import { buildStreamCard, type StreamCardData, type StreamCardSegment } from './feishu/cards-stream.js';
+import {
+  buildStreamCard,
+  type StreamCardData,
+  type StreamCardSegment,
+  type StreamCardPendingPermission,
+  type StreamCardPendingQuestion,
+} from './feishu/cards-stream.js';
 
 async function main() {
   console.log('╔════════════════════════════════════════════════╗');
@@ -66,7 +72,7 @@ async function main() {
     | {
         type: 'note';
         text: string;
-        variant?: 'retry' | 'compaction' | 'question' | 'error';
+        variant?: 'retry' | 'compaction' | 'question' | 'error' | 'permission';
       };
 
   type StreamTimelineState = {
@@ -76,6 +82,20 @@ async function main() {
 
   const streamToolStateMap = new Map<string, Map<string, ToolRuntimeState>>();
   const streamTimelineMap = new Map<string, StreamTimelineState>();
+  const getPendingPermissionForChat = (chatId: string): StreamCardPendingPermission | undefined => {
+    const head = permissionHandler.peekForChat(chatId);
+    if (!head) return undefined;
+
+    const pendingCount = permissionHandler.getQueueSizeForChat(chatId);
+    return {
+      sessionId: head.sessionId,
+      permissionId: head.permissionId,
+      tool: head.tool,
+      description: head.description,
+      risk: head.risk,
+      pendingCount,
+    };
+  };
 
   const getOrCreateTimelineState = (bufferKey: string): StreamTimelineState => {
     let timeline = streamTimelineMap.get(bufferKey);
@@ -191,7 +211,7 @@ async function main() {
     bufferKey: string,
     noteKey: string,
     text: string,
-    variant?: 'retry' | 'compaction' | 'question' | 'error'
+    variant?: 'retry' | 'compaction' | 'question' | 'error' | 'permission'
   ): void => {
     upsertTimelineSegment(bufferKey, `note:${noteKey}`, {
       type: 'note',
@@ -242,6 +262,41 @@ async function main() {
     return segments;
   };
 
+  const getPendingQuestionForBuffer = (sessionId: string, chatId: string): StreamCardPendingQuestion | undefined => {
+    const pending = questionHandler.getBySession(sessionId);
+    if (!pending || pending.chatId !== chatId) {
+      return undefined;
+    }
+
+    const totalQuestions = pending.request.questions.length;
+    if (totalQuestions === 0) {
+      return undefined;
+    }
+
+    const safeIndex = Math.min(Math.max(pending.currentQuestionIndex, 0), totalQuestions - 1);
+    const question = pending.request.questions[safeIndex];
+    if (!question) {
+      return undefined;
+    }
+
+    return {
+      requestId: pending.request.id,
+      sessionId: pending.request.sessionID,
+      chatId: pending.chatId,
+      questionIndex: safeIndex,
+      totalQuestions,
+      header: typeof question.header === 'string' ? question.header : '',
+      question: typeof question.question === 'string' ? question.question : '',
+      options: Array.isArray(question.options)
+        ? question.options.map(option => ({
+            label: typeof option.label === 'string' ? option.label : '',
+            description: typeof option.description === 'string' ? option.description : '',
+          }))
+        : [],
+      multiple: question.multiple === true,
+    };
+  };
+
   const toSessionId = (value: unknown): string => {
     return typeof value === 'string' ? value : '';
   };
@@ -256,14 +311,111 @@ async function main() {
     return 'running';
   };
 
+  const getToolStatusText = (status: ToolRuntimeState['status']): string => {
+    if (status === 'pending') return '等待中';
+    if (status === 'running') return '执行中';
+    if (status === 'completed') return '已完成';
+    return '失败';
+  };
+
   const stringifyToolOutput = (value: unknown): string | undefined => {
     if (value === undefined || value === null) return undefined;
     if (typeof value === 'string') return value;
     try {
-      return JSON.stringify(value);
+      return JSON.stringify(value, null, 2);
     } catch {
       return String(value);
     }
+  };
+
+  const asRecord = (value: unknown): Record<string, unknown> | null => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return null;
+    }
+    return value as Record<string, unknown>;
+  };
+
+  const pickFirstDefined = (...values: unknown[]): unknown => {
+    for (const value of values) {
+      if (value !== undefined && value !== null) {
+        return value;
+      }
+    }
+    return undefined;
+  };
+
+  const buildToolTraceOutput = (
+    part: Record<string, unknown>,
+    status: ToolRuntimeState['status'],
+    withInput: boolean
+  ): string | undefined => {
+    const state = asRecord(part.state);
+    const inputValue = withInput
+      ? pickFirstDefined(
+          part.input,
+          part.args,
+          part.arguments,
+          state?.input,
+          state?.args,
+          state?.arguments
+        )
+      : undefined;
+    const outputValue = status === 'failed'
+      ? pickFirstDefined(state?.error, state?.output, part.error)
+      : pickFirstDefined(state?.output, state?.result, state?.message, part.output, part.result);
+
+    const inputText = stringifyToolOutput(inputValue);
+    const outputText = stringifyToolOutput(outputValue);
+    const blocks: string[] = [];
+
+    if (inputText && inputText.trim()) {
+      blocks.push(`调用参数:\n${inputText.trim()}`);
+    }
+
+    if (outputText && outputText.trim()) {
+      blocks.push(`${status === 'failed' ? '错误输出' : '执行输出'}:\n${outputText.trim()}`);
+    }
+
+    if (blocks.length === 0) {
+      return `状态更新：${getToolStatusText(status)}`;
+    }
+
+    return blocks.join('\n\n');
+  };
+
+  const TOOL_TRACE_LIMIT = 20000;
+  const clipToolTrace = (text: string): string => {
+    if (text.length <= TOOL_TRACE_LIMIT) {
+      return text;
+    }
+    const retained = text.slice(-TOOL_TRACE_LIMIT);
+    return `...（历史输出过长，已截断前 ${text.length - TOOL_TRACE_LIMIT} 字）...\n${retained}`;
+  };
+
+  const mergeToolOutput = (previous: string | undefined, incoming: string | undefined): string | undefined => {
+    if (!incoming || !incoming.trim()) {
+      return previous;
+    }
+
+    const next = incoming.trim();
+    if (!previous || !previous.trim()) {
+      return clipToolTrace(next);
+    }
+
+    const prev = previous.trim();
+    if (prev === next) {
+      return previous;
+    }
+
+    if (next.startsWith(prev) || next.includes(prev)) {
+      return clipToolTrace(next);
+    }
+
+    if (prev.startsWith(next) || prev.includes(next)) {
+      return previous;
+    }
+
+    return clipToolTrace(`${previous}\n\n---\n${next}`);
   };
 
   const getOrCreateToolStateBucket = (bufferKey: string): Map<string, ToolRuntimeState> => {
@@ -296,16 +448,17 @@ async function main() {
   ): void => {
     const bucket = getOrCreateToolStateBucket(bufferKey);
     const previous = bucket.get(toolKey);
+    const mergedOutput = mergeToolOutput(previous?.output, nextState.output);
     bucket.set(toolKey, {
       name: nextState.name,
       status: nextState.status,
-      output: nextState.output ?? previous?.output,
+      output: mergedOutput,
       kind: nextState.kind ?? previous?.kind ?? kind,
     });
     upsertTimelineTool(bufferKey, toolKey, {
       name: nextState.name,
       status: nextState.status,
-      output: nextState.output ?? previous?.output,
+      output: mergedOutput,
       kind: nextState.kind ?? previous?.kind ?? kind,
     }, nextState.kind ?? previous?.kind ?? kind);
     syncToolsToBuffer(bufferKey);
@@ -485,11 +638,135 @@ async function main() {
     });
   };
 
+  type PermissionDecision = {
+    allow: boolean;
+    remember: boolean;
+  };
+
+  const parsePermissionDecision = (raw: string): PermissionDecision | null => {
+    const normalized = raw.trim().toLowerCase();
+    if (!normalized) return null;
+
+    const compact = normalized
+      .replace(/[\s\u3000]+/g, '')
+      .replace(/[。！!,.，；;:：\-]/g, '');
+    const hasAlways =
+      compact.includes('始终') ||
+      compact.includes('永久') ||
+      compact.includes('always') ||
+      compact.includes('记住') ||
+      compact.includes('总是');
+
+    const containsAny = (words: string[]): boolean => {
+      return words.some(word => compact === word || compact.includes(word));
+    };
+
+    const isDeny =
+      compact === 'n' ||
+      compact === 'no' ||
+      compact === '否' ||
+      compact === '拒绝' ||
+      containsAny(['拒绝', '不同意', '不允许', 'deny']);
+    if (isDeny) {
+      return { allow: false, remember: false };
+    }
+
+    const isAllow =
+      compact === 'y' ||
+      compact === 'yes' ||
+      compact === 'ok' ||
+      compact === 'always' ||
+      compact === '允许' ||
+      compact === '始终允许' ||
+      containsAny(['允许', '同意', '通过', '批准', 'allow']);
+    if (isAllow) {
+      return { allow: true, remember: hasAlways };
+    }
+
+    return null;
+  };
+
+  const tryHandlePendingPermissionByText = async (event: FeishuMessageEvent): Promise<boolean> => {
+    if (event.chatType !== 'group') {
+      return false;
+    }
+
+    const trimmedContent = event.content.trim();
+    if (!trimmedContent || trimmedContent.startsWith('/')) {
+      return false;
+    }
+
+    const pending = permissionHandler.peekForChat(event.chatId);
+    if (!pending) {
+      return false;
+    }
+
+    const decision = parsePermissionDecision(trimmedContent);
+    if (!decision) {
+      await feishuClient.reply(
+        event.messageId,
+        '当前有待确认权限，请回复：允许 / 拒绝 / 始终允许（也支持 y / n / always）'
+      );
+      return true;
+    }
+
+    const responded = await opencodeClient.respondToPermission(
+      pending.sessionId,
+      pending.permissionId,
+      decision.allow,
+      decision.remember
+    );
+
+    if (!responded) {
+      console.error(
+        `[权限] 文本响应失败: chat=${event.chatId}, session=${pending.sessionId}, permission=${pending.permissionId}`
+      );
+      await feishuClient.reply(event.messageId, '权限响应失败，请重试');
+      return true;
+    }
+
+    const removed = permissionHandler.resolveForChat(event.chatId, pending.permissionId);
+    const bufferKey = `chat:${event.chatId}`;
+    if (!outputBuffer.get(bufferKey)) {
+      outputBuffer.getOrCreate(bufferKey, event.chatId, pending.sessionId, event.messageId);
+    }
+
+    const toolName = removed?.tool || pending.tool || '工具';
+    const resolvedText = decision.allow
+      ? decision.remember
+        ? `✅ 已允许并记住权限：${toolName}`
+        : `✅ 已允许权限：${toolName}`
+      : `❌ 已拒绝权限：${toolName}`;
+    upsertTimelineNote(
+      bufferKey,
+      `permission-result-text:${pending.sessionId}:${pending.permissionId}:${decision.allow ? 'allow' : 'deny'}:${decision.remember ? 'always' : 'once'}`,
+      resolvedText,
+      'permission'
+    );
+    outputBuffer.touch(bufferKey);
+
+    await feishuClient.reply(
+      event.messageId,
+      decision.allow ? (decision.remember ? '已允许并记住该权限' : '已允许该权限') : '已拒绝该权限'
+    );
+    return true;
+  };
+
   outputBuffer.setUpdateCallback(async (buffer) => {
     const { text, thinking } = outputBuffer.getAndClear(buffer.key);
     const timelineSegments = getTimelineSegments(buffer.key);
+    const pendingPermission = getPendingPermissionForChat(buffer.chatId);
+    const pendingQuestion = getPendingQuestionForBuffer(buffer.sessionId, buffer.chatId);
 
-    if (!text && !thinking && timelineSegments.length === 0 && buffer.tools.length === 0 && buffer.status === 'running') return;
+    if (
+      !text &&
+      !thinking &&
+      timelineSegments.length === 0 &&
+      buffer.tools.length === 0 &&
+      !pendingPermission &&
+      !pendingQuestion &&
+      buffer.status === 'running'
+    ) return;
 
     const current = streamContentMap.get(buffer.key) || { text: '', thinking: '' };
     current.text += text;
@@ -510,7 +787,9 @@ async function main() {
       current.text.trim().length > 0 ||
       current.thinking.trim().length > 0 ||
       buffer.tools.length > 0 ||
-      timelineSegments.length > 0;
+      timelineSegments.length > 0 ||
+      Boolean(pendingPermission) ||
+      Boolean(pendingQuestion);
 
     if (!hasVisibleContent && buffer.status === 'running') return;
 
@@ -530,6 +809,8 @@ async function main() {
       messageId: messageId || undefined,
       tools: [...buffer.tools],
       segments: timelineSegments,
+      ...(pendingPermission ? { pendingPermission } : {}),
+      ...(pendingQuestion ? { pendingQuestion } : {}),
       status,
       showThinking: false,
     };
@@ -588,6 +869,10 @@ async function main() {
       if (event.chatType === 'p2p') {
         await p2pHandler.handleMessage(event);
       } else if (event.chatType === 'group') {
+        const handledPermission = await tryHandlePendingPermissionByText(event);
+        if (handledPermission) {
+          return;
+        }
         await groupHandler.handleMessage(event);
       }
     } catch (error) {
@@ -664,6 +949,26 @@ async function main() {
           };
         }
 
+        const permissionChatId = chatSessionStore.getChatId(sessionId);
+        if (permissionChatId) {
+          const bufferKey = `chat:${permissionChatId}`;
+          const removed = permissionHandler.resolveForChat(permissionChatId, permissionId);
+          if (removed) {
+            const resolvedText = allow
+              ? remember
+                ? `✅ 已允许并记住权限：${removed.tool}`
+                : `✅ 已允许权限：${removed.tool}`
+              : `❌ 已拒绝权限：${removed.tool}`;
+            upsertTimelineNote(
+              bufferKey,
+              `permission-result:${sessionId}:${permissionId}:${allow ? 'allow' : 'deny'}:${remember ? 'always' : 'once'}`,
+              resolvedText,
+              'permission'
+            );
+          }
+          outputBuffer.touch(bufferKey);
+        }
+
         return {
           toast: {
             type: allow ? 'success' : 'error',
@@ -710,8 +1015,8 @@ async function main() {
           return {
             toast: {
               type: 'error',
-              content: '请操作最新问题卡片',
-              i18n_content: { zh_cn: '请操作最新问题卡片', en_us: 'Please use latest question card' }
+              content: '请操作最新问题状态',
+              i18n_content: { zh_cn: '请操作最新问题状态', en_us: 'Please use latest question state' }
             }
           };
         }
@@ -765,19 +1070,38 @@ async function main() {
       // 2. Find Chat ID
       const chatId = chatSessionStore.getChatId(event.sessionId);
       if (chatId) {
-          console.log(`[权限] 发送确认卡片 -> Chat: ${chatId}`);
-          
-          const { buildPermissionCard } = await import('./feishu/cards.js');
-          const card = buildPermissionCard({
-              tool: event.tool,
-              description: event.description,
-              risk: event.risk,
-              sessionId: event.sessionId,
-              permissionId: event.permissionId
+          const bufferKey = `chat:${chatId}`;
+          if (!outputBuffer.get(bufferKey)) {
+            outputBuffer.getOrCreate(bufferKey, chatId, event.sessionId, null);
+          }
+
+          const permissionInfo: StreamCardPendingPermission = {
+            sessionId: event.sessionId,
+            permissionId: event.permissionId,
+            tool: event.tool,
+            description: event.description || event.tool,
+            risk: event.risk,
+          };
+          permissionHandler.enqueueForChat(chatId, {
+            sessionId: permissionInfo.sessionId,
+            permissionId: permissionInfo.permissionId,
+            tool: permissionInfo.tool,
+            description: permissionInfo.description,
+            risk: permissionInfo.risk,
+            userId: '',
           });
-          await feishuClient.sendCard(chatId, card);
+          console.log(
+            `[权限] 已入队: chat=${chatId}, permission=${event.permissionId}, pending=${permissionHandler.getQueueSizeForChat(chatId)}`
+          );
+          upsertTimelineNote(
+            bufferKey,
+            `permission:${event.sessionId}:${event.permissionId}`,
+            `🔐 权限请求：${event.tool}`,
+            'permission'
+          );
+          outputBuffer.touch(bufferKey);
       } else {
-          console.warn(`[权限] ⚠️ 未找到关联的群聊 (Session: ${event.sessionId})，无法发送确认卡片`);
+          console.warn(`[权限] ⚠️ 未找到关联的群聊 (Session: ${event.sessionId})，无法展示权限交互`);
       }
   });
 
@@ -907,17 +1231,24 @@ async function main() {
         outputBuffer.getOrCreate(bufferKey, chatId, sessionID, null);
       }
 
-      if (part?.type === 'tool') {
-          const toolName = typeof part.tool === 'string' && part.tool.trim() ? part.tool.trim() : 'tool';
-          const status = normalizeToolStatus(part?.state?.status);
-          const output = status === 'failed'
-            ? stringifyToolOutput(part?.state?.error)
-            : stringifyToolOutput(part?.state?.output);
-          const toolKey = typeof part.callID === 'string' && part.callID
-            ? part.callID
-            : typeof part.id === 'string' && part.id
-              ? part.id
+      if (part?.type === 'tool' && typeof part === 'object') {
+          const toolPart = part as Record<string, unknown>;
+          const rawToolName = toolPart.tool;
+          const toolObj = asRecord(rawToolName);
+          const toolName = typeof rawToolName === 'string' && rawToolName.trim()
+            ? rawToolName.trim()
+            : toolObj && typeof toolObj.name === 'string' && toolObj.name.trim()
+              ? toolObj.name.trim()
+              : 'tool';
+          const state = asRecord(toolPart.state);
+          const status = normalizeToolStatus(state?.status);
+          const toolKey = typeof toolPart.callID === 'string' && toolPart.callID
+            ? toolPart.callID
+            : typeof toolPart.id === 'string' && toolPart.id
+              ? toolPart.id
               : `${toolName}:${Date.now()}`;
+          const previous = getOrCreateToolStateBucket(bufferKey).get(toolKey);
+          const output = buildToolTraceOutput(toolPart, status, !previous || !previous.output);
 
           upsertToolState(bufferKey, toolKey, {
             name: toolName,
@@ -927,22 +1258,39 @@ async function main() {
           }, 'tool');
       }
 
-      if (part?.type === 'subtask') {
-          const taskName = typeof part.description === 'string' && part.description.trim()
-            ? part.description.trim()
+      if (part?.type === 'subtask' && typeof part === 'object') {
+          const subtaskPart = part as Record<string, unknown>;
+          const taskName = typeof subtaskPart.description === 'string' && subtaskPart.description.trim()
+            ? subtaskPart.description.trim()
             : 'Subtask';
+          const state = asRecord(subtaskPart.state);
+          const status = normalizeToolStatus(state?.status);
+          const toolKey = typeof subtaskPart.id === 'string' && subtaskPart.id
+            ? `subtask:${subtaskPart.id}`
+            : `subtask:${Date.now()}`;
+          const previous = getOrCreateToolStateBucket(bufferKey).get(toolKey);
           const outputParts: string[] = [];
-          if (typeof part.agent === 'string' && part.agent.trim()) {
-            outputParts.push(`agent=${part.agent.trim()}`);
+
+          if (!previous) {
+            if (typeof subtaskPart.agent === 'string' && subtaskPart.agent.trim()) {
+              outputParts.push(`agent=${subtaskPart.agent.trim()}`);
+            }
+            if (typeof subtaskPart.prompt === 'string' && subtaskPart.prompt.trim()) {
+              const normalizedPrompt = subtaskPart.prompt.trim().replace(/\s+/g, ' ');
+              outputParts.push(`prompt=${normalizedPrompt.slice(0, 200)}`);
+            }
           }
-          if (typeof part.prompt === 'string' && part.prompt.trim()) {
-            const normalizedPrompt = part.prompt.trim().replace(/\s+/g, ' ');
-            outputParts.push(`prompt=${normalizedPrompt.slice(0, 120)}`);
+
+          const stateOutput = status === 'failed'
+            ? stringifyToolOutput(pickFirstDefined(state?.error, state?.output))
+            : stringifyToolOutput(pickFirstDefined(state?.output, state?.result, state?.message));
+          if (stateOutput && stateOutput.trim()) {
+            outputParts.push(stateOutput.trim());
+          } else {
+            outputParts.push(`状态更新：${getToolStatusText(status)}`);
           }
-          const stateOutput = stringifyToolOutput(part?.state?.output);
-          const output = [outputParts.join(' | '), stateOutput || ''].filter(Boolean).join('\n');
-          const status = normalizeToolStatus(part?.state?.status);
-          const toolKey = typeof part.id === 'string' && part.id ? `subtask:${part.id}` : `subtask:${Date.now()}`;
+
+          const output = outputParts.join('\n\n');
           upsertToolState(bufferKey, toolKey, {
             name: taskName,
             status,
@@ -1087,49 +1435,20 @@ async function main() {
   });
 
   // 监听 AI 提问事件
-  opencodeClient.on('questionAsked', async (event: any) => {
-      // event is QuestionRequest properties
-      // need to cast or use as is
+  opencodeClient.on('questionAsked', (event: any) => {
       const request = event as import('./opencode/question-handler.js').QuestionRequest;
       const chatId = chatSessionStore.getChatId(request.sessionID);
-      
+
       if (chatId) {
           console.log(`[问题] 收到提问: ${request.id} (Chat: ${chatId})`);
-          const { questionHandler } = await import('./opencode/question-handler.js');
-          const { buildQuestionCardV2 } = await import('./feishu/cards.js');
-
           const bufferKey = `chat:${chatId}`;
           if (!outputBuffer.get(bufferKey)) {
             outputBuffer.getOrCreate(bufferKey, chatId, request.sessionID, null);
           }
-          upsertTimelineNote(bufferKey, `question:${request.sessionID}:${request.id}`, '🤝 问答交互（请在问题卡片中回答）', 'question');
-          outputBuffer.touch(bufferKey);
-          
+
           questionHandler.register(request, `chat:${chatId}`, chatId);
-          
-          // 发送提问卡片
-          const card = buildQuestionCardV2({
-              requestId: request.id,
-              sessionId: request.sessionID,
-              questions: request.questions,
-              conversationKey: `chat:${chatId}`,
-              chatId: chatId,
-              draftAnswers: questionHandler.get(request.id)?.draftAnswers,
-              draftCustomAnswers: questionHandler.get(request.id)?.draftCustomAnswers,
-              currentQuestionIndex: 0
-          });
-          
-          const msgId = await feishuClient.sendCard(chatId, card);
-          if (msgId) {
-              questionHandler.setCardMessageId(request.id, msgId);
-              chatSessionStore.addInteraction(chatId, {
-                userFeishuMsgId: '',
-                openCodeMsgId: '',
-                botFeishuMsgIds: [msgId],
-                type: 'question_prompt',
-                timestamp: Date.now()
-              });
-          }
+          upsertTimelineNote(bufferKey, `question:${request.sessionID}:${request.id}`, '🤝 问答交互（请在当前流式卡片中作答）', 'question');
+          outputBuffer.touch(bufferKey);
       }
   });
 

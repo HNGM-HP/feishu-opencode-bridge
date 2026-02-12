@@ -15,7 +15,14 @@ export interface PermissionRequestEvent {
 interface PermissionEventProperties {
   sessionID?: string;
   sessionId?: string;
+  session_id?: string;
   id?: string;
+  requestId?: string;
+  requestID?: string;
+  request_id?: string;
+  permissionId?: string;
+  permissionID?: string;
+  permission_id?: string;
   tool?: unknown;
   permission?: unknown;
   description?: string;
@@ -40,6 +47,39 @@ function getPermissionLabel(props: PermissionEventProperties): string {
   }
 
   return 'unknown';
+}
+
+function getFirstString(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return '';
+}
+
+function isPermissionRequestEventType(eventType: string): boolean {
+  const normalized = eventType.toLowerCase();
+  if (!normalized.includes('permission')) {
+    return false;
+  }
+
+  if (
+    normalized.includes('replied') ||
+    normalized.includes('reply') ||
+    normalized.includes('granted') ||
+    normalized.includes('denied') ||
+    normalized.includes('resolved')
+  ) {
+    return false;
+  }
+
+  return (
+    normalized.includes('request') ||
+    normalized.includes('asked') ||
+    normalized.includes('require') ||
+    normalized.includes('pending')
+  );
 }
 
 // 消息部分类型
@@ -99,6 +139,10 @@ function parseAgentMode(value: unknown): AgentMode | undefined {
 class OpencodeClientWrapper extends EventEmitter {
   private client: SdkOpencodeClient | null = null;
   private eventAbortController: AbortController | null = null;
+  private eventReconnectTimer: NodeJS.Timeout | null = null;
+  private eventReconnectAttempt = 0;
+  private eventListeningEnabled = false;
+  private eventStreamActive = false;
 
   constructor() {
     super();
@@ -117,9 +161,10 @@ class OpencodeClientWrapper extends EventEmitter {
       try {
         await this.client.session.list();
         console.log('[OpenCode] 已连接');
+        this.eventListeningEnabled = true;
         
         // 启动事件监听
-        this.startEventListener();
+        void this.startEventListener();
         return true;
       } catch {
         console.error('[OpenCode] 服务器状态异常');
@@ -131,55 +176,122 @@ class OpencodeClientWrapper extends EventEmitter {
     }
   }
 
+  private clearEventReconnectTimer(): void {
+    if (this.eventReconnectTimer) {
+      clearTimeout(this.eventReconnectTimer);
+      this.eventReconnectTimer = null;
+    }
+  }
+
+  private scheduleEventReconnect(reason: string): void {
+    if (!this.eventListeningEnabled || !this.client) {
+      return;
+    }
+
+    if (this.eventReconnectTimer) {
+      return;
+    }
+
+    const maxBackoffMs = 15000;
+    const baseBackoffMs = 2000;
+    const step = Math.min(this.eventReconnectAttempt, 4);
+    const delay = Math.min(baseBackoffMs * Math.pow(2, step), maxBackoffMs);
+    this.eventReconnectAttempt += 1;
+
+    console.warn(`[OpenCode] ${reason}，将在 ${Math.round(delay / 1000)} 秒后重连事件流（第 ${this.eventReconnectAttempt} 次）`);
+    this.eventReconnectTimer = setTimeout(() => {
+      this.eventReconnectTimer = null;
+      void this.startEventListener();
+    }, delay);
+  }
+
   // 启动SSE事件监听
   private async startEventListener(): Promise<void> {
-    if (!this.client) return;
+    if (!this.client || !this.eventListeningEnabled) return;
+    if (this.eventStreamActive) return;
 
-    this.eventAbortController = new AbortController();
+    this.eventStreamActive = true;
+    this.clearEventReconnectTimer();
+
+    const controller = new AbortController();
+    if (this.eventAbortController) {
+      this.eventAbortController.abort();
+    }
+    this.eventAbortController = controller;
 
     try {
       const events = await this.client.event.subscribe();
       console.log('[OpenCode] 事件流订阅成功');
+      this.eventReconnectAttempt = 0;
       
       // 异步处理事件流
       (async () => {
         try {
           for await (const event of events.stream) {
+            if (controller.signal.aborted || !this.eventListeningEnabled) {
+              break;
+            }
+
             // Debug log for permission requests to catch missing ones
-            if (event.type.startsWith('permission')) {
+            if (event.type.toLowerCase().includes('permission')) {
                  console.log(`[OpenCode] 收到底层事件: ${event.type}`, JSON.stringify(event.properties || {}).slice(0, 200));
             }
             this.handleEvent(event);
           }
-        } catch (error) {
 
-          if (!this.eventAbortController?.signal.aborted) {
-            console.error('[OpenCode] 事件流中断:', error);
-            // 尝试重连
-            setTimeout(() => this.startEventListener(), 5000);
+          if (!controller.signal.aborted && this.eventListeningEnabled) {
+            this.scheduleEventReconnect('事件流已结束');
           }
+        } catch (error) {
+          if (!controller.signal.aborted && this.eventListeningEnabled) {
+            console.error('[OpenCode] 事件流中断:', error);
+            this.scheduleEventReconnect('事件流中断');
+          }
+        } finally {
+          if (this.eventAbortController === controller) {
+            this.eventAbortController = null;
+          }
+          this.eventStreamActive = false;
         }
       })();
     } catch (error) {
       console.error('[OpenCode] 无法订阅事件:', error);
+      this.eventStreamActive = false;
+      if (!controller.signal.aborted && this.eventListeningEnabled) {
+        this.scheduleEventReconnect('订阅失败');
+      }
     }
   }
 
   // 处理SSE事件
   private handleEvent(event: { type: string; properties?: Record<string, unknown> }): void {
-    // 权限请求事件 (compat: support both 'permission.request' and 'permission.asked')
-    if ((event.type === 'permission.request' || event.type === 'permission.asked') && event.properties) {
+    const eventType = event.type.toLowerCase();
+    // 权限请求事件（兼容不同事件命名）
+    if (isPermissionRequestEventType(eventType) && event.properties) {
       const props = event.properties as PermissionEventProperties;
 
       const permissionEvent: PermissionRequestEvent = {
-        sessionId: props.sessionID || props.sessionId || '',
-        permissionId: props.id || '',
+        sessionId: getFirstString(props.sessionID, props.sessionId, props.session_id),
+        permissionId: getFirstString(
+          props.id,
+          props.requestId,
+          props.requestID,
+          props.request_id,
+          props.permissionId,
+          props.permissionID,
+          props.permission_id
+        ),
         // permission.asked 的 tool 常为对象（messageID/callID），显示/判断应优先用 permission
         tool: getPermissionLabel(props),
         // If description is missing, try to construct one from metadata
         description: props.description || (props.metadata ? JSON.stringify(props.metadata) : ''),
         risk: props.risk,
       };
+
+      if (!permissionEvent.sessionId || !permissionEvent.permissionId) {
+        console.warn('[OpenCode] 权限事件缺少关键字段:', event.type, JSON.stringify(event.properties || {}).slice(0, 300));
+        return;
+      }
 
       this.emit('permissionRequest', permissionEvent);
     }
@@ -607,6 +719,10 @@ class OpencodeClientWrapper extends EventEmitter {
 
   // 断开连接
   disconnect(): void {
+    this.eventListeningEnabled = false;
+    this.eventStreamActive = false;
+    this.clearEventReconnectTimer();
+    this.eventReconnectAttempt = 0;
     if (this.eventAbortController) {
       this.eventAbortController.abort();
       this.eventAbortController = null;

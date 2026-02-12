@@ -2,9 +2,8 @@ import { feishuClient, type FeishuMessageEvent, type FeishuCardActionEvent, type
 import { opencodeClient } from '../opencode/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
-import { questionHandler } from '../opencode/question-handler.js';
+import { questionHandler, type PendingQuestion } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
-import { buildQuestionCardV2, buildQuestionAnsweredCard } from '../feishu/cards.js';
 import { parseCommand } from '../commands/parser.js';
 import { commandHandler } from './command.js';
 import { modelConfig, attachmentConfig } from '../config.js';
@@ -206,34 +205,10 @@ export class GroupHandler {
     const nextIndex = currentIndex + 1;
     if (nextIndex < pending.request.questions.length) {
         questionHandler.setCurrentQuestionIndex(pending.request.id, nextIndex);
-        
-        // 发送下一题卡片
-        const card = buildQuestionCardV2({
-            requestId: pending.request.id,
-            sessionId: pending.request.sessionID,
-            questions: pending.request.questions,
-            conversationKey: pending.conversationKey,
-            chatId: pending.chatId,
-            draftAnswers: pending.draftAnswers,
-            draftCustomAnswers: pending.draftCustomAnswers,
-            currentQuestionIndex: nextIndex
-        });
-        
-        const cardMsgId = await feishuClient.sendCard(chatId, card);
-        if (cardMsgId) {
-            questionHandler.setCardMessageId(pending.request.id, cardMsgId);
-            chatSessionStore.addInteraction(chatId, {
-              userFeishuMsgId: '',
-              openCodeMsgId: '',
-              botFeishuMsgIds: [cardMsgId],
-              type: 'question_prompt',
-              timestamp: Date.now()
-            });
-        }
+        outputBuffer.touch(`chat:${chatId}`);
     } else {
       // 提交所有答案
-      const interactionUserMessageId = source === 'text' ? messageId : '';
-      await this.submitQuestionAnswers(pending, messageId, chatId, interactionUserMessageId);
+      await this.submitQuestionAnswers(pending, messageId, chatId);
     }
 
     return true;
@@ -275,10 +250,9 @@ export class GroupHandler {
 
   // 提交问题答案
   private async submitQuestionAnswers(
-    pending: any,
+    pending: PendingQuestion,
     replyMessageId: string,
-    chatId: string,
-    interactionUserMessageId: string
+    chatId: string
   ): Promise<void> {
       const answers: string[][] = [];
 
@@ -298,26 +272,14 @@ export class GroupHandler {
       this.ensureStreamingBuffer(
         chatId,
         pending.request.sessionID,
-        interactionUserMessageId || replyMessageId || null
+        replyMessageId || null
       );
 
       const success = await opencodeClient.replyQuestion(pending.request.id, answers);
       
       if (success) {
           questionHandler.remove(pending.request.id);
-          const answeredCard = buildQuestionAnsweredCard(answers);
-          const msgId = await feishuClient.sendCard(pending.chatId, answeredCard);
-          
-           if (msgId) {
-              // 记录交互历史
-              chatSessionStore.addInteraction(chatId, {
-                  userFeishuMsgId: interactionUserMessageId,
-                  openCodeMsgId: '', // 暂时无法获取，Undo时需动态查找
-                  botFeishuMsgIds: [msgId],
-                  type: 'question_answer',
-                  timestamp: Date.now()
-             });
-          }
+          outputBuffer.touch(`chat:${chatId}`);
       } else {
           await feishuClient.reply(replyMessageId, '⚠️ 回答提交失败，请重试');
       }
