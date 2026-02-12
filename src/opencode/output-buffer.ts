@@ -19,6 +19,7 @@ interface BufferedOutput {
   finalThinking: string;
   openCodeMsgId: string;
   showThinking: boolean;
+  dirty: boolean;
   lastUpdate: number;
   timer: NodeJS.Timeout | null;
   status: 'running' | 'completed' | 'failed' | 'aborted';
@@ -52,6 +53,7 @@ class OutputBuffer {
         finalThinking: '',
         openCodeMsgId: '',
         showThinking: false,
+        dirty: false,
         lastUpdate: Date.now(),
         timer: null,
         status: 'running',
@@ -68,6 +70,7 @@ class OutputBuffer {
     if (!buffer) return;
 
     buffer.content.push(text);
+    buffer.dirty = true;
     this.scheduleUpdate(key);
   }
 
@@ -77,6 +80,7 @@ class OutputBuffer {
     if (!buffer) return;
 
     buffer.thinking.push(text);
+    buffer.dirty = true;
     this.scheduleUpdate(key);
   }
 
@@ -105,7 +109,16 @@ class OutputBuffer {
     const buffer = this.buffers.get(key);
     if (buffer) {
       buffer.tools = [...tools];
+      buffer.dirty = true;
+      this.scheduleUpdate(key);
     }
+  }
+
+  touch(key: string): void {
+    const buffer = this.buffers.get(key);
+    if (!buffer) return;
+    buffer.dirty = true;
+    this.scheduleUpdate(key);
   }
 
   // 设置最终文本和思考快照
@@ -138,6 +151,7 @@ class OutputBuffer {
     const buffer = this.buffers.get(key);
     if (buffer) {
       buffer.status = status;
+      buffer.dirty = true;
       // 状态变化时立即触发更新
       this.triggerUpdate(key);
     }
@@ -166,9 +180,17 @@ class OutputBuffer {
 
     buffer.lastUpdate = Date.now();
 
+    const shouldUpdate = buffer.dirty || buffer.status !== 'running';
+
     // 调用回调
-    if (this.updateCallback && (buffer.content.length > 0 || buffer.thinking.length > 0 || buffer.status !== 'running')) {
-      await this.updateCallback(buffer);
+    if (this.updateCallback && shouldUpdate) {
+      buffer.dirty = false;
+      try {
+        await this.updateCallback(buffer);
+      } catch (error) {
+        buffer.dirty = true;
+        throw error;
+      }
     }
   }
 

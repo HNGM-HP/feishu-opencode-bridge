@@ -11,7 +11,7 @@ import { lifecycleHandler } from './handlers/lifecycle.js';
 import { commandHandler } from './handlers/command.js';
 import { cardActionHandler } from './handlers/card-action.js';
 import { validateConfig } from './config.js';
-import { buildStreamCard, type StreamCardData } from './feishu/cards-stream.js';
+import { buildStreamCard, type StreamCardData, type StreamCardSegment } from './feishu/cards-stream.js';
 
 async function main() {
   console.log('╔════════════════════════════════════════════════╗');
@@ -37,9 +37,210 @@ async function main() {
   const streamContentMap = new Map<string, { text: string; thinking: string }>();
   const reasoningSnapshotMap = new Map<string, string>();
   const textSnapshotMap = new Map<string, string>();
-  const streamToolStateMap = new Map<string, Map<string, { name: string; status: 'pending' | 'running' | 'completed' | 'failed'; output?: string }>>();
   const retryNoticeMap = new Map<string, string>();
   const errorNoticeMap = new Map<string, string>();
+
+  type ToolRuntimeState = {
+    name: string;
+    status: 'pending' | 'running' | 'completed' | 'failed';
+    output?: string;
+    kind?: 'tool' | 'subtask';
+  };
+
+  type TimelineSegment =
+    | {
+        type: 'text';
+        text: string;
+      }
+    | {
+        type: 'reasoning';
+        text: string;
+      }
+    | {
+        type: 'tool';
+        name: string;
+        status: ToolRuntimeState['status'];
+        output?: string;
+        kind?: 'tool' | 'subtask';
+      }
+    | {
+        type: 'note';
+        text: string;
+        variant?: 'retry' | 'compaction' | 'question' | 'error';
+      };
+
+  type StreamTimelineState = {
+    order: string[];
+    segments: Map<string, TimelineSegment>;
+  };
+
+  const streamToolStateMap = new Map<string, Map<string, ToolRuntimeState>>();
+  const streamTimelineMap = new Map<string, StreamTimelineState>();
+
+  const getOrCreateTimelineState = (bufferKey: string): StreamTimelineState => {
+    let timeline = streamTimelineMap.get(bufferKey);
+    if (!timeline) {
+      timeline = {
+        order: [],
+        segments: new Map(),
+      };
+      streamTimelineMap.set(bufferKey, timeline);
+    }
+    return timeline;
+  };
+
+  const trimTimeline = (timeline: StreamTimelineState): void => {
+    const limit = 80;
+    while (timeline.order.length > limit) {
+      const removedKey = timeline.order.shift();
+      if (removedKey) {
+        timeline.segments.delete(removedKey);
+      }
+    }
+  };
+
+  const upsertTimelineSegment = (bufferKey: string, segmentKey: string, segment: TimelineSegment): void => {
+    const timeline = getOrCreateTimelineState(bufferKey);
+    if (!timeline.segments.has(segmentKey)) {
+      timeline.order.push(segmentKey);
+      trimTimeline(timeline);
+    }
+    timeline.segments.set(segmentKey, segment);
+  };
+
+  const appendTimelineText = (
+    bufferKey: string,
+    segmentKey: string,
+    type: 'text' | 'reasoning',
+    deltaText: string
+  ): void => {
+    if (!deltaText) return;
+    const timeline = getOrCreateTimelineState(bufferKey);
+    const previous = timeline.segments.get(segmentKey);
+    if (previous && previous.type === type) {
+      timeline.segments.set(segmentKey, {
+        type,
+        text: `${previous.text}${deltaText}`,
+      });
+      return;
+    }
+
+    if (!timeline.segments.has(segmentKey)) {
+      timeline.order.push(segmentKey);
+      trimTimeline(timeline);
+    }
+    timeline.segments.set(segmentKey, {
+      type,
+      text: deltaText,
+    });
+  };
+
+  const setTimelineText = (
+    bufferKey: string,
+    segmentKey: string,
+    type: 'text' | 'reasoning',
+    text: string
+  ): void => {
+    const timeline = getOrCreateTimelineState(bufferKey);
+    const previous = timeline.segments.get(segmentKey);
+    if (previous && previous.type === type && previous.text === text) {
+      return;
+    }
+
+    if (!timeline.segments.has(segmentKey)) {
+      timeline.order.push(segmentKey);
+      trimTimeline(timeline);
+    }
+    timeline.segments.set(segmentKey, { type, text });
+  };
+
+  const upsertTimelineTool = (
+    bufferKey: string,
+    toolKey: string,
+    state: ToolRuntimeState,
+    kind: 'tool' | 'subtask' = 'tool'
+  ): void => {
+    const segmentKey = `tool:${toolKey}`;
+    const timeline = getOrCreateTimelineState(bufferKey);
+    const previous = timeline.segments.get(segmentKey);
+    if (previous && previous.type === 'tool') {
+      timeline.segments.set(segmentKey, {
+        type: 'tool',
+        name: state.name,
+        status: state.status,
+        output: state.output ?? previous.output,
+        kind,
+      });
+      return;
+    }
+
+    if (!timeline.segments.has(segmentKey)) {
+      timeline.order.push(segmentKey);
+      trimTimeline(timeline);
+    }
+    timeline.segments.set(segmentKey, {
+      type: 'tool',
+      name: state.name,
+      status: state.status,
+      ...(state.output !== undefined ? { output: state.output } : {}),
+      kind,
+    });
+  };
+
+  const upsertTimelineNote = (
+    bufferKey: string,
+    noteKey: string,
+    text: string,
+    variant?: 'retry' | 'compaction' | 'question' | 'error'
+  ): void => {
+    upsertTimelineSegment(bufferKey, `note:${noteKey}`, {
+      type: 'note',
+      text,
+      ...(variant ? { variant } : {}),
+    });
+  };
+
+  const getTimelineSegments = (bufferKey: string): StreamCardSegment[] => {
+    const timeline = streamTimelineMap.get(bufferKey);
+    if (!timeline) {
+      return [];
+    }
+
+    const segments: StreamCardSegment[] = [];
+    for (const key of timeline.order) {
+      const segment = timeline.segments.get(key);
+      if (!segment) continue;
+
+      if (segment.type === 'text' || segment.type === 'reasoning') {
+        if (!segment.text.trim()) continue;
+        segments.push({
+          type: segment.type,
+          text: segment.text,
+        });
+        continue;
+      }
+
+      if (segment.type === 'tool') {
+        segments.push({
+          type: 'tool',
+          name: segment.name,
+          status: segment.status,
+          ...(segment.output !== undefined ? { output: segment.output } : {}),
+          ...(segment.kind ? { kind: segment.kind } : {}),
+        });
+        continue;
+      }
+
+      if (!segment.text.trim()) continue;
+      segments.push({
+        type: 'note',
+        text: segment.text,
+        ...(segment.variant ? { variant: segment.variant } : {}),
+      });
+    }
+
+    return segments;
+  };
 
   const toSessionId = (value: unknown): string => {
     return typeof value === 'string' ? value : '';
@@ -65,7 +266,7 @@ async function main() {
     }
   };
 
-  const getOrCreateToolStateBucket = (bufferKey: string): Map<string, { name: string; status: 'pending' | 'running' | 'completed' | 'failed'; output?: string }> => {
+  const getOrCreateToolStateBucket = (bufferKey: string): Map<string, ToolRuntimeState> => {
     let bucket = streamToolStateMap.get(bufferKey);
     if (!bucket) {
       bucket = new Map();
@@ -80,13 +281,18 @@ async function main() {
       outputBuffer.setTools(bufferKey, []);
       return;
     }
-    outputBuffer.setTools(bufferKey, Array.from(bucket.values()));
+    outputBuffer.setTools(bufferKey, Array.from(bucket.values()).map(item => ({
+      name: item.name,
+      status: item.status,
+      ...(item.output !== undefined ? { output: item.output } : {}),
+    })));
   };
 
   const upsertToolState = (
     bufferKey: string,
     toolKey: string,
-    nextState: { name: string; status: 'pending' | 'running' | 'completed' | 'failed'; output?: string }
+    nextState: ToolRuntimeState,
+    kind: 'tool' | 'subtask' = 'tool'
   ): void => {
     const bucket = getOrCreateToolStateBucket(bufferKey);
     const previous = bucket.get(toolKey);
@@ -94,7 +300,14 @@ async function main() {
       name: nextState.name,
       status: nextState.status,
       output: nextState.output ?? previous?.output,
+      kind: nextState.kind ?? previous?.kind ?? kind,
     });
+    upsertTimelineTool(bufferKey, toolKey, {
+      name: nextState.name,
+      status: nextState.status,
+      output: nextState.output ?? previous?.output,
+      kind: nextState.kind ?? previous?.kind ?? kind,
+    }, nextState.kind ?? previous?.kind ?? kind);
     syncToolsToBuffer(bufferKey);
   };
 
@@ -107,15 +320,20 @@ async function main() {
           ...item,
           status: 'completed',
         });
+        upsertTimelineTool(bufferKey, toolKey, {
+          ...item,
+          status: 'completed',
+        }, item.kind ?? 'tool');
       }
     }
     syncToolsToBuffer(bufferKey);
   };
 
-  const appendTextFromPart = (sessionID: string, part: { id?: unknown; text?: unknown }, chatId: string): void => {
+  const appendTextFromPart = (sessionID: string, part: { id?: unknown; text?: unknown }, bufferKey: string): void => {
     if (typeof part.text !== 'string') return;
     if (typeof part.id !== 'string' || !part.id) {
-      outputBuffer.append(`chat:${chatId}`, part.text);
+      outputBuffer.append(bufferKey, part.text);
+      appendTimelineText(bufferKey, `text:${sessionID}:anonymous`, 'text', part.text);
       return;
     }
 
@@ -125,18 +343,20 @@ async function main() {
     if (current.startsWith(prev)) {
       const deltaText = current.slice(prev.length);
       if (deltaText) {
-        outputBuffer.append(`chat:${chatId}`, deltaText);
+        outputBuffer.append(bufferKey, deltaText);
       }
     } else if (current !== prev) {
-      outputBuffer.append(`chat:${chatId}`, current);
+      outputBuffer.append(bufferKey, current);
     }
     textSnapshotMap.set(key, current);
+    setTimelineText(bufferKey, `text:${key}`, 'text', current);
   };
 
-  const appendReasoningFromPart = (sessionID: string, part: { id?: unknown; text?: unknown }, chatId: string): void => {
+  const appendReasoningFromPart = (sessionID: string, part: { id?: unknown; text?: unknown }, bufferKey: string): void => {
     if (typeof part.text !== 'string') return;
     if (typeof part.id !== 'string' || !part.id) {
-      outputBuffer.appendThinking(`chat:${chatId}`, part.text);
+      outputBuffer.appendThinking(bufferKey, part.text);
+      appendTimelineText(bufferKey, `reasoning:${sessionID}:anonymous`, 'reasoning', part.text);
       return;
     }
 
@@ -146,12 +366,13 @@ async function main() {
     if (current.startsWith(prev)) {
       const deltaText = current.slice(prev.length);
       if (deltaText) {
-        outputBuffer.appendThinking(`chat:${chatId}`, deltaText);
+        outputBuffer.appendThinking(bufferKey, deltaText);
       }
     } else if (current !== prev) {
-      outputBuffer.appendThinking(`chat:${chatId}`, current);
+      outputBuffer.appendThinking(bufferKey, current);
     }
     reasoningSnapshotMap.set(key, current);
+    setTimelineText(bufferKey, `reasoning:${key}`, 'reasoning', current);
   };
 
   const clearPartSnapshotsForSession = (sessionID: string): void => {
@@ -266,8 +487,9 @@ async function main() {
 
   outputBuffer.setUpdateCallback(async (buffer) => {
     const { text, thinking } = outputBuffer.getAndClear(buffer.key);
+    const timelineSegments = getTimelineSegments(buffer.key);
 
-    if (!text && !thinking && buffer.status === 'running') return;
+    if (!text && !thinking && timelineSegments.length === 0 && buffer.tools.length === 0 && buffer.status === 'running') return;
 
     const current = streamContentMap.get(buffer.key) || { text: '', thinking: '' };
     current.text += text;
@@ -287,7 +509,8 @@ async function main() {
     const hasVisibleContent =
       current.text.trim().length > 0 ||
       current.thinking.trim().length > 0 ||
-      buffer.tools.length > 0;
+      buffer.tools.length > 0 ||
+      timelineSegments.length > 0;
 
     if (!hasVisibleContent && buffer.status === 'running') return;
 
@@ -306,6 +529,7 @@ async function main() {
       chatId: buffer.chatId,
       messageId: messageId || undefined,
       tools: [...buffer.tools],
+      segments: timelineSegments,
       status,
       showThinking: false,
     };
@@ -352,6 +576,7 @@ async function main() {
     if (buffer.status !== 'running') {
       streamContentMap.delete(buffer.key);
       streamToolStateMap.delete(buffer.key);
+      streamTimelineMap.delete(buffer.key);
       clearPartSnapshotsForSession(buffer.sessionId);
       outputBuffer.clear(buffer.key);
     }
@@ -569,7 +794,9 @@ async function main() {
     const bufferKey = `chat:${chatId}`;
     const existingBuffer = outputBuffer.get(bufferKey) || outputBuffer.getOrCreate(bufferKey, chatId, sessionID, null);
 
+    upsertTimelineNote(bufferKey, `error:${sessionID}:${errorText}`, `❌ ${errorText}`, 'error');
     outputBuffer.append(bufferKey, `\n\n❌ ${errorText}`);
+    outputBuffer.touch(bufferKey);
     outputBuffer.setStatus(bufferKey, 'failed');
 
     if (!existingBuffer.messageId) {
@@ -597,7 +824,8 @@ async function main() {
       const signature = `${attempt}:${message}`;
       if (retryNoticeMap.get(sessionID) !== signature) {
         retryNoticeMap.set(sessionID, signature);
-        outputBuffer.appendThinking(bufferKey, `\n⚠️ 模型重试（第 ${attempt} 次）：${message}\n`);
+        upsertTimelineNote(bufferKey, `status-retry:${sessionID}:${signature}`, `⚠️ 模型重试（第 ${attempt} 次）：${message}`, 'retry');
+        outputBuffer.touch(bufferKey);
       }
       return;
     }
@@ -695,7 +923,8 @@ async function main() {
             name: toolName,
             status,
             ...(output ? { output } : {}),
-          });
+            kind: 'tool',
+          }, 'tool');
       }
 
       if (part?.type === 'subtask') {
@@ -710,24 +939,31 @@ async function main() {
             const normalizedPrompt = part.prompt.trim().replace(/\s+/g, ' ');
             outputParts.push(`prompt=${normalizedPrompt.slice(0, 120)}`);
           }
-          const output = outputParts.join(' | ');
+          const stateOutput = stringifyToolOutput(part?.state?.output);
+          const output = [outputParts.join(' | '), stateOutput || ''].filter(Boolean).join('\n');
+          const status = normalizeToolStatus(part?.state?.status);
           const toolKey = typeof part.id === 'string' && part.id ? `subtask:${part.id}` : `subtask:${Date.now()}`;
           upsertToolState(bufferKey, toolKey, {
             name: taskName,
-            status: 'running',
+            status,
             ...(output ? { output } : {}),
-          });
+            kind: 'subtask',
+          }, 'subtask');
       }
 
       if (part?.type === 'retry') {
           const retryMessage = part?.error?.data?.message;
           if (typeof retryMessage === 'string' && retryMessage.trim()) {
-            outputBuffer.appendThinking(bufferKey, `\n⚠️ 模型请求重试：${retryMessage.trim()}\n`);
+            const retryKey = typeof part.id === 'string' && part.id ? part.id : retryMessage.trim().slice(0, 80);
+            upsertTimelineNote(bufferKey, `part-retry:${sessionID}:${retryKey}`, `⚠️ 模型请求重试：${retryMessage.trim()}`, 'retry');
+            outputBuffer.touch(bufferKey);
           }
       }
 
       if (part?.type === 'compaction') {
-          outputBuffer.appendThinking(bufferKey, '\n🗜️ 会话上下文已压缩\n');
+          const compactionKey = typeof part.id === 'string' && part.id ? part.id : `${Date.now()}`;
+          upsertTimelineNote(bufferKey, `compaction:${sessionID}:${compactionKey}`, '🗜️ 会话上下文已压缩', 'compaction');
+          outputBuffer.touch(bufferKey);
       }
 
       if (typeof delta === 'string') {
@@ -737,26 +973,38 @@ async function main() {
                 if (typeof part?.id === 'string') {
                   const key = `${sessionID}:${part.id}`;
                   const prev = reasoningSnapshotMap.get(key) || '';
-                  reasoningSnapshotMap.set(key, `${prev}${delta}`);
+                  const next = `${prev}${delta}`;
+                  reasoningSnapshotMap.set(key, next);
+                  setTimelineText(bufferKey, `reasoning:${key}`, 'reasoning', next);
+                } else {
+                  appendTimelineText(bufferKey, `reasoning:${sessionID}:anonymous`, 'reasoning', delta);
                 }
                 return;
             }
-            if (part?.type === 'text' && typeof part?.id === 'string') {
-              const key = `${sessionID}:${part.id}`;
-              const prev = textSnapshotMap.get(key) || '';
-              textSnapshotMap.set(key, `${prev}${delta}`);
+            if (part?.type === 'text') {
+              if (typeof part?.id === 'string' && part.id) {
+                const key = `${sessionID}:${part.id}`;
+                const prev = textSnapshotMap.get(key) || '';
+                const next = `${prev}${delta}`;
+                textSnapshotMap.set(key, next);
+                setTimelineText(bufferKey, `text:${key}`, 'text', next);
+              } else {
+                appendTimelineText(bufferKey, `text:${sessionID}:anonymous`, 'text', delta);
+              }
+              outputBuffer.append(bufferKey, delta);
+              return;
             }
             outputBuffer.append(bufferKey, delta);
             return;
           }
 
           if (part?.type === 'reasoning') {
-            appendReasoningFromPart(sessionID, part, chatId);
+            appendReasoningFromPart(sessionID, part, bufferKey);
             return;
           }
 
           if (part?.type === 'text') {
-            appendTextFromPart(sessionID, part, chatId);
+            appendTextFromPart(sessionID, part, bufferKey);
             return;
           }
       }
@@ -771,22 +1019,70 @@ async function main() {
                     : '';
               if (reasoningText) {
                 outputBuffer.appendThinking(bufferKey, reasoningText);
+                if (typeof part?.id === 'string' && part.id) {
+                  const key = `${sessionID}:${part.id}`;
+                  const prev = reasoningSnapshotMap.get(key) || '';
+                  const next = `${prev}${reasoningText}`;
+                  reasoningSnapshotMap.set(key, next);
+                  setTimelineText(bufferKey, `reasoning:${key}`, 'reasoning', next);
+                } else {
+                  appendTimelineText(bufferKey, `reasoning:${sessionID}:anonymous`, 'reasoning', reasoningText);
+                }
               }
           } else if (delta.type === 'thinking' && typeof delta.thinking === 'string') {
               outputBuffer.appendThinking(bufferKey, delta.thinking);
-          } else if (delta.type === 'text' && delta.text) {
+              if (typeof part?.id === 'string' && part.id) {
+                const key = `${sessionID}:${part.id}`;
+                const prev = reasoningSnapshotMap.get(key) || '';
+                const next = `${prev}${delta.thinking}`;
+                reasoningSnapshotMap.set(key, next);
+                setTimelineText(bufferKey, `reasoning:${key}`, 'reasoning', next);
+              } else {
+                appendTimelineText(bufferKey, `reasoning:${sessionID}:anonymous`, 'reasoning', delta.thinking);
+              }
+          } else if (delta.type === 'text' && typeof delta.text === 'string' && delta.text.length > 0) {
               outputBuffer.append(bufferKey, delta.text);
-          } else if (delta.text) {
+              if (typeof part?.id === 'string' && part.id) {
+                const key = `${sessionID}:${part.id}`;
+                const prev = textSnapshotMap.get(key) || '';
+                const next = `${prev}${delta.text}`;
+                textSnapshotMap.set(key, next);
+                setTimelineText(bufferKey, `text:${key}`, 'text', next);
+              } else {
+                appendTimelineText(bufferKey, `text:${sessionID}:anonymous`, 'text', delta.text);
+              }
+          } else if (typeof delta.text === 'string' && delta.text.length > 0) {
               outputBuffer.append(bufferKey, delta.text);
+              if (part?.type === 'reasoning') {
+                if (typeof part?.id === 'string' && part.id) {
+                  const key = `${sessionID}:${part.id}`;
+                  const prev = reasoningSnapshotMap.get(key) || '';
+                  const next = `${prev}${delta.text}`;
+                  reasoningSnapshotMap.set(key, next);
+                  setTimelineText(bufferKey, `reasoning:${key}`, 'reasoning', next);
+                } else {
+                  appendTimelineText(bufferKey, `reasoning:${sessionID}:anonymous`, 'reasoning', delta.text);
+                }
+              } else if (part?.type === 'text') {
+                if (typeof part?.id === 'string' && part.id) {
+                  const key = `${sessionID}:${part.id}`;
+                  const prev = textSnapshotMap.get(key) || '';
+                  const next = `${prev}${delta.text}`;
+                  textSnapshotMap.set(key, next);
+                  setTimelineText(bufferKey, `text:${key}`, 'text', next);
+                } else {
+                  appendTimelineText(bufferKey, `text:${sessionID}:anonymous`, 'text', delta.text);
+                }
+              }
           }
           return;
       }
 
       // 某些事件不带 delta，只带最新 part，做兜底
       if (part?.type === 'reasoning' && typeof part.text === 'string') {
-          appendReasoningFromPart(sessionID, part, chatId);
+          appendReasoningFromPart(sessionID, part, bufferKey);
       } else if (part?.type === 'text' && typeof part.text === 'string') {
-          appendTextFromPart(sessionID, part, chatId);
+          appendTextFromPart(sessionID, part, bufferKey);
       }
   });
 
@@ -801,6 +1097,13 @@ async function main() {
           console.log(`[问题] 收到提问: ${request.id} (Chat: ${chatId})`);
           const { questionHandler } = await import('./opencode/question-handler.js');
           const { buildQuestionCardV2 } = await import('./feishu/cards.js');
+
+          const bufferKey = `chat:${chatId}`;
+          if (!outputBuffer.get(bufferKey)) {
+            outputBuffer.getOrCreate(bufferKey, chatId, request.sessionID, null);
+          }
+          upsertTimelineNote(bufferKey, `question:${request.sessionID}:${request.id}`, '🤝 问答交互（请在问题卡片中回答）', 'question');
+          outputBuffer.touch(bufferKey);
           
           questionHandler.register(request, `chat:${chatId}`, chatId);
           
