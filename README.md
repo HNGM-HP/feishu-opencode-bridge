@@ -163,7 +163,7 @@ flowchart LR
   B <--> S[.chat-sessions.json]
 ```
 - [项目架构](assets/docs/architecture.md)
-- [OpenCode-Sdk](assets/docs/sdk-api.md)
+- [OpenCode-sdk-api](assets/docs/sdk-api.md)
 
 关键点：
 
