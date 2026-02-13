@@ -302,7 +302,7 @@ node scripts/deploy.mjs status
 
 | 能力分组 | 代码中调用的接口 | 用途 |
 |---|---|---|
-| 消息读写与撤回（`im:message`） | im:message.p2p_msg:readonly,im:message.group_at_msg:readonly,im:message.group_msg,im:message.reactions:read,im:message.reactions:write_only | 发送文本/卡片、流式更新卡片、撤回消息 |
+| 消息读写与撤回（`im:message`） | im:message.p2p_msg:readonly<br>im:message.group_at_msg:readonly<br>im:message.group_msg<br>im:message.reactions:read<br>im:message.reactions:write_only | 发送文本/卡片、流式更新卡片、撤回消息 |
 | 群与成员管理（`im:chat`） | im:chat.members:read,im:chat.members:write_only | 私聊建群、拉人进群、查群成员、自动清理无效群 |
 | 消息资源下载（`im:resource`） | im.messageResource.get | 下载图片/文件附件并转发给 OpenCode |
 
