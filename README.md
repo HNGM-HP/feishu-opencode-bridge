@@ -150,6 +150,7 @@
 
 </details>
 
+<a id="架构概览"></a>
 ## 📌 架构概览
 
 ```mermaid
@@ -168,6 +169,7 @@ flowchart LR
 - 输出缓冲层负责节流更新，避免高频 patch 触发限制。
 - 文本与卡片属于两种消息类型，必要时会删旧消息并重发卡片。
 
+<a id="快速开始"></a>
 ## 🚀 快速开始
 
 ### 1) 前置要求
@@ -221,6 +223,7 @@ npm install
 npm run dev
 ```
 
+<a id="部署与运维"></a>
 ## 💻 部署与运维
 
 ### npm 命令
@@ -260,6 +263,7 @@ node scripts/deploy.mjs status
 
 日志默认在 `logs/service.log` 和 `logs/service.err`。
 
+<a id="环境变量"></a>
 ## ⚙️ 环境变量
 
 以 `src/config.ts` 实际读取为准：
@@ -286,6 +290,7 @@ node scripts/deploy.mjs status
 - 未配置或留空：不启用白名单；生命周期清理仅在群成员数为 `0` 时才会自动解散群聊。
 - 已配置：启用白名单保护；当群成员不足且群内/群主都不在白名单时，才会自动解散。
 
+<a id="飞书后台配置"></a>
 ## ⚙️ 飞书后台配置
 
 建议使用长连接模式（WebSocket 事件）。
@@ -331,6 +336,7 @@ node scripts/deploy.mjs status
 }
 ```
 
+<a id="命令速查"></a>
 ## 📖 命令速查
 
 | 命令 | 说明 |
@@ -354,6 +360,7 @@ node scripts/deploy.mjs status
 | `/create_chat` / `/建群` | 私聊中直接创建新会话群（等价建群卡片按钮） |
 | `/status` | 查看当前群绑定状态 |
 
+<a id="Agent（角色）使用"></a>
 ## 🤖 Agent（角色）使用
 
 ### 1) 查看与切换
@@ -391,6 +398,7 @@ node scripts/deploy.mjs status
 
 - 修改后如果 `/panel` 未立即显示新角色，重启 OpenCode 即可。
 
+<a id="关键实现细节"></a>
 ## 📌 关键实现细节
 
 ### 1) 权限请求回传
@@ -413,16 +421,18 @@ node scripts/deploy.mjs status
 - 需要同时删除飞书侧消息并对 OpenCode 执行 `revert`。
 - 问答场景可能涉及多条关联消息，使用递归回滚兜底。
 
+<a id="故障排查"></a>
 ## 🛠️ 故障排查
 
 | 现象 | 优先检查 |
 |---|---|
-| 飞书发送消息后OpenCode无反应 | 仔细检查飞书权限；确认 ⚙️ 飞书后台配置 正确 |
+| 飞书发送消息后OpenCode无反应 | 仔细检查飞书权限；确认 [飞书后台配置](#飞书后台配置) 正确 |
 | 点权限卡片后 OpenCode 无反应 | 日志是否出现权限回传失败；确认回传值是 `once/always/reject` |
 | 权限卡或提问卡发不到群 | `.chat-sessions.json` 中 `sessionId -> chatId` 映射是否存在 |
 | 卡片更新失败 | 消息类型是否匹配；失败后是否降级为重发卡片 |
 | 后台模式无法停止 | `logs/bridge.pid` 是否残留；使用 `npm run stop:bridge` 清理 |
 | 私聊首次会推送多条引导消息 | 这是首次流程（建群卡片 + `/help` + `/panel`）；后续会按已绑定会话正常对话 |
+<a id="许可证"></a>
 ## 📝 许可证
 
 本项目采用 [GNU General Public License v3.0](LICENSE)
