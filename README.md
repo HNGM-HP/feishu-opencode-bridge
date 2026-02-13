@@ -162,6 +162,8 @@ flowchart LR
   B --> C[飞书卡片与消息更新]
   B <--> S[.chat-sessions.json]
 ```
+- [项目架构](assets/docs/architecture.md)
+- [OpenCode-Sdk](assets/docs/sdk-api.md)
 
 关键点：
 
