@@ -302,9 +302,9 @@ node scripts/deploy.mjs status
 
 | 能力分组 | 代码中调用的接口 | 用途 |
 |---|---|---|
-| 消息读写与撤回（`im:message`） | `im:message.p2p_msg:readonly,im:message.group_at_msg:readonly,im:message.group_msg,im:message.reactions:read,im:message.reactions:write_only` | 发送文本/卡片、流式更新卡片、撤回消息 |
-| 群与成员管理（`im:chat`） | `im:chat.members:read,im:chat.members:write_only` | 私聊建群、拉人进群、查群成员、自动清理无效群 |
-| 消息资源下载（`im:resource`） | `im.messageResource.get` | 下载图片/文件附件并转发给 OpenCode |
+| 消息读写与撤回（`im:message`） | im:message.p2p_msg:readonly,im:message.group_at_msg:readonly,im:message.group_msg,im:message.reactions:read,im:message.reactions:write_only | 发送文本/卡片、流式更新卡片、撤回消息 |
+| 群与成员管理（`im:chat`） | im:chat.members:read,im:chat.members:write_only | 私聊建群、拉人进群、查群成员、自动清理无效群 |
+| 消息资源下载（`im:resource`） | im.messageResource.get | 下载图片/文件附件并转发给 OpenCode |
 
 注意：飞书后台不同版本的权限名称可能略有差异，按上表接口能力逐项对齐即可；若只需文本对话且不处理附件，可暂不开启 `im:resource`。
 - 可以复制下方参数保存至acc.json，然后在飞书`开发者后台`--`权限管理`--`批量导入/导出权限`
@@ -414,7 +414,7 @@ node scripts/deploy.mjs status
 
 | 现象 | 优先检查 |
 |---|---|
-| 飞书发送消息后OpenCode无反应 | 仔细检查飞书权限；确认 [飞书后台配置](#飞书后台配置) 正确 |
+| 飞书发送消息后OpenCode无反应 | 仔细检查飞书权限；确认 ⚙️ 飞书后台配置 正确 |
 | 点权限卡片后 OpenCode 无反应 | 日志是否出现权限回传失败；确认回传值是 `once/always/reject` |
 | 权限卡或提问卡发不到群 | `.chat-sessions.json` 中 `sessionId -> chatId` 映射是否存在 |
 | 卡片更新失败 | 消息类型是否匹配；失败后是否降级为重发卡片 |
