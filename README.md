@@ -81,10 +81,10 @@
 <summary>Step 1：私聊独立会话（点击展开）</summary>
 
 <p>
-  <img src="assets/demo/1-1私聊独立会话.png" width="1080" />
-  <img src="assets/demo/1-2私聊独立会话.png" width="1080" />
-  <img src="assets/demo/1-3私聊独立会话.png" width="1080" />
-  <img src="assets/demo/1-4私聊独立会话.png" width="1080" />
+  <img src="assets/demo/1-1私聊独立会话.png" width="720" />
+  <img src="assets/demo/1-2私聊独立会话.png" width="720" />
+  <img src="assets/demo/1-3私聊独立会话.png" width="720" />
+  <img src="assets/demo/1-4私聊独立会话.png" width="720" />
 </p>
 
 </details>
@@ -93,9 +93,9 @@
 <summary>Step 2：多群聊独立会话（点击展开）</summary>
 
 <p>
-  <img src="assets/demo/2-1多群聊独立会话.png" width="1080" />
-  <img src="assets/demo/2-2多群聊独立会话.png.png" width="1080" />
-  <img src="assets/demo/2-3多群聊独立会话.png.png" width="1080" />
+  <img src="assets/demo/2-1多群聊独立会话.png" width="720" />
+  <img src="assets/demo/2-2多群聊独立会话.png.png" width="720" />
+  <img src="assets/demo/2-3多群聊独立会话.png.png" width="720" />
 </p>
 
 </details>
@@ -104,9 +104,9 @@
 <summary>Step 3：图片附件解析（点击展开）</summary>
 
 <p>
-  <img src="assets/demo/3-1图片附件解析.png" width="1080" />
-  <img src="assets/demo/3-2图片附件解析.png.png" width="1080" />
-  <img src="assets/demo/3-3图片附件解析.png.png" width="1080" />
+  <img src="assets/demo/3-1图片附件解析.png" width="720" />
+  <img src="assets/demo/3-2图片附件解析.png.png" width="720" />
+  <img src="assets/demo/3-3图片附件解析.png.png" width="720" />
 </p>
 
 </details>
@@ -115,8 +115,8 @@
 <summary>Step 4：交互工具测试（点击展开）</summary>
 
 <p>
-  <img src="assets/demo/4-1交互工具测试.png" width="1080" />
-  <img src="assets/demo/4-2交互工具测试.png.png" width="1080" />
+  <img src="assets/demo/4-1交互工具测试.png" width="720" />
+  <img src="assets/demo/4-2交互工具测试.png.png" width="720" />
 </p>
 
 </details>
@@ -125,10 +125,10 @@
 <summary>Step 5：底层权限测试（点击展开）</summary>
 
 <p>
-  <img src="assets/demo/5-1底层权限测试.png" width="1080" />
-  <img src="assets/demo/5-2底层权限测试.png.png" width="1080" />
-  <img src="assets/demo/5-3底层权限测试.png.png" width="1080" />
-  <img src="assets/demo/5-4底层权限测试.png.png" width="1080" />
+  <img src="assets/demo/5-1底层权限测试.png" width="720" />
+  <img src="assets/demo/5-2底层权限测试.png.png" width="720" />
+  <img src="assets/demo/5-3底层权限测试.png.png" width="720" />
+  <img src="assets/demo/5-4底层权限测试.png.png" width="720" />
 </p>
 
 </details>
@@ -137,9 +137,9 @@
 <summary>Step 6：会话清理（点击展开）</summary>
 
 <p>
-  <img src="assets/demo/6-1会话清理.png" width="1080" />
-  <img src="assets/demo/6-2会话清理.png.png" width="1080" />
-  <img src="assets/demo/6-3会话清理.png.png" width="1080" />
+  <img src="assets/demo/6-1会话清理.png" width="720" />
+  <img src="assets/demo/6-2会话清理.png.png" width="720" />
+  <img src="assets/demo/6-3会话清理.png.png" width="720" />
 </p>
 
 </details>
