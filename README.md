@@ -4,7 +4,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-把本地 OpenCode 直接接进飞书，不只是“能聊”，而是把权限确认、question 答题、流式卡片、会话绑定、`/undo` 双端回滚与运维部署做成完整闭环。
+把本地 OpenCode 直接接进飞书，不只是“能聊”，而是把权限确认、question 答题、流式卡片、会话绑定隔离、`/undo` 双端回滚与运维部署做成完整闭环。
 
 ## 🎯 先看痛点
 
@@ -63,9 +63,12 @@
 
 | 能力 | 说明 |
 |---|---|
-| 群聊对话 | @机器人或回复机器人消息，自动转发到 OpenCode 会话 |
+| 群聊对话 | 无需@直接可与机器人对话，自动转发到 OpenCode 会话 |
 | 私聊会话 | 私聊可直接对话；首次自动建会话并推送建群卡片、`/help`、`/panel`；支持 `/create_chat` 或 `/建群` 一键建群 |
+| 会话隔离 | 不管是私聊还是群聊，每个会话自动隔离，opencode自动创建绑定session；可新建多群 |
+| 会话清理 | 离群自动解散群聊，opencode自动清理群对应的session会话 |
 | Agent 角色 | 支持内置与自定义角色；可在当前群通过 `/panel` 或 `/agent` 自由切换 |
+| 模型切换 | 可在当前群通过 `/panel` 或 `/model` 自由切换 |
 | 流式输出 | 输出缓冲定时刷新；检测到 thinking/reasoning 自动切卡片 |
 | 思考折叠 | 支持展开/折叠思考内容，避免长卡片刷屏 |
 | 权限确认 | `permission.asked` 自动发确认卡，支持一次/始终/拒绝 |
@@ -177,7 +180,7 @@ opencode serve --port 4096
 ```
 - 新版本带参数启动opencode 不再显示CLI界面，如果你希望同时展示，请参考下方方法；
 
-- 提示（推荐）： OpenCode 裸启动（不带 `serve --port` 参数），可以在 OpenCode 配置文件 `opencode.json` 的根对象中添加/合并 `server` 字段：
+- 推荐：OpenCode 裸启动同时启动CLI界面：在 OpenCode 配置文件 `opencode.json` 的根对象中添加/合并 `server` 字段：
 
 ```json
 "server": {
@@ -189,7 +192,7 @@ opencode serve --port 4096
 }
 ```
 
-配置后可直接运行：
+配置后可直接运行（不用带 `serve --port` 参数）：
 
 ```bash
 opencode
@@ -264,9 +267,9 @@ node scripts/deploy.mjs status
 | `FEISHU_APP_SECRET` | 是 | - | 飞书应用 App Secret |
 | `OPENCODE_HOST` | 否 | `localhost` | OpenCode 地址 |
 | `OPENCODE_PORT` | 否 | `4096` | OpenCode 端口 |
-| `ALLOWED_USERS` | 否 | 空 | 飞书 open_id 白名单，逗号分隔；为空时不启用白名单 |
-| `DEFAULT_PROVIDER` | 否 | 空 | 默认模型提供商;与 `DEFAULT_MODEL` 同时配置才生效 |
-| `DEFAULT_MODEL` | 否 | 空 | 默认模型;未配置时跟随 OpenCode 自身默认模型 |
+| `ALLOWED_USERS` | 否 | - | 飞书 open_id 白名单，逗号分隔；为空时不启用白名单 |
+| `DEFAULT_PROVIDER` | 否 | - | 默认模型提供商;与 `DEFAULT_MODEL` 同时配置才生效 |
+| `DEFAULT_MODEL` | 否 | - | 默认模型;未配置时跟随 OpenCode 自身默认模型 |
 | `TOOL_WHITELIST` | 否 | `Read,Glob,Grep,Task` | 自动放行权限标识列表 |
 | `OUTPUT_UPDATE_INTERVAL` | 否 | `3000` | 输出刷新间隔（ms） |
 | `ATTACHMENT_MAX_SIZE` | 否 | `52428800` | 附件大小上限（字节） |
@@ -299,12 +302,12 @@ node scripts/deploy.mjs status
 
 | 能力分组 | 代码中调用的接口 | 用途 |
 |---|---|---|
-| 消息读写与撤回（`im:message`） | `im:message.p2p_msg:readonly` / `im:message.group_at_msg:readonly` / `im:message.group_msg` / `im:message.reactions:read` / `im:message.reactions:write_only` | 发送文本/卡片、流式更新卡片、撤回消息 |
+| 消息读写与撤回（`im:message`） | `im:message.p2p_msg:readonly,im:message.group_at_msg:readonly,im:message.group_msg,im:message.reactions:read,im:message.reactions:write_only` | 发送文本/卡片、流式更新卡片、撤回消息 |
+| 群与成员管理（`im:chat`） | `im:chat.members:read,im:chat.members:write_only` | 私聊建群、拉人进群、查群成员、自动清理无效群 |
 | 消息资源下载（`im:resource`） | `im.messageResource.get` | 下载图片/文件附件并转发给 OpenCode |
-| 群与成员管理（`im:chat`） | `im:chat.members:read` / `im:chat.members:write_only` | 私聊建群、拉人进群、查群成员、自动清理无效群 |
 
 注意：飞书后台不同版本的权限名称可能略有差异，按上表接口能力逐项对齐即可；若只需文本对话且不处理附件，可暂不开启 `im:resource`。
-- 可以复制下方参数保存至qx.json，然后在飞书`开发者后台`--`权限管理`--`批量导入/导出权限`
+- 可以复制下方参数保存至acc.json，然后在飞书`开发者后台`--`权限管理`--`批量导入/导出权限`
 ```json
 {
   "scopes": {
@@ -411,6 +414,7 @@ node scripts/deploy.mjs status
 
 | 现象 | 优先检查 |
 |---|---|
+| 飞书发送消息后OpenCode无反应 | 仔细检查飞书权限；确认 [飞书后台配置](#飞书后台配置) 正确 |
 | 点权限卡片后 OpenCode 无反应 | 日志是否出现权限回传失败；确认回传值是 `once/always/reject` |
 | 权限卡或提问卡发不到群 | `.chat-sessions.json` 中 `sessionId -> chatId` 映射是否存在 |
 | 卡片更新失败 | 消息类型是否匹配；失败后是否降级为重发卡片 |
