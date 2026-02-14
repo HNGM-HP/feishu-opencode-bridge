@@ -67,6 +67,8 @@ Windows PowerShell：
 这些入口会先自动检测 Node.js 与 npm：
 - **Windows**：若未检测到 Node.js，会询问是否自动安装（优先使用 winget，其次 choco），安装后自动重试。
 - **Linux/macOS**：若未检测到，会询问是否显示安装引导，再由用户确认后重试检测。
+- 若 `.env` 不存在，部署流程会自动从 `.env.example` 复制生成，且不会覆盖已有 `.env`。
+- 交互模式下，部署阶段可直接输入 `FEISHU_APP_ID` 与 `FEISHU_APP_SECRET` 写入 `.env`（支持回撤/跳过）。
 
 ### 步骤 D：启动 OpenCode
 

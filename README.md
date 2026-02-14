@@ -193,12 +193,14 @@ Windows PowerShell：
 - 检测 OpenCode 安装与端口状态
 - 可一键安装 OpenCode（`npm i -g opencode-ai`）
 - 安装项目依赖并编译桥接服务
+- 若 `.env` 不存在，会自动由 `.env.example` 复制生成（不会覆盖已有 `.env`）
+- 可在交互阶段直接输入 `FEISHU_APP_ID` / `FEISHU_APP_SECRET` 并写入 `.env`（支持回撤/跳过）
 
 提醒：
 - 这一条命令可以完成“部署与环境准备”。
 - 但飞书密钥需要你自己填，脚本不会替你写入真实凭据；未填写时服务无法正常接收飞书消息。
 
-### 2) 填写飞书配置（必须）
+### 2) 填写飞书配置（必须，若上一步已输入可跳过）
 
 ```bash
 cp .env.example .env

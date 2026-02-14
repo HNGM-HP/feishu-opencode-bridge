@@ -70,6 +70,37 @@ function Get-NpmVersion {
   }
 }
 
+function Get-OpenCodeVersionHint {
+  $command = Get-Command opencode -ErrorAction SilentlyContinue
+  if (-not $command) {
+    return $null
+  }
+
+  $outputs = @()
+  foreach ($commandArgs in @(@('-v'), @('--version'))) {
+    try {
+      $text = (& opencode @commandArgs 2>$null)
+      if (-not [string]::IsNullOrWhiteSpace($text)) {
+        $outputs += $text.Trim()
+      }
+    } catch {
+      continue
+    }
+  }
+
+  foreach ($output in $outputs) {
+    if ($output -match '(?i)\bv?\d+\.\d+\.\d+(?:[-+][0-9a-z.-]+)?\b') {
+      return $output
+    }
+  }
+
+  if ($outputs.Count -gt 0) {
+    return $outputs[0]
+  }
+
+  return 'installed'
+}
+
 function Install-NodeWithWinget {
   if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
     return $false
@@ -184,14 +215,30 @@ function Ensure-NpmRuntime {
 try {
   Ensure-NodeRuntime
   Ensure-NpmRuntime
+
   $previousPrechecked = $env:BRIDGE_RUNTIME_PRECHECKED
+  $previousOpenCodeVersionHint = $env:BRIDGE_OPENCODE_VERSION_HINT
   $env:BRIDGE_RUNTIME_PRECHECKED = '1'
+
+  $openCodeVersionHint = Get-OpenCodeVersionHint
+  if ($openCodeVersionHint) {
+    $env:BRIDGE_OPENCODE_VERSION_HINT = $openCodeVersionHint
+  }
+
   & node (Join-Path $scriptDir 'deploy.mjs') @args
+
   if ($null -eq $previousPrechecked) {
     Remove-Item Env:BRIDGE_RUNTIME_PRECHECKED -ErrorAction SilentlyContinue
   } else {
     $env:BRIDGE_RUNTIME_PRECHECKED = $previousPrechecked
   }
+
+  if ($null -eq $previousOpenCodeVersionHint) {
+    Remove-Item Env:BRIDGE_OPENCODE_VERSION_HINT -ErrorAction SilentlyContinue
+  } else {
+    $env:BRIDGE_OPENCODE_VERSION_HINT = $previousOpenCodeVersionHint
+  }
+
   exit $LASTEXITCODE
 } catch {
   Write-Host "[deploy] 错误: $($_.Exception.Message)"

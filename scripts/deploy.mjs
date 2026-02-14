@@ -245,6 +245,23 @@ async function askYesNo(question, defaultYes = true) {
   }
 }
 
+async function askText(question) {
+  const shouldCreateReadline = activeReadline === null;
+  const rl = activeReadline || readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  try {
+    const answer = await rl.question(question);
+    return answer.trim();
+  } finally {
+    if (shouldCreateReadline) {
+      rl.close();
+    }
+  }
+}
+
 async function ensureNpm(options = {}) {
   const { silentReadyLog = false } = options;
   const npmVersion = getNpmVersion();
@@ -290,6 +307,128 @@ async function ensureRuntimeReady() {
   }
   await ensureNpm({ silentReadyLog: prechecked });
   runtimeReady = true;
+}
+
+function isSkipInput(input) {
+  const normalized = input.trim().toLowerCase();
+  return ['skip', '回撤', '回撤跳过', '跳过', 'cancel', 'back'].includes(normalized);
+}
+
+function isPlaceholderCredentialValue(value) {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) {
+    return true;
+  }
+  if (normalized.includes('xxxx')) {
+    return true;
+  }
+  if (normalized.includes('your_')) {
+    return true;
+  }
+  return false;
+}
+
+function formatEnvValue(value) {
+  if (/^[A-Za-z0-9._:-]+$/.test(value)) {
+    return value;
+  }
+  const escaped = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return `"${escaped}"`;
+}
+
+function upsertEnvEntry(content, key, value) {
+  const lines = content.split(/\r?\n/);
+  const pattern = new RegExp(`^\\s*(?:export\\s+)?${key}\\s*=`);
+  let replaced = false;
+
+  const nextLines = lines.map(line => {
+    if (pattern.test(line) && !replaced) {
+      replaced = true;
+      return `${key}=${formatEnvValue(value)}`;
+    }
+    return line;
+  });
+
+  if (!replaced) {
+    if (nextLines.length > 0 && nextLines[nextLines.length - 1].trim() !== '') {
+      nextLines.push('');
+    }
+    nextLines.push(`${key}=${formatEnvValue(value)}`);
+  }
+
+  return `${nextLines.join('\n').replace(/\n*$/, '')}\n`;
+}
+
+function needsFeishuCredentialSetup() {
+  const envValues = parseDotEnvFile();
+  const appId = (envValues.FEISHU_APP_ID || '').trim();
+  const appSecret = (envValues.FEISHU_APP_SECRET || '').trim();
+  return isPlaceholderCredentialValue(appId) || isPlaceholderCredentialValue(appSecret);
+}
+
+function updateEnvEntries(entries) {
+  if (!fs.existsSync(envPath)) {
+    return false;
+  }
+
+  let content = fs.readFileSync(envPath, 'utf-8');
+  for (const [key, value] of Object.entries(entries)) {
+    const normalizedValue = value.trim();
+    if (!normalizedValue) {
+      continue;
+    }
+    content = upsertEnvEntry(content, key, normalizedValue);
+  }
+
+  fs.writeFileSync(envPath, content, 'utf-8');
+  cachedDotEnv = null;
+  return true;
+}
+
+async function promptFeishuCredentialsSetup() {
+  if (!isInteractiveShell()) {
+    return;
+  }
+  if (!fs.existsSync(envPath)) {
+    return;
+  }
+  if (!needsFeishuCredentialSetup()) {
+    console.log('[deploy] 检测到 .env 已配置飞书凭据，可直接使用');
+    return;
+  }
+
+  console.log('\n[deploy] 可选：现在写入飞书凭据（后续仍可手动编辑 .env）');
+  const shouldSetup = await askYesNo('[deploy] 是否现在填写 FEISHU_APP_ID 和 FEISHU_APP_SECRET？[Y/n]: ', true);
+  if (!shouldSetup) {
+    console.log('[deploy] 已跳过飞书凭据写入，可后续手动编辑 .env');
+    return;
+  }
+
+  const appIdInput = await askText('[deploy] 输入 FEISHU_APP_ID（输入“回撤”或“skip”跳过）: ');
+  const appSecretInput = await askText('[deploy] 输入 FEISHU_APP_SECRET（输入“回撤”或“skip”跳过）: ');
+
+  const updates = {};
+  if (appIdInput && !isSkipInput(appIdInput)) {
+    updates.FEISHU_APP_ID = appIdInput;
+  }
+  if (appSecretInput && !isSkipInput(appSecretInput)) {
+    updates.FEISHU_APP_SECRET = appSecretInput;
+  }
+
+  const updateKeys = Object.keys(updates);
+  if (updateKeys.length === 0) {
+    console.log('[deploy] 未写入任何飞书凭据（已回撤/跳过）');
+    return;
+  }
+
+  const updated = updateEnvEntries(updates);
+  if (!updated) {
+    console.warn('[deploy] 未找到 .env，跳过飞书凭据写入');
+    return;
+  }
+
+  console.log(`[deploy] 已写入 .env: ${updateKeys.join(', ')}`);
+  console.log('[deploy] 提醒：后续可随时手动编辑 .env 更新配置');
 }
 
 function parseDotEnvFile() {
@@ -369,15 +508,44 @@ function resolveProbeHost(host) {
   return host;
 }
 
+function hasSemanticVersion(text) {
+  return /\bv?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?\b/.test(text);
+}
+
 function getOpencodeVersion() {
-  try {
-    const result = run('opencode', ['--version'], '', { capture: true });
-    const stdout = (result.stdout || '').trim();
-    const stderr = (result.stderr || '').trim();
-    return stdout || stderr || null;
-  } catch {
-    return null;
+  const hintedVersion = getRuntimeEnvValue('BRIDGE_OPENCODE_VERSION_HINT');
+  if (hintedVersion) {
+    return hintedVersion;
   }
+
+  const versionArgsList = [['--version'], ['-v']];
+  for (const versionArgs of versionArgsList) {
+    try {
+      const result = run('opencode', versionArgs, '', {
+        capture: true,
+        allowFailure: true,
+      });
+      const stdout = (result.stdout || '').trim();
+      const stderr = (result.stderr || '').trim();
+      const output = stdout || stderr;
+
+      if (!output) {
+        continue;
+      }
+
+      if (typeof result.status === 'number' && result.status === 0) {
+        return output;
+      }
+
+      if (hasSemanticVersion(output)) {
+        return output;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 }
 
 function probeTcpPort(host, port, timeoutMs = 1200) {
@@ -727,6 +895,9 @@ async function deployProject() {
   run('npm', ['install', '--include=dev'], '安装依赖');
   run('npm', ['run', 'build'], '编译项目');
   syncBridgeAgents();
+
+  ensureEnvFile();
+  await promptFeishuCredentialsSetup();
 
   console.log('\n[deploy] 部署完成');
 }
