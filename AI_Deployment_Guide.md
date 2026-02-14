@@ -70,11 +70,26 @@ Windows PowerShell：
 
 ### 步骤 D：启动 OpenCode
 
+推荐使用菜单自动处理（安装/检查/启动）：
+
 ```bash
-opencode serve --port 4096
+bash scripts/deploy.sh menu
 ```
 
-如果你修改了 `.env` 中 OpenCode 端口，启动命令与其保持一致。
+```powershell
+.\scripts\deploy.ps1 menu
+```
+
+菜单项包含：
+- 安装/升级 OpenCode（`npm i -g opencode-ai`）
+- 检查 OpenCode 环境（安装状态 + 端口监听）
+- 启动 OpenCode CLI（自动写入 `opencode.json` 的 `server` 字段）
+
+自动写入完成后，直接前台运行：
+
+```bash
+opencode
+```
 
 ### 步骤 E：启动桥接服务
 
@@ -108,6 +123,8 @@ bash scripts/deploy.sh upgrade
 |---|---|---|---|---|---|
 | Linux/macOS | `./scripts/deploy.sh menu` | `./scripts/deploy.sh deploy` | `./scripts/start.sh` | `./scripts/stop.sh` | `./scripts/deploy.sh upgrade` |
 | Windows PowerShell | `.\\scripts\\deploy.ps1 menu` | `.\\scripts\\deploy.ps1 deploy` | `.\\scripts\\start.ps1` | `.\\scripts\\stop.ps1` | `.\\scripts\\deploy.ps1 upgrade` |
+
+补充：菜单内已包含 OpenCode 安装/检查/启动与首次引导能力。
 
 ## 5. Linux systemd 常驻部署
 

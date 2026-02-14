@@ -174,54 +174,65 @@ flowchart LR
 <a id="快速开始"></a>
 ## 🚀 快速开始
 
-### 1) 前置要求
+### 1) 先执行这一条命令（首选）
 
-- Node.js >= 18
-- 本机可运行 OpenCode（支持 `opencode serve`）
-- 飞书开放平台应用（机器人 + 事件订阅 + 对应权限）
-
-### 2) 启动 OpenCode
+Linux/macOS：
 
 ```bash
-opencode serve --port 4096
-```
-- 新版本带参数启动opencode 不再显示CLI界面，如果你希望同时展示，请参考下方方法；
-
-- 推荐：OpenCode 裸启动同时启动CLI界面：在 OpenCode 配置文件 `opencode.json` 的根对象中添加/合并 `server` 字段：
-
-```json
-"server": {
-  "port": 4096,
-  "hostname": "0.0.0.0",
-  "cors": [
-    "*"
-  ]
-}
+./scripts/deploy.sh guide
 ```
 
-配置后可直接运行（不用带 `serve --port` 参数）：
+Windows PowerShell：
 
-```bash
-opencode
+```powershell
+.\scripts\deploy.ps1 guide
 ```
 
-如果由 AI 代理执行部署，建议先询问用户是否需要写入这段配置，再进行修改。
+这条命令会自动完成：
+- 检测 Node.js / npm（缺失时给安装引导）
+- 检测 OpenCode 安装与端口状态
+- 可一键安装 OpenCode（`npm i -g opencode-ai`）
+- 安装项目依赖并编译桥接服务
 
-### 3) 配置环境变量
+提醒：
+- 这一条命令可以完成“部署与环境准备”。
+- 但飞书密钥需要你自己填，脚本不会替你写入真实凭据；未填写时服务无法正常接收飞书消息。
+
+### 2) 填写飞书配置（必须）
 
 ```bash
 cp .env.example .env
 ```
 
 至少填写：
-
 - `FEISHU_APP_ID`
 - `FEISHU_APP_SECRET`
 
-### 4) 启动桥接服务（开发模式）
+### 3) 启动 OpenCode（保留 CLI 界面）
+
+推荐在菜单里执行“启动 OpenCode CLI（自动写入 server 配置）”，或直接运行：
 
 ```bash
-npm install
+opencode
+```
+
+### 4) 启动桥接服务
+
+Linux/macOS：
+
+```bash
+./scripts/start.sh
+```
+
+Windows PowerShell：
+
+```powershell
+.\scripts\start.ps1
+```
+
+开发调试可用：
+
+```bash
 npm run dev
 ```
 
@@ -239,6 +250,7 @@ npm run dev
 - `deploy.sh`（Linux/macOS）和 `deploy.ps1`（Windows）会先自动检测 Node.js 与 npm。
 - **Windows**：若未检测到 Node.js，会询问是否自动安装（优先使用 winget，其次 choco），安装后自动重试。
 - **Linux/macOS**：若未检测到，会询问是否显示安装引导，再让用户确认是否重试检测。
+- 菜单内已包含 OpenCode 的安装/检查/启动与首次引导，部署时会额外给出 OpenCode 安装与端口检查强提示（不阻断部署）。
 
 ### 已安装 Node 后可用命令
 
@@ -246,6 +258,10 @@ npm run dev
 |---|---|---|
 | 一键部署 | `node scripts/deploy.mjs deploy` | 安装依赖并编译 |
 | 一键更新升级 | `node scripts/deploy.mjs upgrade` | 先拆卸清理，再拉取并重新部署（保留升级脚本） |
+| 安装/升级 OpenCode | `node scripts/deploy.mjs opencode-install` | 执行 `npm i -g opencode-ai` |
+| 检查 OpenCode 环境 | `node scripts/deploy.mjs opencode-check` | 检查 opencode 命令与端口监听 |
+| 启动 OpenCode CLI | `node scripts/deploy.mjs opencode-start` | 自动写入 `opencode.json` 后前台执行 `opencode` |
+| 首次引导 | `node scripts/deploy.mjs guide` | 安装/部署/引导启动的一体化流程 |
 | 管理菜单 | `node scripts/deploy.mjs menu` | 交互式菜单（默认入口） |
 | 启动后台 | `node scripts/start.mjs` | 后台启动（自动检测/补构建） |
 | 停止后台 | `node scripts/stop.mjs` | 按 PID 停止后台进程 |

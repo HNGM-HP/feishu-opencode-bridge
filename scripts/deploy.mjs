@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
@@ -24,6 +25,16 @@ const bridgeAgentFilePrefix = 'bridge-';
 const serviceName = 'feishu-opencode-bridge';
 const serviceFilePath = `/etc/systemd/system/${serviceName}.service`;
 const minimumNodeMajor = 18;
+const opencodeConfigFileName = 'opencode.json';
+const defaultOpencodeHost = 'localhost';
+const defaultOpencodePort = 4096;
+const fixedOpencodeServerConfig = {
+  port: 4096,
+  hostname: '0.0.0.0',
+  cors: ['*'],
+};
+let cachedDotEnv = null;
+let runtimeReady = false;
 let activeReadline = null;
 
 function isWindows() {
@@ -68,32 +79,40 @@ function commandExists(command) {
 }
 
 function getCommandVariants(command, args) {
-  if (command !== 'npm') {
-    return [{ command, args }];
-  }
-
   const variants = [];
-  const npmExecPath = process.env.npm_execpath;
-  if (npmExecPath) {
-    variants.push({
-      command: process.execPath,
-      args: [npmExecPath, ...args],
-    });
-  }
 
-  const bundledNpmCliPath = resolveBundledNpmCliPath();
-  if (bundledNpmCliPath) {
-    variants.push({
-      command: process.execPath,
-      args: [bundledNpmCliPath, ...args],
-    });
-  }
+  if (command === 'npm') {
+    const npmExecPath = process.env.npm_execpath;
+    if (npmExecPath) {
+      variants.push({
+        command: process.execPath,
+        args: [npmExecPath, ...args],
+      });
+    }
 
-  variants.push({ command: 'npm', args });
+    const bundledNpmCliPath = resolveBundledNpmCliPath();
+    if (bundledNpmCliPath) {
+      variants.push({
+        command: process.execPath,
+        args: [bundledNpmCliPath, ...args],
+      });
+    }
 
-  if (isWindows()) {
-    variants.push({ command: 'npm.cmd', args });
-    variants.push({ command: 'npm.exe', args });
+    variants.push({ command: 'npm', args });
+
+    if (isWindows()) {
+      variants.push({ command: 'npm.cmd', args });
+      variants.push({ command: 'npm.exe', args });
+    }
+  } else if (command === 'opencode') {
+    variants.push({ command: 'opencode', args });
+
+    if (isWindows()) {
+      variants.push({ command: 'opencode.cmd', args });
+      variants.push({ command: 'opencode.exe', args });
+    }
+  } else {
+    variants.push({ command, args });
   }
 
   const seen = new Set();
@@ -147,6 +166,14 @@ function ensureNodeVersion() {
   if (major < minimumNodeMajor) {
     throw new Error(`需要 Node.js >= ${minimumNodeMajor}，当前版本: ${process.versions.node}`);
   }
+}
+
+function isRuntimePrecheckedByWrapper() {
+  return process.env.BRIDGE_RUNTIME_PRECHECKED === '1';
+}
+
+function printNodeReady() {
+  console.log(`[deploy] Node.js 已就绪: v${process.versions.node}`);
 }
 
 function getNpmVersion() {
@@ -218,10 +245,13 @@ async function askYesNo(question, defaultYes = true) {
   }
 }
 
-async function ensureNpm() {
+async function ensureNpm(options = {}) {
+  const { silentReadyLog = false } = options;
   const npmVersion = getNpmVersion();
   if (npmVersion) {
-    console.log(`[deploy] npm 已就绪: ${npmVersion}`);
+    if (!silentReadyLog) {
+      console.log(`[deploy] npm 已就绪: ${npmVersion}`);
+    }
     return;
   }
 
@@ -248,13 +278,205 @@ async function ensureNpm() {
   throw new Error('未检测到 npm，请安装完成后重新执行部署脚本');
 }
 
+async function ensureRuntimeReady() {
+  if (runtimeReady) {
+    return;
+  }
+
+  ensureNodeVersion();
+  const prechecked = isRuntimePrecheckedByWrapper();
+  if (!prechecked) {
+    printNodeReady();
+  }
+  await ensureNpm({ silentReadyLog: prechecked });
+  runtimeReady = true;
+}
+
+function parseDotEnvFile() {
+  if (!fs.existsSync(envPath)) {
+    return {};
+  }
+
+  const result = {};
+  const content = fs.readFileSync(envPath, 'utf-8');
+  const lines = content.split(/\r?\n/);
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    const exportLessLine = trimmed.startsWith('export ')
+      ? trimmed.slice('export '.length).trim()
+      : trimmed;
+    const separatorIndex = exportLessLine.indexOf('=');
+    if (separatorIndex <= 0) {
+      continue;
+    }
+
+    const key = exportLessLine.slice(0, separatorIndex).trim();
+    if (!key) {
+      continue;
+    }
+
+    let value = exportLessLine.slice(separatorIndex + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"'))
+      || (value.startsWith('\'') && value.endsWith('\''))
+    ) {
+      value = value.slice(1, -1);
+    }
+
+    result[key] = value;
+  }
+
+  return result;
+}
+
+function getRuntimeEnvValue(key) {
+  const processValue = process.env[key];
+  if (typeof processValue === 'string' && processValue.trim()) {
+    return processValue.trim();
+  }
+
+  if (cachedDotEnv === null) {
+    cachedDotEnv = parseDotEnvFile();
+  }
+
+  const fileValue = cachedDotEnv[key];
+  return typeof fileValue === 'string' && fileValue.trim() ? fileValue.trim() : undefined;
+}
+
+function resolveOpencodeEndpoint() {
+  const configuredHost = getRuntimeEnvValue('OPENCODE_HOST');
+  const configuredPort = getRuntimeEnvValue('OPENCODE_PORT');
+
+  const host = configuredHost || defaultOpencodeHost;
+  const parsedPort = Number.parseInt(configuredPort || String(defaultOpencodePort), 10);
+  const port = Number.isInteger(parsedPort) && parsedPort > 0 ? parsedPort : defaultOpencodePort;
+
+  return { host, port };
+}
+
+function resolveProbeHost(host) {
+  if (host === '0.0.0.0') {
+    return '127.0.0.1';
+  }
+  if (host === '::') {
+    return '::1';
+  }
+  return host;
+}
+
+function getOpencodeVersion() {
+  try {
+    const result = run('opencode', ['--version'], '', { capture: true });
+    const stdout = (result.stdout || '').trim();
+    const stderr = (result.stderr || '').trim();
+    return stdout || stderr || null;
+  } catch {
+    return null;
+  }
+}
+
+function probeTcpPort(host, port, timeoutMs = 1200) {
+  return new Promise(resolve => {
+    const socket = new net.Socket();
+    let settled = false;
+
+    const finish = (isOpen, reason) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      socket.destroy();
+      resolve({ isOpen, reason });
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.once('connect', () => finish(true, 'connected'));
+    socket.once('timeout', () => finish(false, 'timeout'));
+    socket.once('error', error => {
+      const reason = error && typeof error === 'object' && 'code' in error
+        ? String(error.code)
+        : error instanceof Error
+          ? error.message
+          : String(error);
+      finish(false, reason);
+    });
+
+    socket.connect(port, host);
+  });
+}
+
+async function checkOpencodeEnvironment({ warnOnly = false } = {}) {
+  const version = getOpencodeVersion();
+  const { host, port } = resolveOpencodeEndpoint();
+  const probeHost = resolveProbeHost(host);
+  const probeResult = await probeTcpPort(probeHost, port);
+  const hostLabel = probeHost === host ? host : `${host} (探测地址 ${probeHost})`;
+
+  if (version) {
+    console.log(`[deploy] OpenCode 已安装: ${version}`);
+  } else if (warnOnly) {
+    console.warn('[deploy] 强提示: 未检测到 opencode 命令，当前部署会继续');
+    console.warn('[deploy] 可在菜单执行「安装/升级 OpenCode」');
+  } else {
+    console.warn('[deploy] 未检测到 opencode 命令，可在菜单执行「安装/升级 OpenCode」');
+  }
+
+  if (probeResult.isOpen) {
+    console.log(`[deploy] 端口检查: ${hostLabel}:${port} 已有服务监听（未校验服务类型）`);
+  } else if (warnOnly) {
+    console.warn(`[deploy] 强提示: 未检测到 ${hostLabel}:${port} 监听，当前部署会继续`);
+    console.warn('[deploy] 可在菜单执行「启动 OpenCode CLI（自动写入 server 配置）」');
+  } else {
+    console.warn(`[deploy] 未检测到 ${hostLabel}:${port} 监听（${probeResult.reason}）`);
+  }
+
+  return {
+    installed: Boolean(version),
+    version,
+    host,
+    port,
+    probeHost,
+    portOpen: probeResult.isOpen,
+    probeReason: probeResult.reason,
+  };
+}
+
+async function runOpencodeCheck() {
+  console.log('[deploy] 开始检查 OpenCode 环境');
+  await ensureRuntimeReady();
+  await checkOpencodeEnvironment();
+}
+
+async function installOrUpgradeOpencode() {
+  await ensureRuntimeReady();
+
+  run('npm', ['i', '-g', 'opencode-ai'], '安装/升级 OpenCode');
+
+  const version = getOpencodeVersion();
+  if (version) {
+    console.log(`[deploy] OpenCode 已就绪: ${version}`);
+    return;
+  }
+
+  console.warn('[deploy] 安装命令已执行，但当前终端仍未识别 opencode');
+  console.warn('[deploy] 请重开终端后执行 `opencode --version` 进行确认');
+}
+
 function ensureEnvFile() {
+  cachedDotEnv = null;
+
   if (fs.existsSync(envPath)) {
     return;
   }
 
   if (fs.existsSync(envExamplePath)) {
     fs.copyFileSync(envExamplePath, envPath);
+    cachedDotEnv = null;
     console.log('[deploy] 已创建 .env（来自 .env.example），请按需修改配置');
     return;
   }
@@ -302,6 +524,99 @@ function resolveOpencodeConfigDir() {
 
 function resolveOpencodeAgentsDir() {
   return path.join(resolveOpencodeConfigDir(), 'agents');
+}
+
+function resolveOpencodeConfigFilePath() {
+  return path.join(resolveOpencodeConfigDir(), opencodeConfigFileName);
+}
+
+function writeFixedOpencodeServerConfig() {
+  const configDir = resolveOpencodeConfigDir();
+  const configPath = resolveOpencodeConfigFilePath();
+  fs.mkdirSync(configDir, { recursive: true });
+
+  let existingConfig = {};
+  if (fs.existsSync(configPath)) {
+    try {
+      const rawContent = fs.readFileSync(configPath, 'utf-8').trim();
+      if (rawContent) {
+        const parsed = JSON.parse(rawContent);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          existingConfig = parsed;
+        } else {
+          console.warn('[deploy] 当前 opencode.json 不是对象结构，将保留为空配置后写入 server 字段');
+        }
+      }
+    } catch {
+      const backupPath = `${configPath}.bak.${Date.now()}`;
+      fs.copyFileSync(configPath, backupPath);
+      console.warn(`[deploy] 检测到 opencode.json 格式异常，已备份至 ${backupPath}`);
+    }
+  }
+
+  const nextConfig = {
+    ...existingConfig,
+    server: {
+      ...fixedOpencodeServerConfig,
+    },
+  };
+
+  fs.writeFileSync(configPath, `${JSON.stringify(nextConfig, null, 2)}\n`, 'utf-8');
+  console.log(`[deploy] 已写入 OpenCode server 配置: ${configPath}`);
+  return configPath;
+}
+
+async function startOpencodeCliWithManagedConfig() {
+  await ensureRuntimeReady();
+
+  const version = getOpencodeVersion();
+  if (!version) {
+    throw new Error('未检测到 opencode 命令，请先执行「安装/升级 OpenCode」');
+  }
+
+  const probe = await probeTcpPort('127.0.0.1', fixedOpencodeServerConfig.port);
+  if (probe.isOpen) {
+    const shouldContinue = await askYesNo(
+      `[deploy] 检测到 127.0.0.1:${fixedOpencodeServerConfig.port} 已有服务监听，是否仍继续启动 OpenCode？[y/N]: `,
+      false,
+    );
+    if (!shouldContinue) {
+      console.log('[deploy] 已取消启动 OpenCode');
+      return;
+    }
+  }
+
+  writeFixedOpencodeServerConfig();
+  console.log('[deploy] 将以前台模式启动 OpenCode CLI（按 Ctrl+C 退出）');
+  const result = run('opencode', [], '启动 OpenCode CLI（前台）', { allowFailure: true });
+
+  if (typeof result.status === 'number' && result.status !== 0) {
+    console.warn(`[deploy] OpenCode 已退出（退出码 ${result.status}）`);
+  }
+}
+
+async function runBeginnerGuide() {
+  console.log('[deploy] 开始首次引导（推荐）');
+  await ensureRuntimeReady();
+
+  const version = getOpencodeVersion();
+  if (version) {
+    console.log(`[deploy] OpenCode 已安装: ${version}`);
+  } else {
+    console.warn('[deploy] 未检测到 OpenCode，可一键安装');
+    const shouldInstall = await askYesNo('[deploy] 是否现在安装 OpenCode？[Y/n]: ', true);
+    if (shouldInstall) {
+      await installOrUpgradeOpencode();
+    } else {
+      console.warn('[deploy] 已跳过 OpenCode 安装，后续可在菜单中执行「安装/升级 OpenCode」');
+    }
+  }
+
+  await deployProject();
+
+  console.log('\n[deploy] 首次引导完成，建议按顺序继续：');
+  console.log('  1) 菜单执行「启动 OpenCode CLI（自动写入 server 配置）」');
+  console.log('  2) 菜单执行「启动后台进程（通用）」');
 }
 
 function getBridgeTemplateFiles() {
@@ -402,10 +717,12 @@ function unsyncBridgeAgents() {
 
 async function deployProject() {
   console.log('[deploy] 开始部署');
-  ensureNodeVersion();
-  await ensureNpm();
+  await ensureRuntimeReady();
   ensureEnvFile();
   ensureLogDir();
+
+  console.log('\n[deploy] OpenCode 环境预检（仅提示，不阻断部署）');
+  await checkOpencodeEnvironment({ warnOnly: true });
 
   run('npm', ['install', '--include=dev'], '安装依赖');
   run('npm', ['run', 'build'], '编译项目');
@@ -476,8 +793,7 @@ function pullLatestCode() {
 
 async function upgradeProject() {
   console.log('[deploy] 开始更新升级');
-  ensureNodeVersion();
-  await ensureNpm();
+  await ensureRuntimeReady();
   cleanupForUpgrade();
   pullLatestCode();
   await deployProject();
@@ -597,6 +913,9 @@ async function showMenu() {
   activeReadline = rl;
 
   try {
+    await ensureRuntimeReady();
+    await checkOpencodeEnvironment();
+
     while (true) {
       console.log('\n========== Feishu OpenCode Bridge ==========');
       if (isLinux()) {
@@ -608,6 +927,10 @@ async function showMenu() {
         console.log('6) 卸载 systemd 服务');
         console.log('7) 查看运行状态');
         console.log('8) 一键更新升级（先拆卸清理再更新）');
+        console.log('9) 安装/升级 OpenCode（npm i -g opencode-ai）');
+        console.log('10) 检查 OpenCode 环境（安装与端口）');
+        console.log('11) 启动 OpenCode CLI（自动写入 server 配置）');
+        console.log('12) 首次引导（推荐）');
         console.log('0) 退出');
       } else {
         console.log('1) 一键部署（安装依赖+编译）');
@@ -615,6 +938,10 @@ async function showMenu() {
         console.log('3) 停止后台进程');
         console.log('4) 卸载后台进程（停止并清理日志/PID）');
         console.log('5) 一键更新升级（先拆卸清理再更新）');
+        console.log('6) 安装/升级 OpenCode（npm i -g opencode-ai）');
+        console.log('7) 检查 OpenCode 环境（安装与端口）');
+        console.log('8) 启动 OpenCode CLI（自动写入 server 配置）');
+        console.log('9) 首次引导（推荐）');
         console.log('0) 退出');
       }
 
@@ -647,6 +974,18 @@ async function showMenu() {
             case '8':
               await upgradeProject();
               break;
+            case '9':
+              await installOrUpgradeOpencode();
+              break;
+            case '10':
+              await runOpencodeCheck();
+              break;
+            case '11':
+              await startOpencodeCliWithManagedConfig();
+              break;
+            case '12':
+              await runBeginnerGuide();
+              break;
             case '0':
               return;
             default:
@@ -668,6 +1007,18 @@ async function showMenu() {
               break;
             case '5':
               await upgradeProject();
+              break;
+            case '6':
+              await installOrUpgradeOpencode();
+              break;
+            case '7':
+              await runOpencodeCheck();
+              break;
+            case '8':
+              await startOpencodeCliWithManagedConfig();
+              break;
+            case '9':
+              await runBeginnerGuide();
               break;
             case '0':
               return;
@@ -691,6 +1042,10 @@ function printUsage() {
   console.log('可选 action:');
   console.log('  deploy                一键部署（安装依赖+编译）');
   console.log('  upgrade               一键更新升级（先拆卸清理再更新）');
+  console.log('  opencode-install      安装/升级 OpenCode（npm i -g opencode-ai）');
+  console.log('  opencode-check        检查 OpenCode 安装与端口状态');
+  console.log('  opencode-start        启动 OpenCode CLI（自动写入 server 配置）');
+  console.log('  guide                 首次引导（推荐）');
   console.log('  start                 启动后台进程');
   console.log('  stop                  停止后台进程');
   console.log('  uninstall             卸载后台进程（停止并清理日志/PID）');
@@ -717,6 +1072,18 @@ async function main() {
       case 'upgrade':
       case 'update':
         await upgradeProject();
+        break;
+      case 'opencode-install':
+        await installOrUpgradeOpencode();
+        break;
+      case 'opencode-check':
+        await runOpencodeCheck();
+        break;
+      case 'opencode-start':
+        await startOpencodeCliWithManagedConfig();
+        break;
+      case 'guide':
+        await runBeginnerGuide();
         break;
       case 'start':
         startBackgroundProcess();

@@ -164,4 +164,4 @@ ensure_npm_runtime() {
 ensure_node_runtime
 ensure_npm_runtime
 
-node "$SCRIPT_DIR/deploy.mjs" "$@"
+BRIDGE_RUNTIME_PRECHECKED=1 node "$SCRIPT_DIR/deploy.mjs" "$@"

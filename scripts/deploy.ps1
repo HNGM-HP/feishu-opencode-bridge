@@ -184,7 +184,14 @@ function Ensure-NpmRuntime {
 try {
   Ensure-NodeRuntime
   Ensure-NpmRuntime
+  $previousPrechecked = $env:BRIDGE_RUNTIME_PRECHECKED
+  $env:BRIDGE_RUNTIME_PRECHECKED = '1'
   & node (Join-Path $scriptDir 'deploy.mjs') @args
+  if ($null -eq $previousPrechecked) {
+    Remove-Item Env:BRIDGE_RUNTIME_PRECHECKED -ErrorAction SilentlyContinue
+  } else {
+    $env:BRIDGE_RUNTIME_PRECHECKED = $previousPrechecked
+  }
   exit $LASTEXITCODE
 } catch {
   Write-Host "[deploy] 错误: $($_.Exception.Message)"
