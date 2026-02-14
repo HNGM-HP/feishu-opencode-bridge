@@ -1,4 +1,0 @@
-@echo off
-setlocal
-node "%~dp0stop.mjs" %*
-endlocal

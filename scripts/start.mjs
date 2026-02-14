@@ -140,7 +140,7 @@ function main() {
   const existingPid = readPid();
   if (existingPid && isProcessAlive(existingPid)) {
     console.log(`[start] 服务已在运行，PID=${existingPid}`);
-    console.log(`[start] 如需重启，请先执行: npm run stop:bridge`);
+    console.log(`[start] 如需重启，请先执行: node scripts/stop.mjs`);
     process.exit(0);
   }
 

@@ -1,6 +1,6 @@
 # Feishu x OpenCode Bridge ✨🤖✨
 
-[![Node.js >= 20](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
+[![Node.js >= 18](https://img.shields.io/badge/Node.js-%3E%3D18-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
@@ -176,7 +176,7 @@ flowchart LR
 
 ### 1) 前置要求
 
-- Node.js >= 20
+- Node.js >= 18
 - 本机可运行 OpenCode（支持 `opencode serve`）
 - 飞书开放平台应用（机器人 + 事件订阅 + 对应权限）
 
@@ -228,22 +228,27 @@ npm run dev
 <a id="部署与运维"></a>
 ## 💻 部署与运维
 
-### npm 命令
+### 零门槛入口（推荐）
+
+| 平台 | 管理菜单 | 一键部署 | 一键更新升级 | 启动后台 | 停止后台 |
+|---|---|---|---|---|---|
+| Linux/macOS | `./scripts/deploy.sh menu` | `./scripts/deploy.sh deploy` | `./scripts/deploy.sh upgrade` | `./scripts/start.sh` | `./scripts/stop.sh` |
+| Windows PowerShell | `.\\scripts\\deploy.ps1 menu` | `.\\scripts\\deploy.ps1 deploy` | `.\\scripts\\deploy.ps1 upgrade` | `.\\scripts\\start.ps1` | `.\\scripts\\stop.ps1` |
+
+说明：
+- `deploy.sh`（Linux/macOS）和 `deploy.ps1`（Windows）会先自动检测 Node.js 与 npm。
+- **Windows**：若未检测到 Node.js，会询问是否自动安装（优先使用 winget，其次 choco），安装后自动重试。
+- **Linux/macOS**：若未检测到，会询问是否显示安装引导，再让用户确认是否重试检测。
+
+### 已安装 Node 后可用命令
 
 | 目标 | 命令 | 说明 |
 |---|---|---|
-| 一键部署 | `npm run deploy:bridge` | 安装依赖并编译 |
-| 管理菜单 | `npm run manage:bridge` | 交互式菜单（默认入口） |
-| 启动后台 | `npm run start:bridge` | 后台启动（自动检测/补构建） |
-| 停止后台 | `npm run stop:bridge` | 按 PID 停止后台进程 |
-
-### 跨平台脚本入口
-
-| 平台 | 管理菜单 | 启动 | 停止 |
-|---|---|---|---|
-| Linux/macOS | `./scripts/deploy.sh menu` | `./scripts/start.sh` | `./scripts/stop.sh` |
-| Windows CMD | `scripts\\deploy.cmd menu` | `scripts\\start.cmd` | `scripts\\stop.cmd` |
-| PowerShell | `.\\scripts\\deploy.ps1 menu` | `.\\scripts\\start.ps1` | `.\\scripts\\stop.ps1` |
+| 一键部署 | `node scripts/deploy.mjs deploy` | 安装依赖并编译 |
+| 一键更新升级 | `node scripts/deploy.mjs upgrade` | 先拆卸清理，再拉取并重新部署（保留升级脚本） |
+| 管理菜单 | `node scripts/deploy.mjs menu` | 交互式菜单（默认入口） |
+| 启动后台 | `node scripts/start.mjs` | 后台启动（自动检测/补构建） |
+| 停止后台 | `node scripts/stop.mjs` | 按 PID 停止后台进程 |
 
 ### Linux 常驻（systemd）
 
@@ -432,7 +437,7 @@ node scripts/deploy.mjs status
 | 点权限卡片后 OpenCode 无反应 | 日志是否出现权限回传失败；确认回传值是 `once/always/reject` |
 | 权限卡或提问卡发不到群 | `.chat-sessions.json` 中 `sessionId -> chatId` 映射是否存在 |
 | 卡片更新失败 | 消息类型是否匹配；失败后是否降级为重发卡片 |
-| 后台模式无法停止 | `logs/bridge.pid` 是否残留；使用 `npm run stop:bridge` 清理 |
+| 后台模式无法停止 | `logs/bridge.pid` 是否残留；使用 `node scripts/stop.mjs` 清理 |
 | 私聊首次会推送多条引导消息 | 这是首次流程（建群卡片 + `/help` + `/panel`）；后续会按已绑定会话正常对话 |
 <a id="许可证"></a>
 ## 📝 许可证

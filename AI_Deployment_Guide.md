@@ -4,17 +4,13 @@
 
 ## 1. 事实基线（来自仓库）
 
-- Node.js 要求：`>= 20`（见 `package.json`）。
+- Node.js 要求：`>= 18`（见 `package.json`）。
 - 桥接服务默认入口：`dist/index.js`。
 - 可用部署脚本（跨平台）：
   - `scripts/deploy.mjs`（菜单 + deploy/start/stop + Linux systemd）
   - `scripts/start.mjs`（后台启动）
   - `scripts/stop.mjs`（后台停止）
-- npm 脚本：
-  - `npm run deploy:bridge`
-  - `npm run manage:bridge`
-  - `npm run start:bridge`
-  - `npm run stop:bridge`
+- 脚本会自动检测 npm；若未检测到，会先询问是否显示安装引导，再由用户确认后处理。
 - 会话状态持久化：`.chat-sessions.json`。
 
 ## 2. 部署原则
@@ -33,7 +29,7 @@ node -v
 npm -v
 ```
 
-要求 Node 主版本 >= 20。
+要求 Node 主版本 >= 18。
 
 ### 步骤 B：准备配置
 
@@ -56,13 +52,21 @@ cp .env.example .env
 
 ### 步骤 C：部署桥接
 
-推荐命令：
+推荐命令（优先用平台脚本入口）：
 
 ```bash
-npm run deploy:bridge
+bash scripts/deploy.sh deploy
 ```
 
-该命令等价于执行 `node scripts/deploy.mjs deploy`，会完成依赖安装与构建。
+Windows PowerShell：
+
+```powershell
+.\scripts\deploy.ps1 deploy
+```
+
+这些入口会先自动检测 Node.js 与 npm：
+- **Windows**：若未检测到 Node.js，会询问是否自动安装（优先使用 winget，其次 choco），安装后自动重试。
+- **Linux/macOS**：若未检测到，会询问是否显示安装引导，再由用户确认后重试检测。
 
 ### 步骤 D：启动 OpenCode
 
@@ -83,22 +87,27 @@ npm run dev
 后台模式：
 
 ```bash
-npm run start:bridge
+node scripts/start.mjs
 ```
 
 停止后台：
 
 ```bash
-npm run stop:bridge
+node scripts/stop.mjs
+```
+
+更新升级（先拆卸清理再更新）：
+
+```bash
+bash scripts/deploy.sh upgrade
 ```
 
 ## 4. 平台速查
 
-| 平台 | 菜单 | 启动后台 | 停止后台 |
-|---|---|---|---|
-| Linux/macOS | `./scripts/deploy.sh menu` | `./scripts/start.sh` | `./scripts/stop.sh` |
-| Windows CMD | `scripts\\deploy.cmd menu` | `scripts\\start.cmd` | `scripts\\stop.cmd` |
-| PowerShell | `.\\scripts\\deploy.ps1 menu` | `.\\scripts\\start.ps1` | `.\\scripts\\stop.ps1` |
+| 平台 | 菜单 | 一键部署 | 启动后台 | 停止后台 | 更新升级 |
+|---|---|---|---|---|---|
+| Linux/macOS | `./scripts/deploy.sh menu` | `./scripts/deploy.sh deploy` | `./scripts/start.sh` | `./scripts/stop.sh` | `./scripts/deploy.sh upgrade` |
+| Windows PowerShell | `.\\scripts\\deploy.ps1 menu` | `.\\scripts\\deploy.ps1 deploy` | `.\\scripts\\start.ps1` | `.\\scripts\\stop.ps1` | `.\\scripts\\deploy.ps1 upgrade` |
 
 ## 5. Linux systemd 常驻部署
 

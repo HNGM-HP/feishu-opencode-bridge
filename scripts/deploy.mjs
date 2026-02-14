@@ -23,6 +23,8 @@ const bridgeAgentFilePrefix = 'bridge-';
 
 const serviceName = 'feishu-opencode-bridge';
 const serviceFilePath = `/etc/systemd/system/${serviceName}.service`;
+const minimumNodeMajor = 18;
+let activeReadline = null;
 
 function isWindows() {
   return process.platform === 'win32';
@@ -30,6 +32,39 @@ function isWindows() {
 
 function isLinux() {
   return process.platform === 'linux';
+}
+
+function isInteractiveShell() {
+  return Boolean(process.stdin.isTTY && process.stdout.isTTY);
+}
+
+function resolveBundledNpmCliPath() {
+  const nodeDir = path.dirname(process.execPath);
+  const candidates = isWindows()
+    ? [
+      path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      path.join(nodeDir, '..', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    ]
+    : [
+      path.join(nodeDir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      path.join(nodeDir, '..', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+      path.join(nodeDir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return null;
+}
+
+function commandExists(command) {
+  const result = spawnSync(command, ['--version'], {
+    stdio: 'ignore',
+  });
+  return !result.error && result.status === 0;
 }
 
 function getCommandVariants(command, args) {
@@ -43,6 +78,14 @@ function getCommandVariants(command, args) {
     variants.push({
       command: process.execPath,
       args: [npmExecPath, ...args],
+    });
+  }
+
+  const bundledNpmCliPath = resolveBundledNpmCliPath();
+  if (bundledNpmCliPath) {
+    variants.push({
+      command: process.execPath,
+      args: [bundledNpmCliPath, ...args],
     });
   }
 
@@ -101,17 +144,108 @@ function run(command, args, title, options = {}) {
 
 function ensureNodeVersion() {
   const major = Number.parseInt(process.versions.node.split('.')[0] || '0', 10);
-  if (major < 20) {
-    throw new Error(`需要 Node.js >= 20，当前版本: ${process.versions.node}`);
+  if (major < minimumNodeMajor) {
+    throw new Error(`需要 Node.js >= ${minimumNodeMajor}，当前版本: ${process.versions.node}`);
   }
 }
 
-function ensureNpm() {
+function getNpmVersion() {
   try {
-    run('npm', ['--version'], '', { capture: true });
+    const result = run('npm', ['--version'], '', { capture: true });
+    const version = (result.stdout || '').trim();
+    return version || null;
   } catch {
-    throw new Error('未检测到 npm，请先安装 Node.js (包含 npm)');
+    return null;
   }
+}
+
+function printNpmInstallGuide() {
+  console.log('\n[deploy] npm 安装指引（请按需执行）');
+
+  if (isWindows()) {
+    console.log('[deploy] Windows 推荐使用以下任一方式安装 Node.js（包含 npm）：');
+    console.log('  - winget install OpenJS.NodeJS.LTS');
+    console.log('  - choco install nodejs-lts');
+    console.log('  - 官方安装包: https://nodejs.org/');
+  } else if (process.platform === 'darwin') {
+    console.log('[deploy] macOS 推荐方式：');
+    console.log('  - brew install node');
+    console.log('  - 官方安装包: https://nodejs.org/');
+  } else {
+    console.log('[deploy] Linux 推荐方式（按你的发行版选择其一）：');
+    const hasApt = commandExists('apt-get');
+    const hasDnf = commandExists('dnf');
+    const hasYum = commandExists('yum');
+    const hasPacman = commandExists('pacman');
+
+    if (hasApt) {
+      console.log('  - sudo apt-get update && sudo apt-get install -y nodejs npm');
+    }
+    if (hasDnf) {
+      console.log('  - sudo dnf install -y nodejs npm');
+    }
+    if (hasYum) {
+      console.log('  - sudo yum install -y nodejs npm');
+    }
+    if (hasPacman) {
+      console.log('  - sudo pacman -S --needed nodejs npm');
+    }
+    if (!hasApt && !hasDnf && !hasYum && !hasPacman) {
+      console.log('  - 请前往 https://nodejs.org/ 下载官方安装包');
+    }
+  }
+
+  console.log('[deploy] 若已安装 npm 但仍未检测到，请重开终端后执行 `npm -v` 验证 PATH。');
+}
+
+async function askYesNo(question, defaultYes = true) {
+  const shouldCreateReadline = activeReadline === null;
+  const rl = activeReadline || readline.createInterface({
+    input: process.stdin,
+    output: process.stdout,
+  });
+
+  try {
+    const answer = (await rl.question(question)).trim().toLowerCase();
+    if (!answer) {
+      return defaultYes;
+    }
+    return ['y', 'yes', '1', 'true', '是'].includes(answer);
+  } finally {
+    if (shouldCreateReadline) {
+      rl.close();
+    }
+  }
+}
+
+async function ensureNpm() {
+  const npmVersion = getNpmVersion();
+  if (npmVersion) {
+    console.log(`[deploy] npm 已就绪: ${npmVersion}`);
+    return;
+  }
+
+  console.warn('[deploy] 未检测到 npm，可能是 npm 未安装或 PATH 未生效');
+
+  if (!isInteractiveShell()) {
+    throw new Error('未检测到 npm，请先安装 Node.js（包含 npm）并确保 PATH 生效');
+  }
+
+  const shouldGuideInstall = await askYesNo('[deploy] 是否现在查看 npm 安装引导？[Y/n]: ', true);
+  if (shouldGuideInstall) {
+    printNpmInstallGuide();
+  }
+
+  const shouldRetry = await askYesNo('[deploy] 完成安装或修复 PATH 后，是否立即重试 npm 检测？[Y/n]: ', true);
+  if (shouldRetry) {
+    const retryVersion = getNpmVersion();
+    if (retryVersion) {
+      console.log(`[deploy] npm 已就绪: ${retryVersion}`);
+      return;
+    }
+  }
+
+  throw new Error('未检测到 npm，请安装完成后重新执行部署脚本');
 }
 
 function ensureEnvFile() {
@@ -266,10 +400,10 @@ function unsyncBridgeAgents() {
   console.log(`[deploy] 已清理 ${removedCount} 个桥接内置 Agent 模板`);
 }
 
-function deployProject() {
+async function deployProject() {
   console.log('[deploy] 开始部署');
   ensureNodeVersion();
-  ensureNpm();
+  await ensureNpm();
   ensureEnvFile();
   ensureLogDir();
 
@@ -295,6 +429,59 @@ function uninstallBackgroundProcess() {
   fs.rmSync(errLog, { force: true });
   unsyncBridgeAgents();
   console.log('[deploy] 已清理后台进程相关文件');
+}
+
+function cleanupForUpgrade() {
+  uninstallBackgroundProcess();
+
+  const distDir = path.join(rootDir, 'dist');
+  const nodeModulesDir = path.join(rootDir, 'node_modules');
+
+  fs.rmSync(distDir, { recursive: true, force: true });
+  fs.rmSync(nodeModulesDir, { recursive: true, force: true });
+
+  console.log('[deploy] 已清理 dist 与 node_modules（保留 scripts/ 升级脚本）');
+}
+
+function pullLatestCode() {
+  const gitDir = path.join(rootDir, '.git');
+  if (!fs.existsSync(gitDir)) {
+    console.log('[deploy] 当前目录非 Git 仓库，跳过拉取最新代码');
+    return;
+  }
+
+  const statusResult = run('git', ['status', '--porcelain'], '', {
+    allowFailure: true,
+    capture: true,
+  });
+
+  if (statusResult.error || statusResult.status !== 0) {
+    console.warn('[deploy] 无法读取 Git 状态，跳过自动拉取代码');
+    return;
+  }
+
+  if ((statusResult.stdout || '').trim()) {
+    console.warn('[deploy] 检测到本地未提交修改，跳过 git pull，继续使用当前代码升级');
+    return;
+  }
+
+  const pullResult = run('git', ['pull', '--ff-only'], '拉取最新代码', {
+    allowFailure: true,
+  });
+
+  if (pullResult.error || pullResult.status !== 0) {
+    console.warn('[deploy] git pull 失败，继续使用当前代码升级');
+  }
+}
+
+async function upgradeProject() {
+  console.log('[deploy] 开始更新升级');
+  ensureNodeVersion();
+  await ensureNpm();
+  cleanupForUpgrade();
+  pullLatestCode();
+  await deployProject();
+  console.log('\n[deploy] 更新升级完成');
 }
 
 function canUseSystemd() {
@@ -354,9 +541,9 @@ function buildServiceContent() {
   ].join('\n');
 }
 
-function installSystemdService() {
+async function installSystemdService() {
   requireRootForSystemd();
-  deployProject();
+  await deployProject();
 
   fs.writeFileSync(serviceFilePath, buildServiceContent(), 'utf-8');
   run('systemctl', ['daemon-reload'], '刷新 systemd 配置');
@@ -407,6 +594,7 @@ async function showMenu() {
     input: process.stdin,
     output: process.stdout,
   });
+  activeReadline = rl;
 
   try {
     while (true) {
@@ -419,12 +607,14 @@ async function showMenu() {
         console.log('5) 停止并禁用 systemd 服务');
         console.log('6) 卸载 systemd 服务');
         console.log('7) 查看运行状态');
+        console.log('8) 一键更新升级（先拆卸清理再更新）');
         console.log('0) 退出');
       } else {
         console.log('1) 一键部署（安装依赖+编译）');
         console.log('2) 启动后台进程');
         console.log('3) 停止后台进程');
         console.log('4) 卸载后台进程（停止并清理日志/PID）');
+        console.log('5) 一键更新升级（先拆卸清理再更新）');
         console.log('0) 退出');
       }
 
@@ -434,7 +624,7 @@ async function showMenu() {
         if (isLinux()) {
           switch (choice) {
             case '1':
-              deployProject();
+              await deployProject();
               break;
             case '2':
               startBackgroundProcess();
@@ -443,7 +633,7 @@ async function showMenu() {
               stopBackgroundProcess();
               break;
             case '4':
-              installSystemdService();
+              await installSystemdService();
               break;
             case '5':
               disableSystemdService();
@@ -454,6 +644,9 @@ async function showMenu() {
             case '7':
               printLinuxStatus();
               break;
+            case '8':
+              await upgradeProject();
+              break;
             case '0':
               return;
             default:
@@ -462,7 +655,7 @@ async function showMenu() {
         } else {
           switch (choice) {
             case '1':
-              deployProject();
+              await deployProject();
               break;
             case '2':
               startBackgroundProcess();
@@ -472,6 +665,9 @@ async function showMenu() {
               break;
             case '4':
               uninstallBackgroundProcess();
+              break;
+            case '5':
+              await upgradeProject();
               break;
             case '0':
               return;
@@ -485,6 +681,7 @@ async function showMenu() {
       }
     }
   } finally {
+    activeReadline = null;
     rl.close();
   }
 }
@@ -493,6 +690,7 @@ function printUsage() {
   console.log('用法: node scripts/deploy.mjs [action]');
   console.log('可选 action:');
   console.log('  deploy                一键部署（安装依赖+编译）');
+  console.log('  upgrade               一键更新升级（先拆卸清理再更新）');
   console.log('  start                 启动后台进程');
   console.log('  stop                  停止后台进程');
   console.log('  uninstall             卸载后台进程（停止并清理日志/PID）');
@@ -514,7 +712,11 @@ async function main() {
         await showMenu();
         break;
       case 'deploy':
-        deployProject();
+        await deployProject();
+        break;
+      case 'upgrade':
+      case 'update':
+        await upgradeProject();
         break;
       case 'start':
         startBackgroundProcess();
@@ -526,7 +728,7 @@ async function main() {
         uninstallBackgroundProcess();
         break;
       case 'service-install':
-        installSystemdService();
+        await installSystemdService();
         break;
       case 'service-disable':
         disableSystemdService();
