@@ -459,8 +459,163 @@ export function buildQuestionAnsweredCardSimple(answer: string): object {
   return buildQuestionAnsweredCard([[answer]]);
 }
 
+export const CREATE_CHAT_NEW_SESSION_VALUE = '__new_session__';
+
+export interface CreateChatSessionOption {
+  label: string;
+  value: string;
+}
+
+export interface CreateChatCardData {
+  selectedSessionId?: string;
+  sessionOptions: CreateChatSessionOption[];
+  totalSessionCount?: number;
+  manualBindEnabled: boolean;
+}
+
+function resolveCreateChatCardState(data: CreateChatCardData): {
+  options: CreateChatSessionOption[];
+  selected: CreateChatSessionOption;
+  shownExistingCount: number;
+  totalSessionCount: number;
+} {
+  const options = data.sessionOptions.length > 0
+    ? data.sessionOptions
+    : [{ label: '新建 OpenCode 会话', value: CREATE_CHAT_NEW_SESSION_VALUE }];
+
+  const selected = options.find(option => option.value === data.selectedSessionId) || options[0];
+  const shownExistingCount = options.filter(option => option.value !== CREATE_CHAT_NEW_SESSION_VALUE).length;
+  const totalSessionCount = typeof data.totalSessionCount === 'number' && data.totalSessionCount >= shownExistingCount
+    ? data.totalSessionCount
+    : shownExistingCount;
+
+  return {
+    options,
+    selected,
+    shownExistingCount,
+    totalSessionCount,
+  };
+}
+
+function buildCreateChatSelectorElements(data: CreateChatCardData): object[] {
+  const state = resolveCreateChatCardState(data);
+  const noteLines: string[] = [
+    '请先在下拉中选择会话来源，再点击“创建群聊”。',
+    `未主动选择时默认：${state.selected.label}`,
+  ];
+
+  if (!data.manualBindEnabled) {
+    noteLines.push('当前环境已禁用“绑定已有会话”，仅可新建会话。');
+  }
+
+  if (state.totalSessionCount > state.shownExistingCount) {
+    noteLines.push(`已展示最近 ${state.shownExistingCount} 个会话（总计 ${state.totalSessionCount} 个）。`);
+  }
+
+  return [
+    {
+      tag: 'action',
+      actions: [
+        {
+          tag: 'select_static',
+          placeholder: { tag: 'plain_text', content: '选择会话来源' },
+          value: { action: 'create_chat_select' },
+          options: state.options.map(option => ({
+            text: { tag: 'plain_text', content: option.label },
+            value: option.value,
+          })),
+        },
+      ],
+    },
+    {
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: {
+            tag: 'plain_text',
+            content: '➕ 创建群聊',
+          },
+          type: 'primary',
+          value: {
+            action: 'create_chat_submit',
+            selectedSessionId: state.selected.value,
+          },
+        },
+      ],
+    },
+    {
+      tag: 'note',
+      elements: [
+        {
+          tag: 'plain_text',
+          content: noteLines.join('\n'),
+        },
+      ],
+    },
+  ];
+}
+
+export function buildCreateChatCard(data: CreateChatCardData): object {
+  const elements: object[] = [
+    {
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: '选择新群要绑定的会话。你可以创建全新会话，也可以绑定已有会话继续上下文。',
+      },
+    },
+    ...buildCreateChatSelectorElements(data),
+  ];
+
+  return {
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      title: {
+        tag: 'plain_text',
+        content: '🧭 新建会话群',
+      },
+      template: 'blue',
+    },
+    elements,
+  };
+}
+
 // 欢迎卡片（引导创建群聊）
-export function buildWelcomeCard(userName: string): object {
+export function buildWelcomeCard(userName: string, createChatData?: CreateChatCardData): object {
+  const baseElements: object[] = [
+    {
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: `你好 **${userName}**，我是你的 AI 助手。\n\n你现在可以直接在私聊继续对话。\n\n如果你需要并行处理多个任务，建议创建专属会话群：每个群独立上下文，任务更清晰、不易串线。`,
+      },
+    },
+  ];
+
+  if (createChatData) {
+    baseElements.push(...buildCreateChatSelectorElements(createChatData));
+  } else {
+    baseElements.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: {
+            tag: 'plain_text',
+            content: '➕ 创建新会话群',
+          },
+          type: 'primary',
+          value: {
+            action: 'create_chat',
+          },
+        },
+      ],
+    });
+  }
+
   return {
     config: {
       wide_screen_mode: true,
@@ -472,30 +627,6 @@ export function buildWelcomeCard(userName: string): object {
       },
       template: 'blue',
     },
-    elements: [
-      {
-        tag: 'div',
-        text: {
-          tag: 'lark_md',
-          content: `你好 **${userName}**，我是你的 AI 助手。\n\n你现在可以直接在私聊继续对话。\n\n如果你需要并行处理多个任务，建议创建专属会话群：每个群独立上下文，任务更清晰、不易串线。`,
-        },
-      },
-      {
-        tag: 'action',
-        actions: [
-          {
-            tag: 'button',
-            text: {
-              tag: 'plain_text',
-              content: '➕ 创建新会话群',
-            },
-            type: 'primary',
-            value: {
-              action: 'create_chat',
-            },
-          },
-        ],
-      },
-    ],
+    elements: baseElements,
   };
 }

@@ -178,8 +178,9 @@ export function getHelpText(): string {
 • \`/compact\` 压缩当前会话上下文（透传 OpenCode）
 
 ⚙️ **会话管理**
-• \`/create_chat\` 或 \`/建群\` 直接创建新会话群（等同点击建群卡片）
+• \`/create_chat\` 或 \`/建群\` 打开建群卡片（下拉选择新建或绑定已有会话）
 • \`/session new\` 开启新话题 (重置上下文)
+• \`/session <sessionId>\` 手动绑定已有会话（需开启 \`ENABLE_MANUAL_SESSION_BIND\`）
 • \`新建会话窗口\` 自然语言触发 \`/session new\`
 • \`/clear\` 清空当前上下文 (同上)
 • \`/clear free session\` 清理所有空闲/无人群聊

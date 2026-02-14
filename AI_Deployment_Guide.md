@@ -46,9 +46,15 @@ cp .env.example .env
 
 - `OPENCODE_HOST`（默认 `localhost`）
 - `OPENCODE_PORT`（默认 `4096`）
+- `ENABLE_MANUAL_SESSION_BIND`（默认 `true`，控制是否允许绑定已有会话）
 - `TOOL_WHITELIST`
 - `OUTPUT_UPDATE_INTERVAL`
 - `ATTACHMENT_MAX_SIZE`
+
+`ENABLE_MANUAL_SESSION_BIND` 语义：
+
+- `true`：允许 `/session <sessionId>`；私聊建群卡片可选择“绑定已有会话”。
+- `false`：禁用手动绑定；私聊建群仅允许新建会话。
 
 ### 步骤 C：部署桥接
 
@@ -169,6 +175,8 @@ sudo node scripts/deploy.mjs service-uninstall
 3. 触发一次权限请求，确认卡片按钮可用。
 4. 触发一次 question 提问，确认可以回复并继续对话。
 5. 执行 `/undo`，确认 OpenCode 和飞书消息都回滚。
+6. 在私聊执行 `/create_chat`，验证下拉选择会话后点击“创建群聊”可按选择生效。
+7. 执行 `/clear free session`，确认行为与“启动后自动扫描清理”一致。
 
 ## 8. 常见异常与处理
 

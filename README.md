@@ -66,9 +66,9 @@
 | 能力 | 说明 |
 |---|---|
 | 群聊对话 | 无需@直接可与机器人对话，自动转发到 OpenCode 会话 |
-| 私聊会话 | 私聊可直接对话；首次自动建会话并推送建群卡片、`/help`、`/panel`；支持 `/create_chat` 或 `/建群` 一键建群 |
+| 私聊会话 | 私聊可直接对话；首次自动建会话并推送建群卡片、`/help`、`/panel`；支持 `/create_chat` 或 `/建群` 调出下拉卡片，选择后点击“创建群聊”即可生效 |
 | 会话隔离 | 不管是私聊还是群聊，每个会话自动隔离，opencode自动创建绑定session；可新建多群 |
-| 会话清理 | 离群自动解散群聊，opencode自动清理群对应的session会话 |
+| 会话清理 | 离群自动解散群聊，默认清理群对应 session；手动绑定的 session 支持“仅保护不删会话” |
 | Agent 角色 | 支持内置与自定义角色；可在当前群通过 `/panel` 或 `/agent` 自由切换 |
 | 模型切换 | 可在当前群通过 `/panel` 或 `/model` 自由切换 |
 | 流式输出 | 输出缓冲定时刷新；检测到 thinking/reasoning 自动切卡片 |
@@ -300,6 +300,7 @@ node scripts/deploy.mjs status
 | `OPENCODE_HOST` | 否 | `localhost` | OpenCode 地址 |
 | `OPENCODE_PORT` | 否 | `4096` | OpenCode 端口 |
 | `ALLOWED_USERS` | 否 | - | 飞书 open_id 白名单，逗号分隔；为空时不启用白名单 |
+| `ENABLE_MANUAL_SESSION_BIND` | 否 | `true` | 是否允许“绑定已有 OpenCode 会话”；关闭后仅允许新建会话 |
 | `DEFAULT_PROVIDER` | 否 | - | 默认模型提供商;与 `DEFAULT_MODEL` 同时配置才生效 |
 | `DEFAULT_MODEL` | 否 | - | 默认模型;未配置时跟随 OpenCode 自身默认模型 |
 | `TOOL_WHITELIST` | 否 | `Read,Glob,Grep,Task` | 自动放行权限标识列表 |
@@ -314,6 +315,16 @@ node scripts/deploy.mjs status
 
 - 未配置或留空：不启用白名单；生命周期清理仅在群成员数为 `0` 时才会自动解散群聊。
 - 已配置：启用白名单保护；当群成员不足且群内/群主都不在白名单时，才会自动解散。
+
+手动绑定会话说明（`ENABLE_MANUAL_SESSION_BIND=true` 时）：
+
+- 通过 `/session <sessionId>` 或建群下拉卡片绑定已有会话后，会默认标记为“删除保护”。
+- 自动清理与 `/clear free session` 仍可解散群聊并移除绑定，但会跳过 OpenCode `deleteSession`。
+
+`ENABLE_MANUAL_SESSION_BIND` 取值语义：
+
+- `true`：允许 `/session <sessionId>`，且建群卡片可选择“绑定已有会话”。
+- `false`：禁用手动绑定能力；建群卡片仅保留“新建会话”。
 
 <a id="飞书后台配置"></a>
 ## ⚙️ 飞书后台配置
@@ -378,11 +389,12 @@ node scripts/deploy.mjs status
 | `/stop` | 中断当前会话执行 |
 | `/undo` | 撤回上一轮交互（OpenCode + 飞书同步） |
 | `/session new` | 新建会话并重置上下文 |
+| `/session <sessionId>` | 手动绑定已有 OpenCode 会话（需启用 `ENABLE_MANUAL_SESSION_BIND`） |
 | `新建会话窗口` | 自然语言触发新建会话（等价 `/session new`） |
 | `/clear` | 等价于 `/session new` |
-| `/clear free session` | 清理空闲群聊和会话 |
+| `/clear free session` | 手动触发一次与启动清理同规则的兜底扫描 |
 | `/compact` | 透传到 OpenCode，压缩当前会话上下文 |
-| `/create_chat` / `/建群` | 私聊中直接创建新会话群（等价建群卡片按钮） |
+| `/create_chat` / `/建群` | 私聊中调出建群卡片（下拉选择后点击“创建群聊”生效） |
 | `/status` | 查看当前群绑定状态 |
 
 <a id="Agent（角色）使用"></a>
@@ -445,6 +457,16 @@ node scripts/deploy.mjs status
 
 - 需要同时删除飞书侧消息并对 OpenCode 执行 `revert`。
 - 问答场景可能涉及多条关联消息，使用递归回滚兜底。
+
+### 5) 私聊建群卡片交互
+
+- 下拉选择动作仅记录会话选择，不依赖卡片重绘；行为与 `/panel` 的下拉交互保持一致。
+- 点击“创建群聊”时才执行建群与绑定，避免因卡片状态同步导致误绑定。
+
+### 6) `/clear free session` 行为
+
+- 该命令不做单独清理规则，而是复用生命周期扫描逻辑。
+- 可在不重启进程时，手动触发一次“启动时清理”的同规则兜底扫描。
 
 <a id="故障排查"></a>
 ## 🛠️ 故障排查

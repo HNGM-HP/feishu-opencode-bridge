@@ -908,8 +908,8 @@ async function main() {
         return undefined;
       };
 
-      // 特殊处理创建会话动作 (P2P)
-      if (action === 'create_chat') {
+      // 特殊处理私聊建群相关动作
+      if (action === 'create_chat' || action === 'create_chat_select' || action === 'create_chat_submit') {
         return await p2pHandler.handleCardAction(event);
       }
 

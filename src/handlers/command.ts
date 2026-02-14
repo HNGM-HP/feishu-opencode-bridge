@@ -8,7 +8,8 @@ import {
 } from '../opencode/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { buildControlCard, buildStatusCard } from '../feishu/cards.js';
-import { modelConfig } from '../config.js';
+import { modelConfig, userConfig } from '../config.js';
+import { lifecycleHandler } from './lifecycle.js';
 
 const SUPPORTED_ROLE_TOOLS = [
   'bash',
@@ -301,8 +302,10 @@ export class CommandHandler {
             await this.handleNewSession(chatId, messageId, context.senderId, context.chatType);
           } else if (command.sessionAction === 'list') {
             await this.handleListSessions(chatId, messageId);
+          } else if (command.sessionAction === 'switch' && command.sessionId) {
+            await this.handleSwitchSession(chatId, messageId, context.senderId, command.sessionId);
           } else {
-            await feishuClient.reply(messageId, '当前仅支持 /session new (重置并新建)');
+            await feishuClient.reply(messageId, '用法: /session new 或 /session <sessionId>');
           }
           break;
 
@@ -402,6 +405,60 @@ export class CommandHandler {
     } else {
       await feishuClient.reply(messageId, '❌ 创建会话失败');
     }
+  }
+
+  private async handleSwitchSession(
+    chatId: string,
+    messageId: string,
+    userId: string,
+    targetSessionId: string
+  ): Promise<void> {
+    if (!userConfig.enableManualSessionBind) {
+      await feishuClient.reply(messageId, '❌ 当前环境未开启“绑定已有会话”能力');
+      return;
+    }
+
+    const normalizedSessionId = targetSessionId.trim();
+    if (!normalizedSessionId) {
+      await feishuClient.reply(messageId, '❌ 会话 ID 不能为空');
+      return;
+    }
+
+    const sessions = await opencodeClient.listSessions();
+    const targetSession = sessions.find(item => item.id === normalizedSessionId);
+    if (!targetSession) {
+      await feishuClient.reply(messageId, `❌ 未找到会话: ${normalizedSessionId}`);
+      return;
+    }
+
+    const previousChatId = chatSessionStore.getChatId(normalizedSessionId);
+    const migrated = previousChatId && previousChatId !== chatId;
+    if (migrated && previousChatId) {
+      chatSessionStore.removeSession(previousChatId);
+    }
+
+    const title = targetSession.title && targetSession.title.trim().length > 0
+      ? targetSession.title
+      : `手动绑定-${normalizedSessionId.slice(-4)}`;
+
+    chatSessionStore.setSession(
+      chatId,
+      normalizedSessionId,
+      userId,
+      title,
+      { protectSessionDelete: true }
+    );
+
+    const replyLines = [
+      '✅ 已切换到指定会话',
+      `ID: ${normalizedSessionId}`,
+      '🔒 自动清理不会删除该 OpenCode 会话。',
+    ];
+    if (migrated) {
+      replyLines.push('🔁 该会话原绑定的旧群已自动解绑。');
+    }
+
+    await feishuClient.reply(messageId, replyLines.join('\n'));
   }
 
   private async handleListSessions(chatId: string, messageId: string): Promise<void> {
@@ -843,43 +900,12 @@ export class CommandHandler {
 
   private async handleClearFreeSession(chatId: string, messageId: string): Promise<void> {
     await feishuClient.reply(messageId, '🧹 正在扫描并清理无效群聊...');
-    
-    // 获取机器人所在的所有群
-    const allChats = await feishuClient.getUserChats();
-    let cleanedCount = 0;
-    let sessionsCleaned = 0;
-    
-    console.log(`[Cleanup] 开始清理，共扫描 ${allChats.length} 个群聊`);
-    
-    for (const id of allChats) {
-      const members = await feishuClient.getChatMembers(id);
-      console.log(`[Cleanup] 群 ${id} 成员数: ${members.length}`);
-      
-      // 如果群成员 <= 1（即只有机器人自己，或者没人），则解散
-      if (members.length <= 1) {
-        console.log(`[Cleanup] 发现空闲群 ${id} (成员数: ${members.length})，正在解散...`);
-        
-        // 清理 OpenCode 会话
-        const sessionId = chatSessionStore.getSessionId(id);
-        if (sessionId) {
-          try {
-            await opencodeClient.deleteSession(sessionId);
-            sessionsCleaned++;
-            console.log(`[Cleanup] 已删除 OpenCode 会话: ${sessionId}`);
-          } catch (e) {
-            console.warn(`[Cleanup] 删除会话 ${sessionId} 失败:`, e);
-          }
-          chatSessionStore.removeSession(id);
-        }
-        
-        const disbanded = await feishuClient.disbandChat(id);
-        if (disbanded) {
-          cleanedCount++;
-        }
-      }
-    }
+    const stats = await lifecycleHandler.runCleanupScan();
 
-    await feishuClient.reply(messageId, `✅ 清理完成\n- 解散群聊: ${cleanedCount} 个\n- 清理会话: ${sessionsCleaned} 个`);
+    await feishuClient.reply(
+      messageId,
+      `✅ 清理完成\n- 扫描群聊: ${stats.scannedChats} 个\n- 解散群聊: ${stats.disbandedChats} 个\n- 清理会话: ${stats.deletedSessions} 个\n- 跳过删除(受保护): ${stats.skippedProtectedSessions} 个`
+    );
   }
 
   // 公开以供外部调用（如消息撤回事件）

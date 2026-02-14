@@ -1,5 +1,13 @@
 import 'dotenv/config';
 
+function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
 // 飞书配置
 export const feishuConfig = {
   appId: process.env.FEISHU_APP_ID || '',
@@ -24,6 +32,9 @@ export const userConfig = {
     .split(',')
     .map(item => item.trim())
     .filter(item => item.length > 0),
+
+  // 是否开启手动绑定已有 OpenCode 会话能力
+  enableManualSessionBind: parseBooleanEnv(process.env.ENABLE_MANUAL_SESSION_BIND, true),
   
   // 是否启用用户白名单（如果为空则不限制）
   get isWhitelistEnabled() {

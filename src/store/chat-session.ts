@@ -8,6 +8,7 @@ interface ChatSessionData {
   creatorId: string; // 创建者ID
   createdAt: number;
   title?: string;
+  protectSessionDelete?: boolean;
   // Deprecated: use interactionHistory instead
   lastFeishuUserMsgId?: string;
   // Deprecated: use interactionHistory instead
@@ -24,6 +25,10 @@ export interface InteractionRecord {
   type: 'normal' | 'question_prompt' | 'question_answer';
   cardData?: any; // Store StreamCardData or other card data for UI interactions
   timestamp: number;
+}
+
+export interface SessionBindingOptions {
+  protectSessionDelete?: boolean;
 }
 
 // 存储文件路径
@@ -83,18 +88,30 @@ class ChatSessionStore {
   }
 
   // 绑定群组和会话
-  setSession(chatId: string, sessionId: string, creatorId: string, title?: string): void {
+  setSession(
+    chatId: string,
+    sessionId: string,
+    creatorId: string,
+    title?: string,
+    options?: SessionBindingOptions
+  ): void {
     const data: ChatSessionData = {
       chatId,
       sessionId,
       creatorId,
       createdAt: Date.now(),
       title,
+      ...(options?.protectSessionDelete ? { protectSessionDelete: true } : {}),
       interactionHistory: [],
     };
     this.data.set(chatId, data);
     this.save();
     console.log(`[Store] 绑定成功: chat=${chatId} -> session=${sessionId}`);
+  }
+
+  isSessionDeleteProtected(chatId: string): boolean {
+    const session = this.data.get(chatId);
+    return session?.protectSessionDelete === true;
   }
 
   // 更新会话配置 (模型/Agent)
