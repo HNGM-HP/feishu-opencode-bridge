@@ -12,7 +12,7 @@ import { commandHandler } from './handlers/command.js';
 import { cardActionHandler } from './handlers/card-action.js';
 import { validateConfig } from './config.js';
 import {
-  buildStreamCard,
+  buildStreamCards,
   type StreamCardData,
   type StreamCardSegment,
   type StreamCardPendingPermission,
@@ -45,6 +45,8 @@ async function main() {
   const textSnapshotMap = new Map<string, string>();
   const retryNoticeMap = new Map<string, string>();
   const errorNoticeMap = new Map<string, string>();
+  const streamCardMessageIdsMap = new Map<string, string[]>();
+  const STREAM_CARD_COMPONENT_BUDGET = 180;
 
   type ToolRuntimeState = {
     name: string;
@@ -588,18 +590,21 @@ async function main() {
     chatId: string,
     replyMessageId: string | null,
     cardData: StreamCardData,
-    bodyMessageId: string | null,
+    bodyMessageIds: string[],
     thinkingMessageId: string | null,
     openCodeMsgId: string
   ): void => {
-    const botMessageIds = [bodyMessageId, thinkingMessageId].filter((id): id is string => typeof id === 'string' && id.length > 0);
+    const botMessageIds = [...bodyMessageIds, thinkingMessageId].filter((id): id is string => typeof id === 'string' && id.length > 0);
     if (botMessageIds.length === 0) {
       return;
     }
 
-    let existing = chatSessionStore.findInteractionByBotMsgId(chatId, botMessageIds[0]);
-    if (!existing && botMessageIds.length > 1) {
-      existing = chatSessionStore.findInteractionByBotMsgId(chatId, botMessageIds[1]);
+    let existing;
+    for (const msgId of botMessageIds) {
+      existing = chatSessionStore.findInteractionByBotMsgId(chatId, msgId);
+      if (existing) {
+        break;
+      }
     }
 
     if (existing) {
@@ -800,13 +805,16 @@ async function main() {
           ? 'completed'
           : 'processing';
 
-    let messageId = buffer.messageId;
+    let existingMessageIds = streamCardMessageIdsMap.get(buffer.key) || [];
+    if (existingMessageIds.length === 0 && buffer.messageId) {
+      existingMessageIds = [buffer.messageId];
+    }
 
     const cardData: StreamCardData = {
       text: current.text,
       thinking: current.thinking,
       chatId: buffer.chatId,
-      messageId: messageId || undefined,
+      messageId: existingMessageIds[0] || undefined,
       tools: [...buffer.tools],
       segments: timelineSegments,
       ...(pendingPermission ? { pendingPermission } : {}),
@@ -815,41 +823,67 @@ async function main() {
       showThinking: false,
     };
 
-    const buildCard = (): object => {
-      return buildStreamCard({
+    const cards = buildStreamCards(
+      {
         ...cardData,
-        messageId: messageId || undefined,
-      });
-    };
-
-    if (messageId) {
-      const updated = await feishuClient.updateCard(messageId, buildCard());
-      if (!updated) {
-        const newMessageId = await feishuClient.sendCard(buffer.chatId, buildCard());
-        if (newMessageId) {
-          void feishuClient.deleteMessage(messageId).catch(() => undefined);
-          messageId = newMessageId;
-          outputBuffer.setMessageId(buffer.key, newMessageId);
-          cardData.messageId = newMessageId;
-        }
+        messageId: existingMessageIds[0] || undefined,
+      },
+      {
+        componentBudget: STREAM_CARD_COMPONENT_BUDGET,
       }
-    } else {
-      const newMessageId = await feishuClient.sendCard(buffer.chatId, buildCard());
+    );
+
+    const nextMessageIds: string[] = [];
+    for (let index = 0; index < cards.length; index++) {
+      const card = cards[index];
+      const existingMessageId = existingMessageIds[index];
+
+      if (existingMessageId) {
+        const updated = await feishuClient.updateCard(existingMessageId, card);
+        if (updated) {
+          nextMessageIds.push(existingMessageId);
+          continue;
+        }
+
+        const replacementMessageId = await feishuClient.sendCard(buffer.chatId, card);
+        if (replacementMessageId) {
+          void feishuClient.deleteMessage(existingMessageId).catch(() => undefined);
+          nextMessageIds.push(replacementMessageId);
+        } else {
+          nextMessageIds.push(existingMessageId);
+        }
+        continue;
+      }
+
+      const newMessageId = await feishuClient.sendCard(buffer.chatId, card);
       if (newMessageId) {
-        messageId = newMessageId;
-        outputBuffer.setMessageId(buffer.key, newMessageId);
-        cardData.messageId = newMessageId;
+        nextMessageIds.push(newMessageId);
       }
     }
 
-    cardData.messageId = messageId || undefined;
+    for (let index = cards.length; index < existingMessageIds.length; index++) {
+      const redundantMessageId = existingMessageIds[index];
+      if (!redundantMessageId) {
+        continue;
+      }
+      void feishuClient.deleteMessage(redundantMessageId).catch(() => undefined);
+    }
+
+    if (nextMessageIds.length > 0) {
+      outputBuffer.setMessageId(buffer.key, nextMessageIds[0]);
+      streamCardMessageIdsMap.set(buffer.key, nextMessageIds);
+    } else {
+      streamCardMessageIdsMap.delete(buffer.key);
+    }
+
+    cardData.messageId = nextMessageIds[0] || undefined;
     cardData.thinkingMessageId = undefined;
 
     upsertLiveCardInteraction(
       buffer.chatId,
       buffer.replyMessageId,
       cardData,
-      messageId,
+      nextMessageIds,
       null,
       buffer.openCodeMsgId
     );
@@ -858,6 +892,7 @@ async function main() {
       streamContentMap.delete(buffer.key);
       streamToolStateMap.delete(buffer.key);
       streamTimelineMap.delete(buffer.key);
+      streamCardMessageIdsMap.delete(buffer.key);
       clearPartSnapshotsForSession(buffer.sessionId);
       outputBuffer.clear(buffer.key);
     }

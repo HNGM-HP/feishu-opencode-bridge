@@ -110,6 +110,98 @@ function getRiskLabel(risk?: string): string {
   return '✅ 低风险';
 }
 
+export interface StreamCardBuildOptions {
+  componentBudget?: number;
+}
+
+const DEFAULT_STREAM_CARD_COMPONENT_BUDGET = 180;
+const MIN_STREAM_CARD_COMPONENT_BUDGET = 20;
+
+function isHrElement(element: object): boolean {
+  const value = element as { tag?: unknown };
+  return value.tag === 'hr';
+}
+
+function countComponentTags(node: unknown): number {
+  if (Array.isArray(node)) {
+    let total = 0;
+    for (const item of node) {
+      total += countComponentTags(item);
+    }
+    return total;
+  }
+
+  if (!node || typeof node !== 'object') {
+    return 0;
+  }
+
+  const record = node as Record<string, unknown>;
+  let total = typeof record.tag === 'string' ? 1 : 0;
+  for (const value of Object.values(record)) {
+    total += countComponentTags(value);
+  }
+
+  return total;
+}
+
+function normalizeElementPage(elements: object[]): object[] {
+  const normalized: object[] = [];
+  for (const element of elements) {
+    if (isHrElement(element)) {
+      if (normalized.length === 0) {
+        continue;
+      }
+      const last = normalized[normalized.length - 1];
+      if (isHrElement(last)) {
+        continue;
+      }
+    }
+    normalized.push(element);
+  }
+
+  while (normalized.length > 0 && isHrElement(normalized[normalized.length - 1])) {
+    normalized.pop();
+  }
+
+  return normalized;
+}
+
+function paginateElementsByComponentBudget(elements: object[], componentBudget: number): object[][] {
+  const safeBudget = Math.max(componentBudget, MIN_STREAM_CARD_COMPONENT_BUDGET);
+  // 预留 1 个组件给 header.title（plain_text）
+  const budgetForBody = Math.max(1, safeBudget - 1);
+  const pages: object[][] = [];
+  let currentPage: object[] = [];
+  let currentCount = 0;
+
+  for (const element of elements) {
+    const componentCount = Math.max(1, countComponentTags(element));
+
+    if (currentPage.length > 0 && currentCount + componentCount > budgetForBody) {
+      const normalized = normalizeElementPage(currentPage);
+      if (normalized.length > 0) {
+        pages.push(normalized);
+      }
+      currentPage = [];
+      currentCount = 0;
+    }
+
+    currentPage.push(element);
+    currentCount += componentCount;
+  }
+
+  const normalized = normalizeElementPage(currentPage);
+  if (normalized.length > 0) {
+    pages.push(normalized);
+  }
+
+  if (pages.length === 0) {
+    pages.push([{ tag: 'markdown', content: '（无输出）' }]);
+  }
+
+  return pages;
+}
+
 function buildTimelineElements(segments: StreamCardSegment[]): object[] {
   const elements: object[] = [];
   const visibleSegments = segments.slice(-80);
@@ -294,7 +386,7 @@ function buildPendingQuestionElements(question: StreamCardPendingQuestion): obje
   return blocks;
 }
 
-export function buildStreamCard(data: StreamCardData): object {
+function buildStreamCardElements(data: StreamCardData): object[] {
   const elements: object[] = [];
   const thinkingText = data.thinking.trim();
 
@@ -397,9 +489,17 @@ export function buildStreamCard(data: StreamCardData): object {
     elements.push(...buildPendingQuestionElements(data.pendingQuestion));
   }
 
-  // 4. 状态栏
-  const statusColor = data.status === 'processing' ? 'blue' : data.status === 'completed' ? 'green' : 'red';
-  const statusText = data.status === 'processing' ? '处理中...' : data.status === 'completed' ? '已完成' : '失败';
+  return elements;
+}
+
+function buildStreamCardPayload(
+  elements: object[],
+  statusText: string,
+  statusColor: 'blue' | 'green' | 'red'
+): object {
+  const normalizedElements = elements.length > 0
+    ? elements
+    : [{ tag: 'markdown', content: '（无输出）' }];
 
   return {
     schema: '2.0',
@@ -414,7 +514,35 @@ export function buildStreamCard(data: StreamCardData): object {
       template: statusColor,
     },
     body: {
-      elements,
+      elements: normalizedElements,
     },
   };
+}
+
+export function buildStreamCards(data: StreamCardData, options?: StreamCardBuildOptions): object[] {
+  const allElements = buildStreamCardElements(data);
+  const statusColor: 'blue' | 'green' | 'red' = data.status === 'processing'
+    ? 'blue'
+    : data.status === 'completed'
+      ? 'green'
+      : 'red';
+  const baseStatusText = data.status === 'processing' ? '处理中...' : data.status === 'completed' ? '已完成' : '失败';
+
+  const componentBudget = typeof options?.componentBudget === 'number' && Number.isFinite(options.componentBudget)
+    ? Math.floor(options.componentBudget)
+    : DEFAULT_STREAM_CARD_COMPONENT_BUDGET;
+  const pages = paginateElementsByComponentBudget(allElements, componentBudget);
+
+  if (pages.length <= 1) {
+    return [buildStreamCardPayload(pages[0], baseStatusText, statusColor)];
+  }
+
+  return pages.map((pageElements, index) => {
+    const statusText = `${baseStatusText}（${index + 1}/${pages.length}）`;
+    return buildStreamCardPayload(pageElements, statusText, statusColor);
+  });
+}
+
+export function buildStreamCard(data: StreamCardData): object {
+  return buildStreamCards(data)[0];
 }
