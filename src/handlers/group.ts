@@ -146,7 +146,7 @@ export class GroupHandler {
       if (session) {
         sessionId = session.id;
         // 尝试获取群名作为 title，或者用默认的
-        chatSessionStore.setSession(chatId, sessionId, senderId, title); // senderId 暂时作为 creator
+        chatSessionStore.setSession(chatId, sessionId, senderId, title, { chatType: 'group' }); // senderId 暂时作为 creator
       } else {
         await feishuClient.reply(messageId, '❌ 无法创建 OpenCode 会话');
         return;

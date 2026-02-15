@@ -391,6 +391,7 @@ node scripts/deploy.mjs status
 | `创建角色 名称=...; 描述=...; 类型=...; 工具=...` | 自然语言创建自定义角色并切换 |
 | `/stop` | 中断当前会话执行 |
 | `/undo` | 撤回上一轮交互（OpenCode + 飞书同步） |
+| `/session` | 列出全部会话（含未绑定与仅本地映射记录） |
 | `/session new` | 新建会话并重置上下文 |
 | `/session <sessionId>` | 手动绑定已有 OpenCode 会话（需启用 `ENABLE_MANUAL_SESSION_BIND`） |
 | `新建会话窗口` | 自然语言触发新建会话（等价 `/session new`） |

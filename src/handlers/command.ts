@@ -303,9 +303,9 @@ export class CommandHandler {
           } else if (command.sessionAction === 'list') {
             await this.handleListSessions(chatId, messageId);
           } else if (command.sessionAction === 'switch' && command.sessionId) {
-            await this.handleSwitchSession(chatId, messageId, context.senderId, command.sessionId);
+            await this.handleSwitchSession(chatId, messageId, context.senderId, command.sessionId, context.chatType);
           } else {
-            await feishuClient.reply(messageId, '用法: /session new 或 /session <sessionId>');
+            await feishuClient.reply(messageId, '用法: /session（列出会话） 或 /session new 或 /session <sessionId>');
           }
           break;
 
@@ -336,16 +336,16 @@ export class CommandHandler {
           break;
 
         case 'model':
-          await this.handleModel(chatId, messageId, context.senderId, command.modelName);
+          await this.handleModel(chatId, messageId, context.senderId, context.chatType, command.modelName);
           break;
 
         case 'agent':
-          await this.handleAgent(chatId, messageId, context.senderId, command.agentName);
+          await this.handleAgent(chatId, messageId, context.senderId, context.chatType, command.agentName);
           break;
 
         case 'role':
           if (command.roleAction === 'create') {
-            await this.handleRoleCreate(chatId, messageId, context.senderId, command.roleSpec || '');
+            await this.handleRoleCreate(chatId, messageId, context.senderId, context.chatType, command.roleSpec || '');
           } else {
             await feishuClient.reply(messageId, `支持的角色命令:\n- ${ROLE_CREATE_USAGE}`);
           }
@@ -400,7 +400,7 @@ export class CommandHandler {
     
     if (session) {
       // 2. 更新绑定
-      chatSessionStore.setSession(chatId, session.id, userId, title);
+      chatSessionStore.setSession(chatId, session.id, userId, title, { chatType });
       await feishuClient.reply(messageId, `✅ 已创建新会话窗口\nID: ${session.id}`);
     } else {
       await feishuClient.reply(messageId, '❌ 创建会话失败');
@@ -411,7 +411,8 @@ export class CommandHandler {
     chatId: string,
     messageId: string,
     userId: string,
-    targetSessionId: string
+    targetSessionId: string,
+    chatType: 'p2p' | 'group'
   ): Promise<void> {
     if (!userConfig.enableManualSessionBind) {
       await feishuClient.reply(messageId, '❌ 当前环境未开启“绑定已有会话”能力');
@@ -446,7 +447,7 @@ export class CommandHandler {
       normalizedSessionId,
       userId,
       title,
-      { protectSessionDelete: true }
+      { protectSessionDelete: true, chatType }
     );
 
     const replyLines = [
@@ -462,23 +463,120 @@ export class CommandHandler {
   }
 
   private async handleListSessions(chatId: string, messageId: string): Promise<void> {
-      // 在群聊模式下，列出 session 意义不大，因为是 1:1 绑定的
-      const current = chatSessionStore.getSessionId(chatId);
-      await feishuClient.reply(messageId, `当前绑定会话: ${current || '无'}`);
+    let sessions: Awaited<ReturnType<typeof opencodeClient.listSessions>> = [];
+    let opencodeUnavailable = false;
+    try {
+      sessions = await opencodeClient.listSessions();
+    } catch (error) {
+      opencodeUnavailable = true;
+      console.warn('[Command] 拉取 OpenCode 会话失败，回退到本地映射列表:', error);
+    }
+
+    const sortedSessions = [...sessions].sort((left, right) => {
+      const rightTime = right.time?.updated ?? right.time?.created ?? 0;
+      const leftTime = left.time?.updated ?? left.time?.created ?? 0;
+      return rightTime - leftTime;
+    });
+
+    const localBindings = new Map<string, { chatIds: string[]; title?: string }>();
+    for (const boundChatId of chatSessionStore.getAllChatIds()) {
+      const binding = chatSessionStore.getSession(boundChatId);
+      if (!binding?.sessionId) continue;
+
+      const existing = localBindings.get(binding.sessionId);
+      if (existing) {
+        existing.chatIds.push(boundChatId);
+        if (!existing.title && binding.title) {
+          existing.title = binding.title;
+        }
+        continue;
+      }
+
+      localBindings.set(binding.sessionId, {
+        chatIds: [boundChatId],
+        title: binding.title,
+      });
+    }
+
+    const tableHeader = 'SessionID | OpenCode侧会话名称 | 绑定群明细 | 当前会话状态';
+    const rows: string[] = [];
+    for (const session of sortedSessions) {
+      const bindingInfo = localBindings.get(session.id);
+      const title = session.title && session.title.trim().length > 0 ? session.title.trim() : '未命名会话';
+      const chatDetail = bindingInfo ? bindingInfo.chatIds.join(', ') : '无';
+      const status = bindingInfo ? 'OpenCode可用/已绑定' : 'OpenCode可用/未绑定';
+      rows.push(`${session.id} | ${title} | ${chatDetail} | ${status}`);
+      localBindings.delete(session.id);
+    }
+
+    for (const [sessionId, bindingInfo] of localBindings.entries()) {
+      const localTitle = bindingInfo.title && bindingInfo.title.trim().length > 0
+        ? bindingInfo.title.trim()
+        : '本地绑定记录';
+      rows.push(`${sessionId} | ${localTitle} | ${bindingInfo.chatIds.join(', ')} | 仅本地映射(可能已失活)`);
+    }
+
+    if (rows.length === 0) {
+      const emptyMessage = opencodeUnavailable
+        ? 'OpenCode 暂不可达，且当前无本地会话映射记录'
+        : '当前无可用会话记录';
+      await feishuClient.reply(messageId, emptyMessage);
+      return;
+    }
+
+    const rowChunks: string[] = [];
+    let currentRows = '';
+    for (const row of rows) {
+      if ((tableHeader.length + currentRows.length + row.length + 2) > 3000 && currentRows.length > 0) {
+        rowChunks.push(currentRows.trimEnd());
+        currentRows = '';
+      }
+      currentRows += `${row}\n`;
+    }
+    if (currentRows.trim().length > 0) {
+      rowChunks.push(currentRows.trimEnd());
+    }
+
+    const chunks = rowChunks.map(chunk => `${tableHeader}\n${chunk}`);
+
+    if (chunks.length === 0) {
+      await feishuClient.reply(messageId, `${tableHeader}\n（无数据）`);
+      return;
+    }
+
+    const totalCount = rows.length;
+    const header = opencodeUnavailable
+      ? `📚 会话列表（总计 ${totalCount}，OpenCode 暂不可达，仅展示本地映射）`
+      : `📚 会话列表（总计 ${totalCount}）`;
+
+    await feishuClient.reply(
+      messageId,
+      `${header}\n${chunks[0]}`
+    );
+
+    for (let index = 1; index < chunks.length; index++) {
+      await feishuClient.sendText(chatId, `📚 会话列表（续 ${index + 1}/${chunks.length}）\n${chunks[index]}`);
+    }
   }
 
-  private async handleModel(chatId: string, messageId: string, userId: string, modelName?: string): Promise<void> {
+  private async handleModel(
+    chatId: string,
+    messageId: string,
+    userId: string,
+    chatType: 'p2p' | 'group',
+    modelName?: string
+  ): Promise<void> {
     try {
       // 0. 确保会话存在
       let session = chatSessionStore.getSession(chatId);
       if (!session) {
          // 自动创建会话
          const title = `群聊会话-${chatId.slice(-4)}`;
-         const newSession = await opencodeClient.createSession(title);
-         if (newSession) {
-             chatSessionStore.setSession(chatId, newSession.id, userId, title);
-             session = chatSessionStore.getSession(chatId);
-         } else {
+          const newSession = await opencodeClient.createSession(title);
+          if (newSession) {
+              chatSessionStore.setSession(chatId, newSession.id, userId, title, { chatType });
+              session = chatSessionStore.getSession(chatId);
+          } else {
              await feishuClient.reply(messageId, '❌ 无法创建会话以保存配置');
              return;
          }
@@ -674,7 +772,13 @@ export class CommandHandler {
     return config.agent;
   }
 
-  private async handleRoleCreate(chatId: string, messageId: string, userId: string, roleSpec: string): Promise<void> {
+  private async handleRoleCreate(
+    chatId: string,
+    messageId: string,
+    userId: string,
+    chatType: 'p2p' | 'group',
+    roleSpec: string
+  ): Promise<void> {
     const parsed = parseRoleCreateSpec(roleSpec);
     if (!parsed.ok) {
       await feishuClient.reply(messageId, `❌ 创建角色失败\n${parsed.message}`);
@@ -689,7 +793,7 @@ export class CommandHandler {
         await feishuClient.reply(messageId, '❌ 无法创建会话以保存角色设置');
         return;
       }
-      chatSessionStore.setSession(chatId, newSession.id, userId, title);
+      chatSessionStore.setSession(chatId, newSession.id, userId, title, { chatType });
       session = chatSessionStore.getSession(chatId);
     }
 
@@ -739,7 +843,13 @@ export class CommandHandler {
     );
   }
 
-  private async handleAgent(chatId: string, messageId: string, userId: string, agentName?: string): Promise<void> {
+  private async handleAgent(
+    chatId: string,
+    messageId: string,
+    userId: string,
+    chatType: 'p2p' | 'group',
+    agentName?: string
+  ): Promise<void> {
     try {
       // 0. 确保会话存在
       let session = chatSessionStore.getSession(chatId);
@@ -748,7 +858,7 @@ export class CommandHandler {
         const title = `群聊会话-${chatId.slice(-4)}`;
         const newSession = await opencodeClient.createSession(title);
         if (newSession) {
-          chatSessionStore.setSession(chatId, newSession.id, userId, title);
+          chatSessionStore.setSession(chatId, newSession.id, userId, title, { chatType });
           session = chatSessionStore.getSession(chatId);
         } else {
           await feishuClient.reply(messageId, '❌ 无法创建会话以保存配置');
@@ -904,7 +1014,7 @@ export class CommandHandler {
 
     await feishuClient.reply(
       messageId,
-      `✅ 清理完成\n- 扫描群聊: ${stats.scannedChats} 个\n- 解散群聊: ${stats.disbandedChats} 个\n- 清理会话: ${stats.deletedSessions} 个\n- 跳过删除(受保护): ${stats.skippedProtectedSessions} 个`
+      `✅ 清理完成\n- 扫描群聊: ${stats.scannedChats} 个\n- 解散群聊: ${stats.disbandedChats} 个\n- 清理会话: ${stats.deletedSessions} 个\n- 跳过删除(受保护): ${stats.skippedProtectedSessions} 个\n- 移除孤儿映射: ${stats.removedOrphanMappings} 个`
     );
   }
 

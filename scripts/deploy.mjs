@@ -1000,6 +1000,15 @@ function requireRootForSystemd() {
   }
 }
 
+function isSystemdUnitNotLoadedMessage(text) {
+  const normalized = text.toLowerCase();
+  return normalized.includes('not loaded')
+    || normalized.includes('not-found')
+    || normalized.includes('does not exist')
+    || normalized.includes('not be found')
+    || normalized.includes('no such file');
+}
+
 function getServiceRunUser() {
   return process.env.SUDO_USER || process.env.USER || 'root';
 }
@@ -1042,7 +1051,18 @@ async function installSystemdService() {
 function disableSystemdService() {
   requireRootForSystemd();
   run('systemctl', ['disable', '--now', serviceName], '停止并禁用 systemd 服务', { allowFailure: true });
-  run('systemctl', ['reset-failed', serviceName], '清理失败状态', { allowFailure: true });
+  const resetResult = run('systemctl', ['reset-failed', serviceName], '清理失败状态', {
+    allowFailure: true,
+    capture: true,
+  });
+  if (typeof resetResult.status === 'number' && resetResult.status !== 0) {
+    const stderr = `${resetResult.stderr || ''}`.trim();
+    if (stderr && !isSystemdUnitNotLoadedMessage(stderr)) {
+      console.warn(`[deploy] 清理失败状态返回异常: ${stderr}`);
+    } else {
+      console.log(`[deploy] 服务 ${serviceName}.service 未加载，跳过失败状态清理`);
+    }
+  }
   console.log('[deploy] 已停止并禁用 systemd 服务');
 }
 

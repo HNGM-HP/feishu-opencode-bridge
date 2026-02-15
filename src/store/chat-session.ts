@@ -2,12 +2,15 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 // 群组会话数据结构
+export type ChatSessionType = 'p2p' | 'group';
+
 interface ChatSessionData {
   chatId: string;
   sessionId: string;
   creatorId: string; // 创建者ID
   createdAt: number;
   title?: string;
+  chatType?: ChatSessionType;
   protectSessionDelete?: boolean;
   // Deprecated: use interactionHistory instead
   lastFeishuUserMsgId?: string;
@@ -29,6 +32,7 @@ export interface InteractionRecord {
 
 export interface SessionBindingOptions {
   protectSessionDelete?: boolean;
+  chatType?: ChatSessionType;
 }
 
 // 存储文件路径
@@ -66,6 +70,13 @@ class ChatSessionStore {
     }
   }
 
+  private inferChatTypeFromTitle(title?: string): ChatSessionType | undefined {
+    if (!title) return undefined;
+    if (title.startsWith('飞书私聊')) return 'p2p';
+    if (title.startsWith('飞书群聊') || title.startsWith('群聊')) return 'group';
+    return undefined;
+  }
+
   // 获取群组当前绑定的会话ID
   getSessionId(chatId: string): string | null {
     const data = this.data.get(chatId);
@@ -95,12 +106,20 @@ class ChatSessionStore {
     title?: string,
     options?: SessionBindingOptions
   ): void {
+    const current = this.data.get(chatId);
+    const resolvedChatType =
+      options?.chatType
+      || current?.chatType
+      || this.inferChatTypeFromTitle(title)
+      || this.inferChatTypeFromTitle(current?.title);
+
     const data: ChatSessionData = {
       chatId,
       sessionId,
       creatorId,
       createdAt: Date.now(),
       title,
+      ...(resolvedChatType ? { chatType: resolvedChatType } : {}),
       ...(options?.protectSessionDelete ? { protectSessionDelete: true } : {}),
       interactionHistory: [],
     };
@@ -112,6 +131,40 @@ class ChatSessionStore {
   isSessionDeleteProtected(chatId: string): boolean {
     const session = this.data.get(chatId);
     return session?.protectSessionDelete === true;
+  }
+
+  isPrivateChatSession(chatId: string): boolean {
+    const session = this.data.get(chatId);
+    if (!session) {
+      return false;
+    }
+
+    if (session.chatType === 'p2p') {
+      return true;
+    }
+
+    return typeof session.title === 'string' && session.title.startsWith('飞书私聊');
+  }
+
+  isGroupChatSession(chatId: string): boolean {
+    const session = this.data.get(chatId);
+    if (!session) {
+      return false;
+    }
+
+    if (session.chatType === 'group') {
+      return true;
+    }
+
+    if (session.chatType === 'p2p') {
+      return false;
+    }
+
+    if (typeof session.title !== 'string') {
+      return false;
+    }
+
+    return session.title.startsWith('飞书群聊') || session.title.startsWith('群聊');
   }
 
   // 更新会话配置 (模型/Agent)

@@ -237,7 +237,7 @@ export class P2PHandler {
     try {
       const sessionTitle = this.getPrivateSessionTitle(senderId);
       const session = await opencodeClient.createSession(sessionTitle);
-      chatSessionStore.setSession(chatId, session.id, senderId, sessionTitle);
+      chatSessionStore.setSession(chatId, session.id, senderId, sessionTitle, { chatType: 'p2p' });
       return {
         firstBinding: true,
       };
@@ -433,7 +433,7 @@ export class P2PHandler {
       targetSessionId,
       openId,
       sessionTitle,
-      { protectSessionDelete }
+      { protectSessionDelete, chatType: 'group' }
     );
     console.log(`[P2P] 已绑定会话: Chat=${newChatId}, Session=${targetSessionId}`);
 

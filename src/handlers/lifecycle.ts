@@ -8,6 +8,7 @@ export interface CleanupStats {
   disbandedChats: number;
   deletedSessions: number;
   skippedProtectedSessions: number;
+  removedOrphanMappings: number;
 }
 
 export class LifecycleHandler {
@@ -16,7 +17,7 @@ export class LifecycleHandler {
     console.log('[Lifecycle] 正在检查无效群聊...');
     const stats = await this.runCleanupScan();
     console.log(
-      `[Lifecycle] 清理统计: scanned=${stats.scannedChats}, disbanded=${stats.disbandedChats}, deletedSession=${stats.deletedSessions}, skippedProtected=${stats.skippedProtectedSessions}`
+      `[Lifecycle] 清理统计: scanned=${stats.scannedChats}, disbanded=${stats.disbandedChats}, deletedSession=${stats.deletedSessions}, skippedProtected=${stats.skippedProtectedSessions}, removedOrphanMappings=${stats.removedOrphanMappings}`
     );
     console.log('[Lifecycle] 清理完成');
   }
@@ -27,9 +28,26 @@ export class LifecycleHandler {
       disbandedChats: 0,
       deletedSessions: 0,
       skippedProtectedSessions: 0,
+      removedOrphanMappings: 0,
     };
 
     const chats = await feishuClient.getUserChats();
+    const activeChatIdSet = new Set(chats);
+
+    if (chats.length === 0) {
+      console.log('[Lifecycle] 当前未检索到任何群聊，跳过孤儿映射清理');
+    } else {
+      for (const mappedChatId of chatSessionStore.getAllChatIds()) {
+        if (activeChatIdSet.has(mappedChatId)) continue;
+        if (!chatSessionStore.isGroupChatSession(mappedChatId)) {
+          continue;
+        }
+        chatSessionStore.removeSession(mappedChatId);
+        stats.removedOrphanMappings += 1;
+        console.log(`[Lifecycle] 已移除孤儿映射: chat=${mappedChatId}`);
+      }
+    }
+
     for (const chatId of chats) {
       stats.scannedChats += 1;
       await this.checkAndDisbandIfEmpty(chatId, stats);
