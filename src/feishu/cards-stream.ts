@@ -116,6 +116,12 @@ export interface StreamCardBuildOptions {
 
 const DEFAULT_STREAM_CARD_COMPONENT_BUDGET = 180;
 const MIN_STREAM_CARD_COMPONENT_BUDGET = 20;
+const MAX_TIMELINE_SEGMENTS = 60;
+const MAX_REASONING_SEGMENT_LENGTH = 2600;
+const MAX_TOOL_OUTPUT_LENGTH = 4000;
+const MAX_TEXT_SEGMENT_LENGTH = 5000;
+const MAX_THINKING_PANEL_LENGTH = 2600;
+const MAX_BODY_TEXT_LENGTH = 6000;
 
 function isHrElement(element: object): boolean {
   const value = element as { tag?: unknown };
@@ -204,7 +210,7 @@ function paginateElementsByComponentBudget(elements: object[], componentBudget: 
 
 function buildTimelineElements(segments: StreamCardSegment[]): object[] {
   const elements: object[] = [];
-  const visibleSegments = segments.slice(-80);
+  const visibleSegments = segments.slice(-MAX_TIMELINE_SEGMENTS);
 
   for (const segment of visibleSegments) {
     let nextElement: object | null = null;
@@ -215,7 +221,7 @@ function buildTimelineElements(segments: StreamCardSegment[]): object[] {
         continue;
       }
 
-      const rendered = truncateText(text, 6000);
+      const rendered = truncateMiddleText(text, MAX_REASONING_SEGMENT_LENGTH);
       nextElement = {
         tag: 'collapsible_panel',
         expanded: false,
@@ -235,7 +241,7 @@ function buildTimelineElements(segments: StreamCardSegment[]): object[] {
     } else if (segment.type === 'tool') {
       const statusInfo = getToolStatusLabel(segment.status);
       const toolKindLabel = segment.kind === 'subtask' ? '子任务' : '工具';
-      const output = segment.output?.trim() ? truncateMiddleText(segment.output.trim(), 12000) : '';
+      const output = segment.output?.trim() ? truncateMiddleText(segment.output.trim(), MAX_TOOL_OUTPUT_LENGTH) : '';
       const panelElements: object[] = [
         {
           tag: 'markdown',
@@ -270,9 +276,10 @@ function buildTimelineElements(segments: StreamCardSegment[]): object[] {
       if (!segment.text.trim()) {
         continue;
       }
+      const text = truncateMiddleText(segment.text, MAX_TEXT_SEGMENT_LENGTH);
       nextElement = {
         tag: 'markdown',
-        content: segment.text,
+        content: text,
       };
     } else if (segment.type === 'note') {
       const text = segment.text.trim();
@@ -401,19 +408,20 @@ function buildStreamCardElements(data: StreamCardData): object[] {
   if (timelineElements.length === 0) {
     // 1. 思考过程（原生折叠面板）
     if (thinkingText) {
+      const renderedThinking = truncateMiddleText(thinkingText, MAX_THINKING_PANEL_LENGTH);
       elements.push({
         tag: 'collapsible_panel',
         expanded: false,
         header: {
           title: {
             tag: 'plain_text',
-            content: `🤔 思考过程 (${thinkingText.length}字)`,
+            content: `🤔 思考过程 (${renderedThinking.length}字)`,
           },
         },
         elements: [
           {
             tag: 'markdown',
-            content: `\`\`\`\n${escapeCodeBlockContent(thinkingText)}\n\`\`\``,
+            content: `\`\`\`\n${escapeCodeBlockContent(renderedThinking)}\n\`\`\``,
           },
         ],
       });
@@ -448,7 +456,7 @@ function buildStreamCardElements(data: StreamCardData): object[] {
       }
       elements.push({
         tag: 'markdown',
-        content: data.text,
+        content: truncateMiddleText(data.text, MAX_BODY_TEXT_LENGTH),
       });
     } else if (data.status === 'processing') {
       if (elements.length > 0) {

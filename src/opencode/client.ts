@@ -10,6 +10,10 @@ export interface PermissionRequestEvent {
   tool: string;
   description: string;
   risk?: string;
+  parentSessionId?: string;
+  relatedSessionId?: string;
+  messageId?: string;
+  callId?: string;
 }
 
 interface PermissionEventProperties {
@@ -29,6 +33,13 @@ interface PermissionEventProperties {
   risk?: string;
   metadata?: Record<string, unknown>;
 }
+
+type PermissionCorrelation = {
+  parentSessionId?: string;
+  relatedSessionId?: string;
+  messageId?: string;
+  callId?: string;
+};
 
 function getPermissionLabel(props: PermissionEventProperties): string {
   if (typeof props.permission === 'string' && props.permission.trim()) {
@@ -56,6 +67,95 @@ function getFirstString(...values: unknown[]): string {
     }
   }
   return '';
+}
+
+function toRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function getFirstStringFromRecord(record: Record<string, unknown> | undefined, keys: string[]): string {
+  if (!record) {
+    return '';
+  }
+
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return '';
+}
+
+function extractPermissionCorrelation(props: PermissionEventProperties): PermissionCorrelation {
+  const propsRecord = props as Record<string, unknown>;
+  const toolRecord = toRecord(props.tool);
+  const metadataRecord = toRecord(props.metadata);
+
+  const parentSessionId = getFirstString(
+    getFirstStringFromRecord(propsRecord, ['parentSessionID', 'parentSessionId', 'parent_session_id']),
+    getFirstStringFromRecord(toolRecord, ['parentSessionID', 'parentSessionId', 'parent_session_id']),
+    getFirstStringFromRecord(metadataRecord, ['parentSessionID', 'parentSessionId', 'parent_session_id'])
+  );
+
+  const relatedSessionId = getFirstString(
+    getFirstStringFromRecord(propsRecord, [
+      'originSessionID',
+      'originSessionId',
+      'origin_session_id',
+      'rootSessionID',
+      'rootSessionId',
+      'root_session_id',
+      'sourceSessionID',
+      'sourceSessionId',
+      'source_session_id',
+    ]),
+    getFirstStringFromRecord(toolRecord, [
+      'originSessionID',
+      'originSessionId',
+      'origin_session_id',
+      'rootSessionID',
+      'rootSessionId',
+      'root_session_id',
+      'sourceSessionID',
+      'sourceSessionId',
+      'source_session_id',
+    ]),
+    getFirstStringFromRecord(metadataRecord, [
+      'originSessionID',
+      'originSessionId',
+      'origin_session_id',
+      'rootSessionID',
+      'rootSessionId',
+      'root_session_id',
+      'sourceSessionID',
+      'sourceSessionId',
+      'source_session_id',
+    ])
+  );
+
+  const messageId = getFirstString(
+    getFirstStringFromRecord(propsRecord, ['messageID', 'messageId', 'message_id']),
+    getFirstStringFromRecord(toolRecord, ['messageID', 'messageId', 'message_id']),
+    getFirstStringFromRecord(metadataRecord, ['messageID', 'messageId', 'message_id'])
+  );
+
+  const callId = getFirstString(
+    getFirstStringFromRecord(propsRecord, ['callID', 'callId', 'call_id', 'toolCallID', 'toolCallId', 'tool_call_id']),
+    getFirstStringFromRecord(toolRecord, ['callID', 'callId', 'call_id', 'toolCallID', 'toolCallId', 'tool_call_id']),
+    getFirstStringFromRecord(metadataRecord, ['callID', 'callId', 'call_id', 'toolCallID', 'toolCallId', 'tool_call_id'])
+  );
+
+  return {
+    ...(parentSessionId ? { parentSessionId } : {}),
+    ...(relatedSessionId ? { relatedSessionId } : {}),
+    ...(messageId ? { messageId } : {}),
+    ...(callId ? { callId } : {}),
+  };
 }
 
 function isPermissionRequestEventType(eventType: string): boolean {
@@ -319,7 +419,7 @@ class OpencodeClientWrapper extends EventEmitter {
 
             // Debug log for permission requests to catch missing ones
             if (event.type.toLowerCase().includes('permission')) {
-                 console.log(`[OpenCode] 收到底层事件: ${event.type}`, JSON.stringify(event.properties || {}).slice(0, 200));
+                 console.log(`[OpenCode] 收到底层事件: ${event.type}`, JSON.stringify(event.properties || {}).slice(0, 1200));
             }
             this.handleEvent(event);
           }
@@ -354,9 +454,16 @@ class OpencodeClientWrapper extends EventEmitter {
     // 权限请求事件（兼容不同事件命名）
     if (isPermissionRequestEventType(eventType) && event.properties) {
       const props = event.properties as PermissionEventProperties;
+      const correlation = extractPermissionCorrelation(props);
+      const directSessionId = getFirstString(props.sessionID, props.sessionId, props.session_id);
+      const sessionId = getFirstString(
+        directSessionId,
+        correlation.relatedSessionId,
+        correlation.parentSessionId
+      );
 
       const permissionEvent: PermissionRequestEvent = {
-        sessionId: getFirstString(props.sessionID, props.sessionId, props.session_id),
+        sessionId,
         permissionId: getFirstString(
           props.id,
           props.requestId,
@@ -371,10 +478,14 @@ class OpencodeClientWrapper extends EventEmitter {
         // If description is missing, try to construct one from metadata
         description: props.description || (props.metadata ? JSON.stringify(props.metadata) : ''),
         risk: props.risk,
+        ...(correlation.parentSessionId ? { parentSessionId: correlation.parentSessionId } : {}),
+        ...(correlation.relatedSessionId ? { relatedSessionId: correlation.relatedSessionId } : {}),
+        ...(correlation.messageId ? { messageId: correlation.messageId } : {}),
+        ...(correlation.callId ? { callId: correlation.callId } : {}),
       };
 
       if (!permissionEvent.sessionId || !permissionEvent.permissionId) {
-        console.warn('[OpenCode] 权限事件缺少关键字段:', event.type, JSON.stringify(event.properties || {}).slice(0, 300));
+        console.warn('[OpenCode] 权限事件缺少关键字段:', event.type, JSON.stringify(event.properties || {}).slice(0, 1200));
         return;
       }
 

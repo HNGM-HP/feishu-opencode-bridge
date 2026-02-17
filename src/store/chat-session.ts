@@ -21,6 +21,11 @@ interface ChatSessionData {
   interactionHistory: InteractionRecord[];
 }
 
+interface SessionAliasRecord {
+  chatId: string;
+  expiresAt: number;
+}
+
 export interface InteractionRecord {
   userFeishuMsgId: string;
   openCodeMsgId: string; // The ID of the user message in OpenCode (to revert to/from)
@@ -37,9 +42,11 @@ export interface SessionBindingOptions {
 
 // 存储文件路径
 const STORE_FILE = path.join(process.cwd(), '.chat-sessions.json');
+const SESSION_ALIAS_TTL_MS = 10 * 60 * 1000;
 
 class ChatSessionStore {
   private data: Map<string, ChatSessionData> = new Map();
+  private sessionAliases: Map<string, SessionAliasRecord> = new Map();
 
   constructor() {
     this.load();
@@ -90,12 +97,40 @@ class ChatSessionStore {
   
   // 通过 SessionID 反查 ChatID
   getChatId(sessionId: string): string | undefined {
+    this.cleanupExpiredSessionAliases();
+
     for (const [chatId, data] of this.data.entries()) {
       if (data.sessionId === sessionId) {
         return chatId;
       }
     }
-    return undefined;
+
+    const alias = this.sessionAliases.get(sessionId);
+    if (!alias) {
+      return undefined;
+    }
+
+    if (alias.expiresAt <= Date.now()) {
+      this.sessionAliases.delete(sessionId);
+      return undefined;
+    }
+
+    if (!this.data.has(alias.chatId)) {
+      this.sessionAliases.delete(sessionId);
+      return undefined;
+    }
+
+    console.log(`[Store] 命中会话别名: session=${sessionId} -> chat=${alias.chatId}`);
+    return alias.chatId;
+  }
+
+  private cleanupExpiredSessionAliases(): void {
+    const now = Date.now();
+    for (const [sessionId, alias] of this.sessionAliases.entries()) {
+      if (alias.expiresAt <= now || !this.data.has(alias.chatId)) {
+        this.sessionAliases.delete(sessionId);
+      }
+    }
   }
 
   // 绑定群组和会话
@@ -106,7 +141,18 @@ class ChatSessionStore {
     title?: string,
     options?: SessionBindingOptions
   ): void {
+    this.cleanupExpiredSessionAliases();
     const current = this.data.get(chatId);
+
+    if (current?.sessionId && current.sessionId !== sessionId) {
+      this.sessionAliases.set(current.sessionId, {
+        chatId,
+        expiresAt: Date.now() + SESSION_ALIAS_TTL_MS,
+      });
+      console.log(`[Store] 创建会话别名: session=${current.sessionId} -> chat=${chatId}`);
+    }
+    this.sessionAliases.delete(sessionId);
+
     const resolvedChatType =
       options?.chatType
       || current?.chatType
@@ -126,6 +172,31 @@ class ChatSessionStore {
     this.data.set(chatId, data);
     this.save();
     console.log(`[Store] 绑定成功: chat=${chatId} -> session=${sessionId}`);
+  }
+
+  rememberSessionAlias(sessionId: string, chatId: string, ttlMs: number = SESSION_ALIAS_TTL_MS): void {
+    const normalizedSessionId = sessionId.trim();
+    const normalizedChatId = chatId.trim();
+    if (!normalizedSessionId || !normalizedChatId) {
+      return;
+    }
+
+    this.cleanupExpiredSessionAliases();
+    const chat = this.data.get(normalizedChatId);
+    if (!chat) {
+      return;
+    }
+
+    if (chat.sessionId === normalizedSessionId) {
+      return;
+    }
+
+    const safeTtl = Number.isFinite(ttlMs) ? Math.max(60000, Math.floor(ttlMs)) : SESSION_ALIAS_TTL_MS;
+    this.sessionAliases.set(normalizedSessionId, {
+      chatId: normalizedChatId,
+      expiresAt: Date.now() + safeTtl,
+    });
+    console.log(`[Store] 记录临时会话别名: session=${normalizedSessionId} -> chat=${normalizedChatId}`);
   }
 
   isSessionDeleteProtected(chatId: string): boolean {
@@ -293,6 +364,11 @@ class ChatSessionStore {
   // 移除绑定（通常在群解散时调用）
   removeSession(chatId: string): void {
     if (this.data.has(chatId)) {
+      for (const [sessionId, alias] of this.sessionAliases.entries()) {
+        if (alias.chatId === chatId) {
+          this.sessionAliases.delete(sessionId);
+        }
+      }
       this.data.delete(chatId);
       this.save();
       console.log(`[Store] 移除绑定: chat=${chatId}`);

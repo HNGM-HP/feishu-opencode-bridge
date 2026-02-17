@@ -35,6 +35,68 @@ function extractApiCode(responseData: unknown): number | undefined {
   return undefined;
 }
 
+function stringifyErrorPayload(payload: unknown): string {
+  if (typeof payload === 'string') {
+    return payload;
+  }
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return String(payload);
+  }
+}
+
+function isUniversalCardBuildFailure(responseData: unknown): boolean {
+  const apiCode = extractApiCode(responseData);
+  if (apiCode === 230099) {
+    return true;
+  }
+
+  const text = stringifyErrorPayload(responseData).toLowerCase();
+  return text.includes('230099')
+    || text.includes('200800')
+    || text.includes('create universal card fail');
+}
+
+function buildFallbackInteractiveCard(sourceCard: object): object {
+  const cardRecord = sourceCard as {
+    header?: {
+      title?: { content?: unknown };
+      template?: unknown;
+    };
+  };
+  const rawTitle = cardRecord.header?.title?.content;
+  const title = typeof rawTitle === 'string' && rawTitle.trim()
+    ? rawTitle.trim().slice(0, 60)
+    : 'OpenCode 输出（已精简）';
+  const rawTemplate = cardRecord.header?.template;
+  const template = typeof rawTemplate === 'string' && rawTemplate.trim()
+    ? rawTemplate.trim()
+    : 'blue';
+
+  return {
+    schema: '2.0',
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      title: {
+        tag: 'plain_text',
+        content: title,
+      },
+      template,
+    },
+    body: {
+      elements: [
+        {
+          tag: 'markdown',
+          content: '⚠️ 卡片内容过长或结构超限，已自动精简显示。\n请在 OpenCode Web 查看完整输出。',
+        },
+      ],
+    },
+  };
+}
+
 // 飞书事件数据类型（SDK 未导出，手动定义）
 interface FeishuEventData {
   event_id?: string;
@@ -629,6 +691,25 @@ class FeishuClient extends EventEmitter {
           // ignore
         }
       }
+
+      if (isUniversalCardBuildFailure(formatted.responseData)) {
+        console.warn(`[飞书] 更新卡片触发 230099/200800，尝试发送精简卡片: msgId=${messageId}`);
+        try {
+          const fallbackData = {
+            msg_type: 'interactive',
+            content: JSON.stringify(buildFallbackInteractiveCard(card)),
+          } as unknown as { content: string };
+          await this.client.im.message.patch({
+            path: { message_id: messageId },
+            data: fallbackData,
+          });
+          console.log(`[飞书] 精简卡片更新成功: msgId=${messageId.slice(0, 16)}...`);
+          return true;
+        } catch (fallbackError) {
+          const fallbackFormatted = formatError(fallbackError);
+          console.error(`[飞书] 精简卡片更新失败: ${fallbackFormatted.message}`);
+        }
+      }
       return false;
     }
   }
@@ -678,6 +759,30 @@ class FeishuClient extends EventEmitter {
         this.emit('chatUnavailable', chatId);
         return null;
       }
+
+      if (isUniversalCardBuildFailure(formatted.responseData)) {
+        console.warn(`[飞书] 发送卡片触发 230099/200800，尝试发送精简卡片: chatId=${chatId}`);
+        try {
+          const fallbackResponse = await this.client.im.message.create({
+            params: { receive_id_type: 'chat_id' },
+            data: {
+              receive_id: chatId,
+              msg_type: 'interactive',
+              content: JSON.stringify(buildFallbackInteractiveCard(card)),
+            },
+          });
+
+          const fallbackMsgId = fallbackResponse.data?.message_id || null;
+          if (fallbackMsgId) {
+            console.log(`[飞书] 精简卡片发送成功: msgId=${fallbackMsgId.slice(0, 16)}...`);
+          }
+          return fallbackMsgId;
+        } catch (fallbackError) {
+          const fallbackFormatted = formatError(fallbackError);
+          console.error(`[飞书] 精简卡片发送失败: ${fallbackFormatted.message}`);
+        }
+      }
+
       console.error(`[飞书] 发送卡片失败: code=${errCode}, ${formatted.message}`);
       return null;
     }

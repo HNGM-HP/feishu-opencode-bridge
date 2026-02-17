@@ -1,5 +1,5 @@
 import { feishuClient, type FeishuMessageEvent } from './feishu/client.js';
-import { opencodeClient } from './opencode/client.js';
+import { opencodeClient, type PermissionRequestEvent } from './opencode/client.js';
 import { outputBuffer } from './opencode/output-buffer.js';
 import { delayedResponseHandler } from './opencode/delayed-handler.js';
 import { questionHandler } from './opencode/question-handler.js';
@@ -47,6 +47,15 @@ async function main() {
   const errorNoticeMap = new Map<string, string>();
   const streamCardMessageIdsMap = new Map<string, string[]>();
   const STREAM_CARD_COMPONENT_BUDGET = 180;
+  const CORRELATION_CACHE_TTL_MS = 10 * 60 * 1000;
+
+  type CorrelationChatRef = {
+    chatId: string;
+    expiresAt: number;
+  };
+
+  const toolCallChatMap = new Map<string, CorrelationChatRef>();
+  const messageChatMap = new Map<string, CorrelationChatRef>();
 
   type ToolRuntimeState = {
     name: string;
@@ -301,6 +310,98 @@ async function main() {
 
   const toSessionId = (value: unknown): string => {
     return typeof value === 'string' ? value : '';
+  };
+
+  const toNonEmptyString = (value: unknown): string | undefined => {
+    if (typeof value !== 'string') {
+      return undefined;
+    }
+    const normalized = value.trim();
+    return normalized.length > 0 ? normalized : undefined;
+  };
+
+  const setCorrelationChatRef = (
+    map: Map<string, CorrelationChatRef>,
+    key: unknown,
+    chatId: unknown
+  ): void => {
+    const normalizedKey = toNonEmptyString(key);
+    const normalizedChatId = toNonEmptyString(chatId);
+    if (!normalizedKey || !normalizedChatId) {
+      return;
+    }
+
+    map.set(normalizedKey, {
+      chatId: normalizedChatId,
+      expiresAt: Date.now() + CORRELATION_CACHE_TTL_MS,
+    });
+  };
+
+  const getCorrelationChatRef = (
+    map: Map<string, CorrelationChatRef>,
+    key: unknown
+  ): string | undefined => {
+    const normalizedKey = toNonEmptyString(key);
+    if (!normalizedKey) {
+      return undefined;
+    }
+
+    const entry = map.get(normalizedKey);
+    if (!entry) {
+      return undefined;
+    }
+
+    if (entry.expiresAt <= Date.now()) {
+      map.delete(normalizedKey);
+      return undefined;
+    }
+
+    if (!chatSessionStore.getSession(entry.chatId)) {
+      map.delete(normalizedKey);
+      return undefined;
+    }
+
+    return entry.chatId;
+  };
+
+  type PermissionChatResolution = {
+    chatId?: string;
+    source: 'session' | 'parent_session' | 'related_session' | 'tool_call' | 'message' | 'unresolved';
+  };
+
+  const resolvePermissionChat = (event: PermissionRequestEvent): PermissionChatResolution => {
+    const directChatId = chatSessionStore.getChatId(event.sessionId);
+    if (directChatId) {
+      return { chatId: directChatId, source: 'session' };
+    }
+
+    const parentSessionId = toNonEmptyString(event.parentSessionId);
+    if (parentSessionId) {
+      const parentChatId = chatSessionStore.getChatId(parentSessionId);
+      if (parentChatId) {
+        return { chatId: parentChatId, source: 'parent_session' };
+      }
+    }
+
+    const relatedSessionId = toNonEmptyString(event.relatedSessionId);
+    if (relatedSessionId) {
+      const relatedChatId = chatSessionStore.getChatId(relatedSessionId);
+      if (relatedChatId) {
+        return { chatId: relatedChatId, source: 'related_session' };
+      }
+    }
+
+    const toolCallChatId = getCorrelationChatRef(toolCallChatMap, event.callId);
+    if (toolCallChatId) {
+      return { chatId: toolCallChatId, source: 'tool_call' };
+    }
+
+    const messageChatId = getCorrelationChatRef(messageChatMap, event.messageId);
+    if (messageChatId) {
+      return { chatId: messageChatId, source: 'message' };
+    }
+
+    return { source: 'unresolved' };
   };
 
   const normalizeToolStatus = (status: unknown): 'pending' | 'running' | 'completed' | 'failed' => {
@@ -649,7 +750,7 @@ async function main() {
   };
 
   const parsePermissionDecision = (raw: string): PermissionDecision | null => {
-    const normalized = raw.trim().toLowerCase();
+    const normalized = raw.normalize('NFKC').trim().toLowerCase();
     if (!normalized) return null;
 
     const compact = normalized
@@ -963,7 +1064,16 @@ async function main() {
         }
 
         const allow = action === 'permission_allow';
-        const remember = actionValue.remember === true || actionValue.remember === 'true';
+        const rememberRaw = typeof actionValue.remember === 'string'
+          ? actionValue.remember.normalize('NFKC').trim().toLowerCase()
+          : actionValue.remember;
+        const remember =
+          rememberRaw === true ||
+          rememberRaw === 1 ||
+          rememberRaw === '1' ||
+          rememberRaw === 'true' ||
+          rememberRaw === 'always' ||
+          rememberRaw === '始终允许';
         const responded = await opencodeClient.respondToPermission(
           sessionId,
           permissionId,
@@ -1092,8 +1202,24 @@ async function main() {
 
   // 6. 监听 OpenCode 事件
   // 监听权限请求
-  opencodeClient.on('permissionRequest', async (event: any) => {
-      console.log(`[权限] 收到请求: ${event.tool}, ID: ${event.permissionId}, Session: ${event.sessionId}`);
+  opencodeClient.on('permissionRequest', async (event: PermissionRequestEvent) => {
+      const resolution = resolvePermissionChat(event);
+      const chatId = resolution.chatId;
+      console.log(
+        `[权限] 收到请求: ${event.tool}, ID: ${event.permissionId}, Session: ${event.sessionId}, source=${resolution.source}`
+      );
+
+      if (chatId) {
+        chatSessionStore.rememberSessionAlias(event.sessionId, chatId, CORRELATION_CACHE_TTL_MS);
+        if (event.parentSessionId) {
+          chatSessionStore.rememberSessionAlias(event.parentSessionId, chatId, CORRELATION_CACHE_TTL_MS);
+        }
+        if (event.relatedSessionId) {
+          chatSessionStore.rememberSessionAlias(event.relatedSessionId, chatId, CORRELATION_CACHE_TTL_MS);
+        }
+        setCorrelationChatRef(toolCallChatMap, event.callId, chatId);
+        setCorrelationChatRef(messageChatMap, event.messageId, chatId);
+      }
 
       // 1. Check Whitelist
       if (permissionHandler.isToolWhitelisted(event.tool)) {
@@ -1103,7 +1229,6 @@ async function main() {
       }
 
       // 2. Find Chat ID
-      const chatId = chatSessionStore.getChatId(event.sessionId);
       if (chatId) {
           const bufferKey = `chat:${chatId}`;
           if (!outputBuffer.get(bufferKey)) {
@@ -1136,7 +1261,9 @@ async function main() {
           );
           outputBuffer.touch(bufferKey);
       } else {
-          console.warn(`[权限] ⚠️ 未找到关联的群聊 (Session: ${event.sessionId})，无法展示权限交互`);
+          console.warn(
+            `[权限] ⚠️ 未找到关联的群聊 (Session: ${event.sessionId}, parent=${event.parentSessionId || '-'}, related=${event.relatedSessionId || '-'}, call=${event.callId || '-'}, message=${event.messageId || '-'})，无法展示权限交互`
+          );
       }
   });
 
@@ -1233,8 +1360,11 @@ async function main() {
       outputBuffer.getOrCreate(bufferKey, chatId, sessionID, null);
     }
 
+    chatSessionStore.rememberSessionAlias(sessionID, chatId, CORRELATION_CACHE_TTL_MS);
+
     if (typeof info.id === 'string' && info.id) {
       outputBuffer.setOpenCodeMsgId(bufferKey, info.id);
+      setCorrelationChatRef(messageChatMap, info.id, chatId);
     }
 
     if (info.error) {
@@ -1266,6 +1396,8 @@ async function main() {
         outputBuffer.getOrCreate(bufferKey, chatId, sessionID, null);
       }
 
+      chatSessionStore.rememberSessionAlias(sessionID, chatId, CORRELATION_CACHE_TTL_MS);
+
       if (part?.type === 'tool' && typeof part === 'object') {
           const toolPart = part as Record<string, unknown>;
           const rawToolName = toolPart.tool;
@@ -1282,6 +1414,12 @@ async function main() {
             : typeof toolPart.id === 'string' && toolPart.id
               ? toolPart.id
               : `${toolName}:${Date.now()}`;
+          setCorrelationChatRef(toolCallChatMap, toolPart.callID, chatId);
+          setCorrelationChatRef(toolCallChatMap, toolPart.callId, chatId);
+          setCorrelationChatRef(toolCallChatMap, toolPart.toolCallID, chatId);
+          setCorrelationChatRef(toolCallChatMap, toolPart.toolCallId, chatId);
+          setCorrelationChatRef(messageChatMap, toolPart.messageID, chatId);
+          setCorrelationChatRef(messageChatMap, toolPart.messageId, chatId);
           const previous = getOrCreateToolStateBucket(bufferKey).get(toolKey);
           const output = buildToolTraceOutput(toolPart, status, !previous || !previous.output);
 
