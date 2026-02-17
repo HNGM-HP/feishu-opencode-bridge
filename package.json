@@ -1,6 +1,6 @@
 {
   "name": "feishu-opencode-bridge",
-  "version": "2.6.0",
+  "version": "2.6.2",
   "type": "module",
   "description": "飞书机器人 × OpenCode 桥接服务，通过飞书聊天控制OpenCode",
   "main": "dist/index.js",
@@ -13,7 +13,12 @@
     "start:bridge": "node scripts/start.mjs",
     "stop:bridge": "node scripts/stop.mjs"
   },
-  "keywords": ["feishu", "opencode", "chatbot", "ai"],
+  "keywords": [
+    "feishu",
+    "opencode",
+    "chatbot",
+    "ai"
+  ],
   "author": "",
   "license": "GPLv3",
   "dependencies": {

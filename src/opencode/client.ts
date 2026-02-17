@@ -82,6 +82,32 @@ function isPermissionRequestEventType(eventType: string): boolean {
   );
 }
 
+function formatSdkError(error: unknown): string {
+  if (!error) return '未知错误';
+
+  if (typeof error === 'string') {
+    return error;
+  }
+
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === 'object') {
+    const record = error as Record<string, unknown>;
+    if (typeof record.message === 'string' && record.message.trim()) {
+      return record.message;
+    }
+    try {
+      return JSON.stringify(record);
+    } catch {
+      return String(error);
+    }
+  }
+
+  return String(error);
+}
+
 // 消息部分类型
 export interface MessagePart {
   type: string;
@@ -114,6 +140,11 @@ export interface OpencodeAgentConfig {
 export interface OpencodeRuntimeConfig {
   agent?: Record<string, OpencodeAgentConfig>;
   [key: string]: unknown;
+}
+
+export interface ShellExecutionResult {
+  info?: Message;
+  parts: Part[];
 }
 
 function parseBoolean(value: unknown): boolean | undefined {
@@ -496,21 +527,99 @@ class OpencodeClientWrapper extends EventEmitter {
     sessionId: string,
     command: string,
     args: string
-  ): Promise<{ info: Message; parts: Part[] } | null> {
+  ): Promise<{ info: Message; parts: Part[] }> {
     const client = this.getClient();
-    try {
-      const result = await client.session.command({
-        path: { id: sessionId },
-        body: {
-          command,
-          arguments: args,
-        },
-      });
-      return result.data as { info: Message; parts: Part[] };
-    } catch (error) {
-      console.error('[OpenCode] 发送命令失败:', error);
-      return null;
+
+    const result = await client.session.command({
+      path: { id: sessionId },
+      body: {
+        command,
+        arguments: args,
+      },
+    });
+
+    if (result.error) {
+      const statusCode = result.response?.status;
+      const detail = formatSdkError(result.error);
+      throw new Error(statusCode ? `OpenCode 命令调用失败（HTTP ${statusCode}）: ${detail}` : `OpenCode 命令调用失败: ${detail}`);
     }
+
+    return result.data as { info: Message; parts: Part[] };
+  }
+
+  async sendShellCommand(
+    sessionId: string,
+    command: string,
+    agent: string,
+    options?: { providerId?: string; modelId?: string }
+  ): Promise<ShellExecutionResult> {
+    this.getClient();
+
+    const model = options?.providerId && options?.modelId
+      ? {
+          providerID: options.providerId,
+          modelID: options.modelId,
+        }
+      : undefined;
+
+    const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/shell`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        agent,
+        command,
+        ...(model ? { model } : {}),
+      }),
+    });
+
+    if (!response.ok) {
+      const detail = await response.text().catch(() => '');
+      const suffix = detail ? `: ${detail.slice(0, 500)}` : '';
+      throw new Error(`OpenCode Shell 调用失败（HTTP ${response.status} ${response.statusText}）${suffix}`);
+    }
+
+    const payload = await response.json().catch(() => null) as unknown;
+    if (!payload || typeof payload !== 'object') {
+      return { parts: [] };
+    }
+
+    const record = payload as Record<string, unknown>;
+    const parts = Array.isArray(record.parts) ? record.parts as Part[] : [];
+
+    if (record.info && typeof record.info === 'object') {
+      return {
+        info: record.info as Message,
+        parts,
+      };
+    }
+
+    if (typeof record.id === 'string' && typeof record.sessionID === 'string') {
+      return {
+        info: record as unknown as Message,
+        parts,
+      };
+    }
+
+    return { parts };
+  }
+
+  async summarizeSession(sessionId: string, providerId: string, modelId: string): Promise<boolean> {
+    const client = this.getClient();
+    const result = await client.session.summarize({
+      path: { id: sessionId },
+      body: {
+        providerID: providerId,
+        modelID: modelId,
+      },
+    });
+
+    if (result.error) {
+      const statusCode = result.response?.status;
+      const detail = formatSdkError(result.error);
+      throw new Error(statusCode ? `会话压缩失败（HTTP ${statusCode}）: ${detail}` : `会话压缩失败: ${detail}`);
+    }
+
+    return result.data === true;
   }
 
   // 撤回消息

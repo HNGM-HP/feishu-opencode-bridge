@@ -397,9 +397,12 @@ node scripts/deploy.mjs status
 | `新建会话窗口` | 自然语言触发新建会话（等价 `/session new`） |
 | `/clear` | 等价于 `/session new` |
 | `/clear free session` | 手动触发一次与启动清理同规则的兜底扫描 |
-| `/compact` | 透传到 OpenCode，压缩当前会话上下文 |
+| `/compact` | 调用 OpenCode summarize，压缩当前会话上下文 |
+| `!<shell命令>` | 透传白名单 shell 命令（如 `!ls`、`!pwd`、`!mkdir`、`!git status`） |
 | `/create_chat` / `/建群` | 私聊中调出建群卡片（下拉选择后点击“创建群聊”生效） |
 | `/status` | 查看当前群绑定状态 |
+
+- `!` 透传仅支持白名单命令；`vi`/`vim`/`nano` 等交互式编辑器不会透传。
 
 <a id="Agent（角色）使用"></a>
 ## 🤖 Agent（角色）使用
@@ -481,6 +484,8 @@ node scripts/deploy.mjs status
 | 点权限卡片后 OpenCode 无反应 | 日志是否出现权限回传失败；确认回传值是 `once/always/reject` |
 | 权限卡或提问卡发不到群 | `.chat-sessions.json` 中 `sessionId -> chatId` 映射是否存在 |
 | 卡片更新失败 | 消息类型是否匹配；失败后是否降级为重发卡片 |
+| `/compact` 失败 | OpenCode 可用模型是否正常；必要时先 `/model <provider:model>` 再重试 |
+| `!ls` 等 shell 命令失败 | 当前会话 Agent 是否可用；可先执行 `/agent general` 再重试 |
 | 后台模式无法停止 | `logs/bridge.pid` 是否残留；使用 `node scripts/stop.mjs` 清理 |
 | 私聊首次会推送多条引导消息 | 这是首次流程（建群卡片 + `/help` + `/panel`）；后续会按已绑定会话正常对话 |
 <a id="许可证"></a>

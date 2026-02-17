@@ -262,6 +262,225 @@ function parseRoleCreateSpec(spec: string): RoleCreateParseResult {
 }
 
 export class CommandHandler {
+  private parseProviderModel(raw?: string): { providerId: string; modelId: string } | null {
+    if (!raw) {
+      return null;
+    }
+
+    const trimmed = raw.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    const separator = trimmed.includes(':') ? ':' : (trimmed.includes('/') ? '/' : '');
+    if (!separator) {
+      return null;
+    }
+
+    const splitIndex = trimmed.indexOf(separator);
+    const providerId = trimmed.slice(0, splitIndex).trim();
+    const modelId = trimmed.slice(splitIndex + 1).trim();
+    if (!providerId || !modelId) {
+      return null;
+    }
+
+    return { providerId, modelId };
+  }
+
+  private extractProviderId(provider: unknown): string | undefined {
+    if (!provider || typeof provider !== 'object') {
+      return undefined;
+    }
+
+    const record = provider as Record<string, unknown>;
+    const rawId = record.id;
+    if (typeof rawId !== 'string') {
+      return undefined;
+    }
+
+    const normalized = rawId.trim();
+    return normalized.length > 0 ? normalized : undefined;
+  }
+
+  private extractProviderModelIds(provider: unknown): string[] {
+    if (!provider || typeof provider !== 'object') {
+      return [];
+    }
+
+    const record = provider as Record<string, unknown>;
+    const rawModels = record.models;
+    if (Array.isArray(rawModels)) {
+      const modelIds: string[] = [];
+      for (const model of rawModels) {
+        if (!model || typeof model !== 'object') {
+          continue;
+        }
+        const modelRecord = model as Record<string, unknown>;
+        const modelId = typeof modelRecord.id === 'string' ? modelRecord.id.trim() : '';
+        if (modelId) {
+          modelIds.push(modelId);
+        }
+      }
+      return modelIds;
+    }
+
+    if (!rawModels || typeof rawModels !== 'object') {
+      return [];
+    }
+
+    const modelMap = rawModels as Record<string, unknown>;
+    const modelIds: string[] = [];
+    for (const [key, value] of Object.entries(modelMap)) {
+      if (value && typeof value === 'object') {
+        const modelRecord = value as Record<string, unknown>;
+        const modelId = typeof modelRecord.id === 'string' ? modelRecord.id.trim() : '';
+        if (modelId) {
+          modelIds.push(modelId);
+          continue;
+        }
+      }
+
+      const normalizedKey = key.trim();
+      if (normalizedKey) {
+        modelIds.push(normalizedKey);
+      }
+    }
+
+    return modelIds;
+  }
+
+  private async resolveCompactModel(chatId: string): Promise<{ providerId: string; modelId: string } | null> {
+    const session = chatSessionStore.getSession(chatId);
+    const preferredModel = this.parseProviderModel(session?.preferredModel);
+    if (preferredModel) {
+      return preferredModel;
+    }
+
+    if (modelConfig.defaultProvider && modelConfig.defaultModel) {
+      return {
+        providerId: modelConfig.defaultProvider,
+        modelId: modelConfig.defaultModel,
+      };
+    }
+
+    const providersResult = await opencodeClient.getProviders();
+    const providersRaw = Array.isArray(providersResult.providers) ? providersResult.providers : [];
+    const defaultsRaw = providersResult.default;
+    const defaults = defaultsRaw && typeof defaultsRaw === 'object'
+      ? defaultsRaw as Record<string, unknown>
+      : {};
+
+    const availableProviderIds = new Set<string>();
+    for (const provider of providersRaw) {
+      const providerId = this.extractProviderId(provider);
+      if (providerId) {
+        availableProviderIds.add(providerId);
+      }
+    }
+
+    const preferredProviders = ['openai', 'opencode'];
+    for (const providerId of preferredProviders) {
+      const defaultModel = defaults[providerId];
+      if (typeof defaultModel === 'string' && defaultModel.trim() && availableProviderIds.has(providerId)) {
+        return {
+          providerId,
+          modelId: defaultModel.trim(),
+        };
+      }
+    }
+
+    for (const provider of providersRaw) {
+      const providerId = this.extractProviderId(provider);
+      if (!providerId) {
+        continue;
+      }
+
+      const defaultModel = defaults[providerId];
+      if (typeof defaultModel === 'string' && defaultModel.trim()) {
+        return {
+          providerId,
+          modelId: defaultModel.trim(),
+        };
+      }
+    }
+
+    for (const provider of providersRaw) {
+      const providerId = this.extractProviderId(provider);
+      if (!providerId) {
+        continue;
+      }
+
+      const modelIds = this.extractProviderModelIds(provider);
+      if (modelIds.length > 0) {
+        return {
+          providerId,
+          modelId: modelIds[0],
+        };
+      }
+    }
+
+    return null;
+  }
+
+  private async resolveShellAgent(chatId: string): Promise<string> {
+    const fallbackAgent = 'general';
+    const preferredAgentRaw = chatSessionStore.getSession(chatId)?.preferredAgent;
+    const preferredAgent = typeof preferredAgentRaw === 'string' ? preferredAgentRaw.trim() : '';
+
+    if (!preferredAgent) {
+      return fallbackAgent;
+    }
+
+    try {
+      const agents = await opencodeClient.getAgents();
+      if (!Array.isArray(agents) || agents.length === 0) {
+        return fallbackAgent;
+      }
+
+      const exact = agents.find(item => item.name === preferredAgent);
+      if (exact) {
+        return exact.name;
+      }
+
+      const preferredLower = preferredAgent.toLowerCase();
+      const caseInsensitive = agents.find(item => item.name.toLowerCase() === preferredLower);
+      if (caseInsensitive) {
+        return caseInsensitive.name;
+      }
+
+      const hasFallback = agents.some(item => item.name === fallbackAgent);
+      if (hasFallback) {
+        return fallbackAgent;
+      }
+
+      return agents[0].name;
+    } catch {
+      return fallbackAgent;
+    }
+  }
+
+  private async handleCompact(chatId: string, messageId: string): Promise<void> {
+    const sessionId = chatSessionStore.getSessionId(chatId);
+    if (!sessionId) {
+      await feishuClient.reply(messageId, '❌ 当前没有活跃的会话，请先发送消息建立会话');
+      return;
+    }
+
+    const model = await this.resolveCompactModel(chatId);
+    if (!model) {
+      await feishuClient.reply(messageId, '❌ 未找到可用模型，无法执行上下文压缩');
+      return;
+    }
+
+    const compacted = await opencodeClient.summarizeSession(sessionId, model.providerId, model.modelId);
+    if (!compacted) {
+      await feishuClient.reply(messageId, `❌ 上下文压缩失败（模型: ${model.providerId}:${model.modelId}）`);
+      return;
+    }
+
+    await feishuClient.reply(messageId, `✅ 上下文压缩完成（模型: ${model.providerId}:${model.modelId}）`);
+  }
+
   private getPrivateSessionShortId(userId: string): string {
     const normalized = userId.startsWith('ou_') ? userId.slice(3) : userId;
     return normalized.slice(0, 4);
@@ -330,9 +549,19 @@ export class CommandHandler {
           }
           break;
 
+        case 'compact':
+          await this.handleCompact(chatId, messageId);
+          break;
+
         case 'command':
           // 未知命令透传到 OpenCode
-          await this.handlePassthroughCommand(chatId, messageId, command.commandName || '', command.commandArgs || '');
+          await this.handlePassthroughCommand(
+            chatId,
+            messageId,
+            command.commandName || '',
+            command.commandArgs || '',
+            command.commandPrefix || '/'
+          );
           break;
 
         case 'model':
@@ -969,16 +1198,42 @@ export class CommandHandler {
     await feishuClient.sendCard(chatId, card);
   }
 
-  private async handlePassthroughCommand(chatId: string, messageId: string, commandName: string, commandArgs: string): Promise<void> {
+  private async handlePassthroughCommand(
+    chatId: string,
+    messageId: string,
+    commandName: string,
+    commandArgs: string,
+    commandPrefix: '/' | '!' = '/'
+  ): Promise<void> {
     const sessionId = chatSessionStore.getSessionId(chatId);
     if (!sessionId) {
       await feishuClient.reply(messageId, '❌ 当前没有活跃的会话，请先发送消息建立会话');
       return;
     }
 
-    console.log(`[Command] 透传命令到 OpenCode: /${commandName} ${commandArgs}`);
+    const shownCommand = commandPrefix === '!' ? `!${commandArgs}` : `/${commandName} ${commandArgs}`.trim();
+    console.log(`[Command] 透传命令到 OpenCode: ${shownCommand}`);
 
     try {
+      if (commandPrefix === '!') {
+        const shellCommand = commandArgs.trim();
+        if (!shellCommand) {
+          await feishuClient.reply(messageId, '❌ 用法: !<shell命令>，例如 !ls');
+          return;
+        }
+
+        const shellAgent = await this.resolveShellAgent(chatId);
+        const result = await opencodeClient.sendShellCommand(sessionId, shellCommand, shellAgent);
+        const output = this.formatOutput(result.parts);
+        if (output !== '(无输出)') {
+          await feishuClient.reply(messageId, output);
+          return;
+        }
+
+        await feishuClient.reply(messageId, `✅ Shell 命令执行完成: !${shellCommand}`);
+        return;
+      }
+
       // 使用专门的 sendCommand 方法
       const result = await opencodeClient.sendCommand(sessionId, commandName, commandArgs);
 
@@ -987,7 +1242,7 @@ export class CommandHandler {
         const output = this.formatOutput(result.parts);
         await feishuClient.reply(messageId, output);
       } else {
-        await feishuClient.reply(messageId, `✅ 命令已发送: /${commandName} ${commandArgs}`);
+        await feishuClient.reply(messageId, `✅ 命令执行完成: ${shownCommand}`);
       }
     } catch (error) {
       console.error('[Command] 透传命令失败:', error);
@@ -997,15 +1252,58 @@ export class CommandHandler {
 
   private formatOutput(parts: unknown[]): string {
     if (!parts || !Array.isArray(parts)) return '(无输出)';
-    
+
     const output: string[] = [];
     for (const part of parts) {
       const p = part as Record<string, unknown>;
       if (p.type === 'text' && typeof p.text === 'string') {
-        output.push(p.text);
+        const text = p.text.trim();
+        if (text) {
+          output.push(text);
+        }
+        continue;
+      }
+
+      if (p.type !== 'tool') {
+        continue;
+      }
+
+      const state = p.state;
+      if (!state || typeof state !== 'object') {
+        continue;
+      }
+
+      const toolState = state as Record<string, unknown>;
+      if (typeof toolState.output === 'string' && toolState.output.trim()) {
+        output.push(toolState.output.trim());
+        continue;
+      }
+
+      const metadata = toolState.metadata;
+      if (metadata && typeof metadata === 'object') {
+        const metadataRecord = metadata as Record<string, unknown>;
+        if (typeof metadataRecord.output === 'string' && metadataRecord.output.trim()) {
+          output.push(metadataRecord.output.trim());
+          continue;
+        }
+      }
+
+      if (typeof toolState.error === 'string' && toolState.error.trim()) {
+        output.push(`工具执行失败: ${toolState.error.trim()}`);
       }
     }
-    return output.join('\n\n') || '(无输出)';
+
+    const merged = output.join('\n\n').trim();
+    if (!merged) {
+      return '(无输出)';
+    }
+
+    const maxLength = 3500;
+    if (merged.length <= maxLength) {
+      return merged;
+    }
+
+    return `${merged.slice(0, maxLength)}\n\n...（输出过长，已截断）`;
   }
 
   private async handleClearFreeSession(chatId: string, messageId: string): Promise<void> {

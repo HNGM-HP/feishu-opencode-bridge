@@ -3,6 +3,7 @@ export type CommandType =
   | 'prompt'       // 普通消息，发送给AI
   | 'stop'         // 中断执行
   | 'undo'         // 撤回上一步
+  | 'compact'      // 压缩上下文
   | 'model'        // 切换模型
   | 'agent'        // 切换Agent
   | 'role'         // 角色相关操作
@@ -30,13 +31,88 @@ export interface ParsedCommand {
   permissionResponse?: 'y' | 'n' | 'yes' | 'no';
   commandName?: string;    // 透传命令名称
   commandArgs?: string;    // 透传命令参数
+  commandPrefix?: '/' | '!'; // 透传命令前缀
   adminAction?: 'add';
 }
 
+const BANG_SHELL_ALLOWED_COMMANDS = new Set([
+  'cd', 'ls', 'pwd', 'mkdir', 'rmdir',
+  'touch', 'cp', 'mv', 'rm',
+  'cat', 'head', 'tail', 'wc', 'sort', 'uniq', 'cut',
+  'grep', 'find', 'tree',
+  'du', 'df', 'which', 'whereis', 'whoami',
+  'ps', 'kill', 'date', 'echo', 'env', 'printenv',
+  'chmod', 'chown', 'ln', 'stat',
+  'tar', 'zip', 'unzip', 'gzip', 'gunzip',
+  'git',
+]);
+
+const BANG_SHELL_BLOCKED_COMMANDS = new Set([
+  'vi', 'vim', 'nvim', 'nano',
+]);
+
 // 命令解析器
+function isSlashCommandToken(token: string): boolean {
+  const normalized = token.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  // 路径通常包含 / 或 \\，应当按普通文本处理
+  if (normalized.includes('/') || normalized.includes('\\')) {
+    return false;
+  }
+
+  // 仅允许常见命令字符：字母/数字/下划线/连字符/点/问号/中文
+  return /^[\p{L}\p{N}_.?-]+$/u.test(normalized);
+}
+
+function parseBangShellCommand(trimmed: string): ParsedCommand | null {
+  if (!trimmed.startsWith('!')) {
+    return null;
+  }
+
+  const body = trimmed.slice(1).trimStart();
+  if (!body || body.includes('\n')) {
+    return null;
+  }
+
+  const parts = body.split(/\s+/);
+  const first = parts[0]?.trim().toLowerCase() || '';
+  if (!first) {
+    return null;
+  }
+
+  // 路径/复杂 token（如 !/tmp/a.sh）按普通文本处理，避免误判
+  if (!/^[a-z][a-z0-9._-]*$/i.test(first)) {
+    return null;
+  }
+
+  if (BANG_SHELL_BLOCKED_COMMANDS.has(first)) {
+    return null;
+  }
+
+  if (!BANG_SHELL_ALLOWED_COMMANDS.has(first)) {
+    return null;
+  }
+
+  return {
+    type: 'command',
+    commandName: '!',
+    commandArgs: body,
+    commandPrefix: '!',
+  };
+}
+
 export function parseCommand(text: string): ParsedCommand {
   const trimmed = text.trim();
   const lower = trimmed.toLowerCase();
+
+  // ! 开头的 shell 透传（白名单）
+  const bangCommand = parseBangShellCommand(trimmed);
+  if (bangCommand) {
+    return bangCommand;
+  }
 
   // 中文自然语言创建角色（不带 /）
   const textRoleCreateMatch = trimmed.match(/^创建角色\s+([\s\S]+)$/);
@@ -66,7 +142,16 @@ export function parseCommand(text: string): ParsedCommand {
 
   // 斜杠命令
   if (trimmed.startsWith('/')) {
-    const parts = trimmed.slice(1).split(/\s+/);
+    const body = trimmed.slice(1).trimStart();
+    if (!body) {
+      return { type: 'prompt', text: trimmed };
+    }
+
+    const parts = body.split(/\s+/);
+    if (!isSlashCommandToken(parts[0])) {
+      return { type: 'prompt', text: trimmed };
+    }
+
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1);
 
@@ -141,12 +226,17 @@ export function parseCommand(text: string): ParsedCommand {
       case 'status':
         return { type: 'status' };
 
+      case 'compact':
+      case 'session.compact':
+        return { type: 'compact' };
+
       default:
         // 未知命令透传到OpenCode
         return {
           type: 'command',
           commandName: cmd,
           commandArgs: args.join(' '),
+          commandPrefix: '/',
         };
     }
   }
@@ -175,7 +265,7 @@ export function getHelpText(): string {
 • \`/panel\` 推送交互式控制面板卡片 ✨
 • \`/undo\` 撤回上一轮对话 (如果你发错或 AI 答错)
 • \`/stop\` 停止当前正在生成的回答
-• \`/compact\` 压缩当前会话上下文（透传 OpenCode）
+• \`/compact\` 压缩当前会话上下文（调用 OpenCode summarize）
 
 ⚙️ **会话管理**
 • \`/create_chat\` 或 \`/建群\` 打开建群卡片（下拉选择新建或绑定已有会话）
@@ -190,5 +280,6 @@ export function getHelpText(): string {
 💡 **提示**
 • 切换的模型/角色仅对**当前会话**生效。
 • 其他未知 \`/xxx\` 命令会自动透传给 OpenCode（会话已绑定时生效）。
+• 支持透传白名单 shell 命令：\`!cd\`、\`!ls\`、\`!mkdir\`、\`!rm\`、\`!cp\`、\`!mv\`、\`!git\` 等；\`!vi\` / \`!vim\` / \`!nano\` 不会透传。
 • 如果遇到问题，试着使用 \`/panel\` 面板操作更方便。`;
 }

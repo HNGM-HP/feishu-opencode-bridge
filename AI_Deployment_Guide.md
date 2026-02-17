@@ -177,12 +177,16 @@ sudo node scripts/deploy.mjs service-uninstall
 5. 执行 `/undo`，确认 OpenCode 和飞书消息都回滚。
 6. 在私聊执行 `/create_chat`，验证下拉选择会话后点击“创建群聊”可按选择生效。
 7. 执行 `/clear free session`，确认行为与“启动后自动扫描清理”一致。
+8. 执行 `/compact`，确认返回“上下文压缩完成”。
+9. 执行 `!ls`，确认 shell 命令可返回输出。
 
 ## 8. 常见异常与处理
 
 - 权限卡点击无效：检查回传是否为 `once | always | reject`。
 - 权限/提问卡未发送：检查 `.chat-sessions.json` 是否存在对应 `sessionId -> chatId` 映射。
 - 卡片更新失败：通常是消息类型不匹配，检查是否已自动降级为重发卡片。
+- `/compact` 失败：优先检查当前可用模型，必要时先执行 `/model <provider:model>` 再重试。
+- `!` 命令失败：确认命令在白名单内，并检查当前 Agent 是否可用（可先 `/agent general`）。
 - 后台进程残留：删除 `logs/bridge.pid` 前先确认目标进程是否仍在运行。
 
 ## 9. AI 代理执行要求
