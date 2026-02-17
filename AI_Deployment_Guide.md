@@ -46,10 +46,14 @@ cp .env.example .env
 
 - `OPENCODE_HOST`（默认 `localhost`）
 - `OPENCODE_PORT`（默认 `4096`）
+- `OPENCODE_SERVER_USERNAME`（默认 `opencode`）
+- `OPENCODE_SERVER_PASSWORD`（OpenCode 启用密码时必填）
 - `ENABLE_MANUAL_SESSION_BIND`（默认 `true`，控制是否允许绑定已有会话）
 - `TOOL_WHITELIST`
 - `OUTPUT_UPDATE_INTERVAL`
 - `ATTACHMENT_MAX_SIZE`
+
+如果 OpenCode 进程启用了 `OPENCODE_SERVER_PASSWORD`，桥接进程必须使用同一组 `OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD`。
 
 `ENABLE_MANUAL_SESSION_BIND` 语义：
 
@@ -185,6 +189,7 @@ sudo node scripts/deploy.mjs service-uninstall
 - 权限卡点击无效：检查回传是否为 `once | always | reject`。
 - 权限/提问卡未发送：检查 `.chat-sessions.json` 是否存在对应 `sessionId -> chatId` 映射。
 - 卡片更新失败：通常是消息类型不匹配，检查是否已自动降级为重发卡片。
+- OpenCode 接口返回 401/403：优先检查桥接端与 OpenCode 端的 `OPENCODE_SERVER_USERNAME` / `OPENCODE_SERVER_PASSWORD` 是否一致。
 - `/compact` 失败：优先检查当前可用模型，必要时先执行 `/model <provider:model>` 再重试。
 - `!` 命令失败：确认命令在白名单内，并检查当前 Agent 是否可用（可先 `/agent general`）。
 - 后台进程残留：删除 `logs/bridge.pid` 前先确认目标进程是否仍在运行。

@@ -1,37 +1,39 @@
-# Feishu x OpenCode Bridge ✨🤖✨
+# 飞书 × OpenCode 桥接服务 v2.7.0 (Group)
 
 [![Node.js >= 18](https://img.shields.io/badge/Node.js-%3E%3D18-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-把本地 OpenCode 直接接进飞书，不只是“能聊”，而是把权限确认、question 答题、流式卡片、会话绑定隔离、`/undo` 双端回滚与运维部署做成完整闭环。
+把 OpenCode 接进飞书，不止是“把消息转发过去”，而是把权限确认、提问作答、会话绑定、流式输出、双端撤回、清理兜底和部署运维做成可长期运行的工程化链路。
 
 ## 🎯 先看痛点
 
-- 只转发文本不够：OpenCode 在真实任务里会发起 `permission.asked` 和 `question.asked`，桥接若没接住，任务会中断。
-- 多端协作难：电脑上做一半，切到手机继续时，如果不能绑定已有会话，就只能重新描述上下文。
-- 会话一致性难：群聊多、任务并行时，缺少稳定 `chat <-> session` 映射，极易串线。
-- 清理策略难：清理过激会误解散有人群、误删会话；清理过弱又会堆积无效群和脏会话。
-- 运维门槛高：缺少可执行的部署/升级/排障路径，项目常停在“能跑一次”的 Demo 状态。
+- 只做消息转发不够：OpenCode 的 `permission.asked`、`question.asked` 一旦没闭环，任务会直接卡死。
+- 群聊并行易串线：没有稳定 `chat <-> session` 绑定时，多群多任务很容易把上下文发错会话。
+- 设备接力成本高：电脑做到一半切手机，若不能绑定已有会话，就要重复描述背景与目标。
+- 清理常见两头错：规则太激进会误删，规则太保守会积累僵尸映射和无效群。
+- 撤回不一致：只撤飞书消息不撤 OpenCode 会话，会导致“界面回滚了、上下文没回滚”。
+- 部署和排障断层：没有标准化部署/升级/检查入口，线上维护成本会持续上升。
 
-这个项目的目标不是“把消息发过去”，而是把 OpenCode 的关键交互链路在飞书里跑通，并且可长期维护。
+这个项目解决的不是“能不能聊”，而是“能不能稳定协作、可追踪、可运维”。
 
 ## 🥊 与 OpenClaw 和同类桥接对比
 
-> 结论：如果你只需要“飞书里能聊”，很多桥接都够用；如果你要“权限/提问/会话/回滚/清理/运维”一整套闭环，本项目更偏工程化。
+> 结论：若只追求“飞书里能发问答”，很多桥接都能用；若你需要“权限+提问+会话+回滚+清理+运维”的完整闭环，这个项目更适合长期落地。
 
 | 维度 | OpenClaw / 同类桥接常见形态 | 本项目 |
 |---|---|---|
-| 设计目标 | 先打通消息链路 | OpenCode 深度集成，优先交互闭环与稳定运行 |
-| 权限请求（`permission.asked`） | 常见需要回到本地终端确认或仅日志可见 | 飞书权限卡直接确认，支持一次允许/始终允许/拒绝 |
-| AI 提问（`question.asked`） | 常见缺少飞书内作答闭环 | 飞书提问卡作答/跳过，自动回传 OpenCode |
-| 会话管理 | 常见偏“新建会话”流程 | 支持新建与绑定已有会话（私聊建群下拉 + `/session <id>`） |
-| 会话迁移 | 常见需手工处理旧绑定 | 同一会话可自动迁移绑定到新群（便于手机接力） |
-| 清理策略 | 常见规则分散，容易过清或漏清 | 生命周期清理与 `/clear free session` 同一规则，支持会话删除保护 |
-| 回滚一致性 | 常见仅消息侧撤回 | `/undo` 双端回滚（飞书消息 + OpenCode 会话） |
-| 部署与运维 | 常见偏脚本集合 | 提供菜单化部署、升级、OpenCode 检查、后台运行与 systemd |
+| 设计重心 | 优先打通消息通路 | 优先保证任务闭环与长期稳定运行 |
+| 权限确认 | 常见回终端确认或仅日志提示 | 飞书权限卡内确认（一次/始终/拒绝）并回传 OpenCode |
+| question 作答 | 常见缺少飞书内交互 | 飞书卡片直接作答/跳过，自动继续执行 |
+| 会话协作 | 偏“每次新建会话” | 新建/绑定已有会话并存，支持设备接力 |
+| 会话迁移 | 迁移通常靠人工处理 | 绑定已有会话时自动迁移群映射 |
+| 清理策略 | 规则分散，易过清或漏清 | 生命周期清理与 `/clear free session` 复用同一规则 |
+| 回滚一致性 | 往往只回滚消息侧 | `/undo` 同时回滚飞书消息与 OpenCode 会话 |
+| 运维能力 | 依赖手工脚本组合 | 菜单化部署/升级/检查/后台与 systemd 管理 |
+| 安全兼容 | 对服务端鉴权适配不一 | 支持 OpenCode Server Basic Auth（用户名/密码） |
 
-注：同类项目版本差异较大，左栏为常见形态概括，具体能力以对应项目文档和版本为准。
+注：左侧为常见实现形态归纳，具体能力仍以对应项目版本与文档为准。
 
 新时代了，让 AI 代理自动部署吧：请在 OpenCode 执行如下指令：
 ```bash
@@ -57,29 +59,31 @@
 <a id="为什么用它"></a>
 ## 💡为什么用它
 
-- 💬 真正以飞书为主工作台：权限确认、问题作答、会话管理都在飞书内完成。
-- 🔗 支持“半路接力”工作流：可绑定已有 OpenCode 会话，电脑与手机切换不断上下文。
-- 🧠 会话更稳：`chat <-> session` 持久映射，支持迁移绑定，减少串线与误操作。
-- ♻️ 清理更安全：无人群自动清理；手动绑定会话默认只保护“不删会话”，避免误删成果。
-- 🧱 运维可落地：内置部署/升级/启动/停止与排障入口，适合长期运行而非一次性演示。
+- 对使用者友好：权限确认、question 作答、会话操作都在飞书里完成，不强依赖本地终端。
+- 对协作友好：支持绑定已有会话与迁移绑定，跨设备、跨群接力时上下文不断裂。
+- 对稳定性友好：会话映射持久化 + 双端撤回 + 同规则清理，避免“表面正常、状态错位”。
+- 对运维友好：内置部署、升级、状态检查与后台管理流程，适合持续托管运行。
+- 对未来版本友好：已兼容 OpenCode Server Basic Auth，服务端启用密码后仍可直接接入。
 
 <a id="能力总览"></a>
 ## 📸 能力总览
 
 | 能力 | 你能得到什么 | 相关命令/配置 |
 |---|---|---|
-| 群聊/私聊对话 | 飞书中直接对话，消息自动路由到对应 OpenCode 会话 | 群聊 @ 机器人；私聊直接发消息 |
-| 私聊建群下拉 | 建群时可选“新建会话”或“绑定已有会话” | `/create_chat`、`/建群` |
-| 手动绑定已有会话 | 不新建会话，直接接管已有上下文 | `/session <sessionId>`、`ENABLE_MANUAL_SESSION_BIND` |
-| 会话迁移绑定 | 同一会话可从旧群迁移到新群，便于设备切换接力 | 建群卡片绑定已有会话 |
-| 会话删除保护 | 手动绑定会话默认跳过 `deleteSession`，避免误删 | 自动生效（保护逻辑） |
-| 清理兜底扫描 | 不重启服务也能手动触发同规则清理扫描 | `/clear free session` |
-| 权限确认闭环 | OpenCode 权限请求在飞书卡片内确认并回传 | `permission.asked` |
-| 提问作答闭环 | OpenCode 问题可在飞书内作答/跳过并继续执行 | `question.asked` |
-| 流式输出与思考折叠 | 降低刷屏，保留思考可读性 | 输出缓冲 + 折叠卡片 |
-| 双端一致撤回 | 回滚飞书消息同时回滚 OpenCode 会话状态 | `/undo` |
-| 模型与 Agent 控制 | 当前会话可视化切换模型/角色 | `/panel`、`/model`、`/agent` |
-| 部署与运维闭环 | 一键部署、升级、OpenCode 检查、后台运行与日志 | `scripts/deploy.*`、`scripts/start.*` |
+| 群聊/私聊统一路由 | 同一套入口支持私聊和群聊，按映射路由到正确会话 | 群聊 @ 机器人；私聊直接发消息 |
+| 私聊建群会话选择 | 建群时可选“新建会话/绑定已有会话”，提交时按选择生效 | `/create_chat`、`/建群` |
+| 手动会话绑定 | 不中断旧上下文，直接把指定 session 接入当前群 | `/session <sessionId>`、`ENABLE_MANUAL_SESSION_BIND` |
+| 迁移绑定与删除保护 | 绑定已有会话时自动迁移旧群映射，并保护会话不被误删 | 自动生效（手动绑定场景） |
+| 生命周期清理兜底 | 启动清理与手动清理共用同一规则，降低误清理概率 | `/clear free session` |
+| 权限卡片闭环 | OpenCode 权限请求在飞书内完成确认并回传结果 | `permission.asked` |
+| question 卡片闭环 | OpenCode question 在飞书内回答/跳过并继续任务 | `question.asked` |
+| 流式多卡防溢出 | 超过组件预算自动分页拆卡，旧页持续更新 | 流式卡片分页（预算 180） |
+| 双端撤回一致性 | 撤回时同时回滚飞书消息与 OpenCode 会话状态 | `/undo` |
+| 模型/Agent 可视化控制 | 按会话切换模型与角色，支持面板交互和命令操作 | `/panel`、`/model`、`/agent` |
+| 上下文压缩 | 在飞书直接触发会话 summarize，释放上下文窗口 | `/compact` |
+| Shell 命令透传 | 白名单 `!` 命令通过 OpenCode shell 执行并回显输出 | `!ls`、`!pwd`、`!git status` |
+| 服务端鉴权兼容 | 支持 OpenCode Server Basic Auth，不怕后续默认强制密码 | `OPENCODE_SERVER_USERNAME`、`OPENCODE_SERVER_PASSWORD` |
+| 部署运维闭环 | 提供部署/升级/检查/后台/systemd 的一体化入口 | `scripts/deploy.*`、`scripts/start.*` |
 
 <a id="效果演示"></a>
 ## 🖼️ 效果演示
@@ -303,6 +307,8 @@ node scripts/deploy.mjs status
 | `FEISHU_APP_SECRET` | 是 | - | 飞书应用 App Secret |
 | `OPENCODE_HOST` | 否 | `localhost` | OpenCode 地址 |
 | `OPENCODE_PORT` | 否 | `4096` | OpenCode 端口 |
+| `OPENCODE_SERVER_USERNAME` | 否 | `opencode` | OpenCode Server Basic Auth 用户名 |
+| `OPENCODE_SERVER_PASSWORD` | 否 | - | OpenCode Server Basic Auth 密码 |
 | `ALLOWED_USERS` | 否 | - | 飞书 open_id 白名单，逗号分隔；为空时不启用白名单 |
 | `ENABLE_MANUAL_SESSION_BIND` | 否 | `true` | 是否允许“绑定已有 OpenCode 会话”；关闭后仅允许新建会话 |
 | `DEFAULT_PROVIDER` | 否 | - | 默认模型提供商;与 `DEFAULT_MODEL` 同时配置才生效 |
@@ -312,6 +318,8 @@ node scripts/deploy.mjs status
 | `ATTACHMENT_MAX_SIZE` | 否 | `52428800` | 附件大小上限（字节） |
 
 注意：`TOOL_WHITELIST` 做字符串匹配，权限事件可能使用 `permission` 字段值（例如 `external_directory`），请按实际标识配置。
+
+如果 OpenCode 端开启了 `OPENCODE_SERVER_PASSWORD`，桥接端也必须配置同一组 `OPENCODE_SERVER_USERNAME`/`OPENCODE_SERVER_PASSWORD`，否则会出现 401/403 认证失败。
 
 模型默认策略:仅当 `DEFAULT_PROVIDER` 与 `DEFAULT_MODEL` 同时配置时，桥接才会显式指定模型;否则由 OpenCode 自身默认模型决定。
 

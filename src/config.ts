@@ -20,6 +20,8 @@ export const feishuConfig = {
 export const opencodeConfig = {
   host: process.env.OPENCODE_HOST || 'localhost',
   port: parseInt(process.env.OPENCODE_PORT || '4096', 10),
+  serverUsername: process.env.OPENCODE_SERVER_USERNAME?.trim() || 'opencode',
+  serverPassword: process.env.OPENCODE_SERVER_PASSWORD?.trim() || undefined,
   get baseUrl() {
     return `http://${this.host}:${this.port}`;
   },

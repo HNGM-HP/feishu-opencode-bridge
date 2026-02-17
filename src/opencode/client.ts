@@ -167,6 +167,43 @@ function parseAgentMode(value: unknown): AgentMode | undefined {
   return undefined;
 }
 
+function buildOpencodeAuthorizationHeaderValue(): string | undefined {
+  const password = opencodeConfig.serverPassword;
+  if (!password) {
+    return undefined;
+  }
+
+  const username = opencodeConfig.serverUsername || 'opencode';
+  const encoded = Buffer.from(`${username}:${password}`).toString('base64');
+  return `Basic ${encoded}`;
+}
+
+function withOpencodeAuthorizationHeaders(headers?: Record<string, string>): Record<string, string> {
+  const merged: Record<string, string> = {
+    ...(headers || {}),
+  };
+  const authorization = buildOpencodeAuthorizationHeaderValue();
+  if (authorization) {
+    merged.Authorization = authorization;
+  }
+  return merged;
+}
+
+function isUnauthorizedStatusCode(statusCode?: number): boolean {
+  return statusCode === 401 || statusCode === 403;
+}
+
+function buildAuthEnvHint(): string {
+  return '请检查 OPENCODE_SERVER_USERNAME / OPENCODE_SERVER_PASSWORD 是否与 OpenCode 服务端一致';
+}
+
+function appendAuthHint(message: string, statusCode?: number): string {
+  if (!isUnauthorizedStatusCode(statusCode)) {
+    return message;
+  }
+  return `${message}；${buildAuthEnvHint()}`;
+}
+
 class OpencodeClientWrapper extends EventEmitter {
   private client: SdkOpencodeClient | null = null;
   private eventAbortController: AbortController | null = null;
@@ -186,19 +223,36 @@ class OpencodeClientWrapper extends EventEmitter {
 
       this.client = createOpencodeClient({
         baseUrl: opencodeConfig.baseUrl,
+        headers: withOpencodeAuthorizationHeaders(),
       });
 
       // 通过获取会话列表来检查服务器状态
       try {
-        await this.client.session.list();
+        const result = await this.client.session.list();
+        if (result.error) {
+          const statusCode = result.response?.status;
+          const reason = appendAuthHint(
+            statusCode
+              ? `OpenCode 连接失败（HTTP ${statusCode}）`
+              : `OpenCode 连接失败: ${formatSdkError(result.error)}`,
+            statusCode
+          );
+          console.error(`[OpenCode] ${reason}`);
+          return false;
+        }
+
         console.log('[OpenCode] 已连接');
         this.eventListeningEnabled = true;
         
         // 启动事件监听
         void this.startEventListener();
         return true;
-      } catch {
-        console.error('[OpenCode] 服务器状态异常');
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const withHint = /\b(401|403)\b/.test(errorMessage)
+          ? `${errorMessage}；${buildAuthEnvHint()}`
+          : errorMessage;
+        console.error(`[OpenCode] 服务器状态异常: ${withHint}`);
         return false;
       }
     } catch (error) {
@@ -477,7 +531,7 @@ class OpencodeClientWrapper extends EventEmitter {
 
     const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/prompt_async`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         parts: [{ type: 'text', text }],
         ...(options?.agent ? { agent: options.agent } : {}),
@@ -488,7 +542,8 @@ class OpencodeClientWrapper extends EventEmitter {
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
       const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
-      throw new Error(`prompt_async 请求失败 (${response.status} ${response.statusText})${suffix}`);
+      const message = `prompt_async 请求失败 (${response.status} ${response.statusText})${suffix}`;
+      throw new Error(appendAuthHint(message, response.status));
     }
   }
 
@@ -507,7 +562,7 @@ class OpencodeClientWrapper extends EventEmitter {
 
     const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/prompt_async`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         parts,
         ...(options?.agent ? { agent: options.agent } : {}),
@@ -518,7 +573,8 @@ class OpencodeClientWrapper extends EventEmitter {
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
       const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
-      throw new Error(`prompt_async 请求失败 (${response.status} ${response.statusText})${suffix}`);
+      const message = `prompt_async 请求失败 (${response.status} ${response.statusText})${suffix}`;
+      throw new Error(appendAuthHint(message, response.status));
     }
   }
 
@@ -541,7 +597,10 @@ class OpencodeClientWrapper extends EventEmitter {
     if (result.error) {
       const statusCode = result.response?.status;
       const detail = formatSdkError(result.error);
-      throw new Error(statusCode ? `OpenCode 命令调用失败（HTTP ${statusCode}）: ${detail}` : `OpenCode 命令调用失败: ${detail}`);
+      const message = statusCode
+        ? `OpenCode 命令调用失败（HTTP ${statusCode}）: ${detail}`
+        : `OpenCode 命令调用失败: ${detail}`;
+      throw new Error(appendAuthHint(message, statusCode));
     }
 
     return result.data as { info: Message; parts: Part[] };
@@ -564,7 +623,7 @@ class OpencodeClientWrapper extends EventEmitter {
 
     const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/shell`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         agent,
         command,
@@ -575,7 +634,8 @@ class OpencodeClientWrapper extends EventEmitter {
     if (!response.ok) {
       const detail = await response.text().catch(() => '');
       const suffix = detail ? `: ${detail.slice(0, 500)}` : '';
-      throw new Error(`OpenCode Shell 调用失败（HTTP ${response.status} ${response.statusText}）${suffix}`);
+      const message = `OpenCode Shell 调用失败（HTTP ${response.status} ${response.statusText}）${suffix}`;
+      throw new Error(appendAuthHint(message, response.status));
     }
 
     const payload = await response.json().catch(() => null) as unknown;
@@ -616,7 +676,10 @@ class OpencodeClientWrapper extends EventEmitter {
     if (result.error) {
       const statusCode = result.response?.status;
       const detail = formatSdkError(result.error);
-      throw new Error(statusCode ? `会话压缩失败（HTTP ${statusCode}）: ${detail}` : `会话压缩失败: ${detail}`);
+      const message = statusCode
+        ? `会话压缩失败（HTTP ${statusCode}）: ${detail}`
+        : `会话压缩失败: ${detail}`;
+      throw new Error(appendAuthHint(message, statusCode));
     }
 
     return result.data === true;
@@ -665,12 +728,21 @@ class OpencodeClientWrapper extends EventEmitter {
         `${opencodeConfig.baseUrl}/session/${sessionId}/permissions/${permissionId}`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             response: responseType,
           }),
         }
       );
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+        const message = appendAuthHint(
+          `权限响应失败（HTTP ${response.status} ${response.statusText}）${suffix}`,
+          response.status
+        );
+        console.error(`[OpenCode] ${message}`);
+      }
       return response.ok;
     } catch (error) {
       console.error('[OpenCode] 响应权限失败:', error);
@@ -798,10 +870,19 @@ class OpencodeClientWrapper extends EventEmitter {
         `${opencodeConfig.baseUrl}/question/${requestId}/reply`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ answers }),
         }
       );
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+        const message = appendAuthHint(
+          `回复问题失败（HTTP ${response.status} ${response.statusText}）${suffix}`,
+          response.status
+        );
+        console.error(`[OpenCode] ${message}`);
+      }
       return response.ok;
     } catch (error) {
       console.error('[OpenCode] 回复问题失败:', error);
@@ -816,9 +897,18 @@ class OpencodeClientWrapper extends EventEmitter {
         `${opencodeConfig.baseUrl}/question/${requestId}/reject`,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
         }
       );
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
+        const message = appendAuthHint(
+          `拒绝问题失败（HTTP ${response.status} ${response.statusText}）${suffix}`,
+          response.status
+        );
+        console.error(`[OpenCode] ${message}`);
+      }
       return response.ok;
     } catch (error) {
       console.error('[OpenCode] 拒绝问题失败:', error);
