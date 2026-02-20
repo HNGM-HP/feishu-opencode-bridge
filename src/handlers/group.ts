@@ -5,6 +5,7 @@ import { outputBuffer } from '../opencode/output-buffer.js';
 import { questionHandler, type PendingQuestion } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
 import { parseCommand } from '../commands/parser.js';
+import type { EffortLevel } from '../commands/effort.js';
 import { commandHandler } from './command.js';
 import { modelConfig, attachmentConfig } from '../config.js';
 
@@ -159,7 +160,8 @@ export class GroupHandler {
     
     // 获取当前会话配置
     const sessionConfig = chatSessionStore.getSession(chatId);
-    await this.processPrompt(sessionId, trimmed, chatId, messageId, attachments, sessionConfig);
+    const promptText = command.text ?? trimmed;
+    await this.processPrompt(sessionId, promptText, chatId, messageId, attachments, sessionConfig, command.promptEffort);
   }
 
   // 检查待回答问题
@@ -307,7 +309,8 @@ export class GroupHandler {
     chatId: string,
     messageId: string,
     attachments?: FeishuAttachment[],
-    config?: { preferredModel?: string; preferredAgent?: string }
+    config?: { preferredModel?: string; preferredAgent?: string; preferredEffort?: EffortLevel },
+    promptEffort?: EffortLevel
   ): Promise<void> {
     const bufferKey = `chat:${chatId}`;
     this.ensureStreamingBuffer(chatId, sessionId, messageId);
@@ -358,13 +361,15 @@ export class GroupHandler {
       }
 
       // 异步触发 OpenCode 请求，后续输出通过事件流持续推送
+      const variant = promptEffort || config?.preferredEffort;
       await opencodeClient.sendMessagePartsAsync(
         sessionId,
         parts,
         {
           providerId,
           modelId,
-          agent: config?.preferredAgent
+          agent: config?.preferredAgent,
+          ...(variant ? { variant } : {}),
         }
       );
 

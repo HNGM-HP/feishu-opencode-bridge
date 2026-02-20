@@ -1,4 +1,5 @@
 import { type ParsedCommand, getHelpText } from '../commands/parser.js';
+import { KNOWN_EFFORT_LEVELS, normalizeEffortLevel, type EffortLevel } from '../commands/effort.js';
 import { feishuClient } from '../feishu/client.js';
 import {
   opencodeClient,
@@ -58,6 +59,22 @@ const ROLE_TOOL_ALIAS: Record<string, RoleTool> = {
 
 const ROLE_CREATE_USAGE = '用法: 创建角色 名称=旅行助手; 描述=擅长制定旅行计划; 类型=主; 工具=webfetch; 提示词=先给出预算再做路线';
 const INTERNAL_HIDDEN_AGENT_NAMES = new Set(['compaction', 'title', 'summary']);
+const PANEL_MODEL_OPTION_LIMIT = 500;
+const EFFORT_USAGE_TEXT = '用法: /effort（查看） 或 /effort <low|high|max|xhigh>（设置） 或 /effort default（清除）';
+const EFFORT_DISPLAY_ORDER = KNOWN_EFFORT_LEVELS;
+
+interface ProviderModelMeta {
+  providerId: string;
+  modelId: string;
+  modelName?: string;
+  variants: EffortLevel[];
+}
+
+interface EffortSupportInfo {
+  model: { providerId: string; modelId: string } | null;
+  supportedEfforts: EffortLevel[];
+  modelMatched: boolean;
+}
 
 interface BuiltinAgentTranslationRule {
   names: string[];
@@ -349,7 +366,149 @@ export class CommandHandler {
     return modelIds;
   }
 
-  private async resolveCompactModel(chatId: string): Promise<{ providerId: string; modelId: string } | null> {
+  private extractEffortVariants(modelRecord: Record<string, unknown>): EffortLevel[] {
+    const rawVariants = modelRecord.variants;
+    if (!rawVariants || typeof rawVariants !== 'object' || Array.isArray(rawVariants)) {
+      return [];
+    }
+
+    const variants = rawVariants as Record<string, unknown>;
+    const efforts: EffortLevel[] = [];
+    for (const key of Object.keys(variants)) {
+      const normalized = normalizeEffortLevel(key);
+      if (!normalized || efforts.includes(normalized)) {
+        continue;
+      }
+      efforts.push(normalized);
+    }
+
+    return this.sortEffortLevels(efforts);
+  }
+
+  private sortEffortLevels(efforts: EffortLevel[]): EffortLevel[] {
+    const order = new Map<string, number>();
+    EFFORT_DISPLAY_ORDER.forEach((value, index) => {
+      order.set(value, index);
+    });
+
+    return [...efforts].sort((left, right) => {
+      const leftOrder = order.get(left) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = order.get(right) ?? Number.MAX_SAFE_INTEGER;
+      if (leftOrder !== rightOrder) {
+        return leftOrder - rightOrder;
+      }
+      return left.localeCompare(right);
+    });
+  }
+
+  private extractProviderModels(provider: unknown): ProviderModelMeta[] {
+    if (!provider || typeof provider !== 'object') {
+      return [];
+    }
+
+    const providerId = this.extractProviderId(provider);
+    if (!providerId) {
+      return [];
+    }
+
+    const record = provider as Record<string, unknown>;
+    const rawModels = record.models;
+    const models: ProviderModelMeta[] = [];
+    const dedupe = new Set<string>();
+
+    const pushModel = (rawModel: unknown, fallbackId?: string): void => {
+      const fallbackNormalized = typeof fallbackId === 'string' ? fallbackId.trim() : '';
+      if (!rawModel || typeof rawModel !== 'object') {
+        if (!fallbackNormalized) {
+          return;
+        }
+
+        const key = `${providerId.toLowerCase()}:${fallbackNormalized.toLowerCase()}`;
+        if (dedupe.has(key)) {
+          return;
+        }
+        dedupe.add(key);
+        models.push({
+          providerId,
+          modelId: fallbackNormalized,
+          variants: [],
+        });
+        return;
+      }
+
+      const modelRecord = rawModel as Record<string, unknown>;
+      const modelId = typeof modelRecord.id === 'string' && modelRecord.id.trim()
+        ? modelRecord.id.trim()
+        : fallbackNormalized;
+      if (!modelId) {
+        return;
+      }
+
+      const modelName = typeof modelRecord.name === 'string' && modelRecord.name.trim()
+        ? modelRecord.name.trim()
+        : undefined;
+      const variants = this.extractEffortVariants(modelRecord);
+      const key = `${providerId.toLowerCase()}:${modelId.toLowerCase()}`;
+      if (dedupe.has(key)) {
+        return;
+      }
+
+      dedupe.add(key);
+      models.push({
+        providerId,
+        modelId,
+        ...(modelName ? { modelName } : {}),
+        variants,
+      });
+    };
+
+    if (Array.isArray(rawModels)) {
+      for (const rawModel of rawModels) {
+        pushModel(rawModel);
+      }
+      return models;
+    }
+
+    if (!rawModels || typeof rawModels !== 'object') {
+      return models;
+    }
+
+    const modelMap = rawModels as Record<string, unknown>;
+    for (const [modelKey, rawModel] of Object.entries(modelMap)) {
+      pushModel(rawModel, modelKey);
+    }
+
+    return models;
+  }
+
+  private isSameIdentifier(left: string, right: string): boolean {
+    return left.trim().toLowerCase() === right.trim().toLowerCase();
+  }
+
+  private findProviderModel(
+    providers: unknown[],
+    providerId: string,
+    modelId: string
+  ): ProviderModelMeta | null {
+    for (const provider of providers) {
+      const providerModels = this.extractProviderModels(provider);
+      for (const model of providerModels) {
+        if (!this.isSameIdentifier(model.providerId, providerId)) {
+          continue;
+        }
+        if (!this.isSameIdentifier(model.modelId, modelId)) {
+          continue;
+        }
+        return model;
+      }
+    }
+    return null;
+  }
+
+  private resolveModelFromProviderPayload(
+    chatId: string,
+    providersResult: Awaited<ReturnType<typeof opencodeClient.getProviders>>
+  ): { providerId: string; modelId: string } | null {
     const session = chatSessionStore.getSession(chatId);
     const preferredModel = this.parseProviderModel(session?.preferredModel);
     if (preferredModel) {
@@ -363,7 +522,6 @@ export class CommandHandler {
       };
     }
 
-    const providersResult = await opencodeClient.getProviders();
     const providersRaw = Array.isArray(providersResult.providers) ? providersResult.providers : [];
     const defaultsRaw = providersResult.default;
     const defaults = defaultsRaw && typeof defaultsRaw === 'object'
@@ -420,6 +578,72 @@ export class CommandHandler {
     }
 
     return null;
+  }
+
+  private async getEffortSupportInfo(chatId: string): Promise<EffortSupportInfo> {
+    const providersResult = await opencodeClient.getProviders();
+    const model = this.resolveModelFromProviderPayload(chatId, providersResult);
+    if (!model) {
+      return {
+        model: null,
+        supportedEfforts: [],
+        modelMatched: false,
+      };
+    }
+
+    const providersRaw = Array.isArray(providersResult.providers) ? providersResult.providers : [];
+    const matchedModel = this.findProviderModel(providersRaw, model.providerId, model.modelId);
+    if (!matchedModel) {
+      return {
+        model,
+        supportedEfforts: [],
+        modelMatched: false,
+      };
+    }
+
+    return {
+      model,
+      supportedEfforts: matchedModel.variants,
+      modelMatched: true,
+    };
+  }
+
+  private formatModelLabel(model: { providerId: string; modelId: string } | null): string {
+    if (!model) {
+      return '未知';
+    }
+    return `${model.providerId}:${model.modelId}`;
+  }
+
+  private formatEffortList(efforts: EffortLevel[]): string {
+    if (efforts.length === 0) {
+      return '该模型未公开可选强度';
+    }
+    return efforts.join(' / ');
+  }
+
+  public async reconcilePreferredEffort(chatId: string): Promise<{ clearedEffort?: EffortLevel; support: EffortSupportInfo }> {
+    const session = chatSessionStore.getSession(chatId);
+    const currentEffort = session?.preferredEffort;
+    const support = await this.getEffortSupportInfo(chatId);
+    if (!currentEffort || !support.modelMatched) {
+      return { support };
+    }
+
+    if (support.supportedEfforts.includes(currentEffort)) {
+      return { support };
+    }
+
+    chatSessionStore.updateConfig(chatId, { preferredEffort: undefined });
+    return {
+      clearedEffort: currentEffort,
+      support,
+    };
+  }
+
+  private async resolveCompactModel(chatId: string): Promise<{ providerId: string; modelId: string } | null> {
+    const providersResult = await opencodeClient.getProviders();
+    return this.resolveModelFromProviderPayload(chatId, providersResult);
   }
 
   private async resolveShellAgent(chatId: string): Promise<string> {
@@ -570,6 +794,10 @@ export class CommandHandler {
 
         case 'agent':
           await this.handleAgent(chatId, messageId, context.senderId, context.chatType, command.agentName);
+          break;
+
+        case 'effort':
+          await this.handleEffort(chatId, messageId, context.senderId, context.chatType, command);
           break;
 
         case 'role':
@@ -821,64 +1049,158 @@ export class CommandHandler {
         return;
       }
 
-      const { providers } = await opencodeClient.getProviders();
+      const providersResult = await opencodeClient.getProviders();
+      const providers = Array.isArray(providersResult.providers) ? providersResult.providers : [];
+      const normalizedModelName = modelName.trim();
+      const normalizedModelNameLower = normalizedModelName.toLowerCase();
 
-      // 2. 解析模型名称 (支持 provider/model 或 model)
-      let found = false;
-      let targetProvider = '';
-      let targetModel = '';
+      let matchedModel: ProviderModelMeta | null = null;
+      for (const provider of providers) {
+        const providerModels = this.extractProviderModels(provider);
+        for (const candidate of providerModels) {
+          const candidateValues = [
+            `${candidate.providerId}:${candidate.modelId}`,
+            `${candidate.providerId}/${candidate.modelId}`,
+            candidate.modelId,
+            candidate.modelName,
+          ].filter((item): item is string => typeof item === 'string' && item.trim().length > 0);
+          const isMatched = candidateValues.some(item => item.toLowerCase() === normalizedModelNameLower);
+          if (!isMatched) {
+            continue;
+          }
 
-      const safeProviders = Array.isArray(providers) ? providers : [];
-
-      for (const p of safeProviders) {
-        // 安全获取 models，兼容数组和对象
-        const modelsRaw = (p as any).models;
-        const models = Array.isArray(modelsRaw) 
-            ? modelsRaw 
-            : (modelsRaw && typeof modelsRaw === 'object' ? Object.values(modelsRaw) : []);
-
-        for (const m of models) {
-           const modelId = (m as any).id || (m as any).modelID || (m as any).name;
-           const providerId = (p as any).id || (p as any).providerID;
-           
-           if (!modelId || !providerId) continue;
-
-           // 支持 "provider:model", "provider/model" 或直接 "model" (如果唯一)
-           if (
-               modelName === `${providerId}:${modelId}` || 
-               modelName === `${providerId}/${modelId}` || 
-               modelName === modelId || 
-               modelName === (m as any).name
-           ) {
-             targetProvider = providerId;
-             targetModel = modelId;
-             found = true;
-             break;
-           }
+          matchedModel = candidate;
+          break;
         }
-        if (found) break;
+
+        if (matchedModel) {
+          break;
+        }
       }
 
-      if (found) {
+      if (matchedModel) {
         // 3. 更新配置
-        const newValue = `${targetProvider}:${targetModel}`;
+        const newValue = `${matchedModel.providerId}:${matchedModel.modelId}`;
         chatSessionStore.updateConfig(chatId, { preferredModel: newValue });
-        await feishuClient.reply(messageId, `✅ 已切换模型: ${newValue}`);
+
+        const lines = [`✅ 已切换模型: ${newValue}`];
+        const reconciled = await this.reconcilePreferredEffort(chatId);
+        if (reconciled.clearedEffort) {
+          lines.push(
+            `⚠️ 当前模型不支持强度 ${reconciled.clearedEffort}，已回退为默认（可选: ${this.formatEffortList(reconciled.support.supportedEfforts)}）`
+          );
+        }
+
+        await feishuClient.reply(messageId, lines.join('\n'));
       } else {
         // 即使没找到匹配的，如果格式正确也允许强制设置（针对自定义或未列出的模型）
-        if (modelName.includes(':') || modelName.includes('/')) {
-             const separator = modelName.includes(':') ? ':' : '/';
-             const [p, m] = modelName.split(separator);
-             const newValue = `${p}:${m}`;
+        if (normalizedModelName.includes(':') || normalizedModelName.includes('/')) {
+             const separator = normalizedModelName.includes(':') ? ':' : '/';
+             const [provider, model] = normalizedModelName.split(separator);
+             const newValue = `${provider}:${model}`;
              chatSessionStore.updateConfig(chatId, { preferredModel: newValue });
-             await feishuClient.reply(messageId, `⚠️ 未在列表中找到该模型，但已强制设置为: ${newValue}`);
+
+             const currentEffort = chatSessionStore.getSession(chatId)?.preferredEffort;
+             const warning = currentEffort
+               ? '\n⚠️ 当前模型不在列表中，无法校验已设置强度是否兼容。'
+               : '';
+             await feishuClient.reply(messageId, `⚠️ 未在列表中找到该模型，但已强制设置为: ${newValue}${warning}`);
         } else {
-             await feishuClient.reply(messageId, `❌ 未找到模型 "${modelName}"\n请使用 /panel 查看可用列表`);
+             await feishuClient.reply(messageId, `❌ 未找到模型 "${normalizedModelName}"\n请使用 /panel 查看可用列表`);
         }
       }
 
     } catch (error) {
       await feishuClient.reply(messageId, `❌ 设置模型失败: ${error}`);
+    }
+  }
+
+  private async handleEffort(
+    chatId: string,
+    messageId: string,
+    userId: string,
+    chatType: 'p2p' | 'group',
+    command: ParsedCommand
+  ): Promise<void> {
+    try {
+      // 0. 确保会话存在
+      let session = chatSessionStore.getSession(chatId);
+      if (!session) {
+        const title = `群聊会话-${chatId.slice(-4)}`;
+        const newSession = await opencodeClient.createSession(title);
+        if (newSession) {
+          chatSessionStore.setSession(chatId, newSession.id, userId, title, { chatType });
+          session = chatSessionStore.getSession(chatId);
+        } else {
+          await feishuClient.reply(messageId, '❌ 无法创建会话以保存强度配置');
+          return;
+        }
+      }
+
+      const support = await this.getEffortSupportInfo(chatId);
+      const currentEffort = session?.preferredEffort;
+      const modelLabel = this.formatModelLabel(support.model);
+      const supportText = this.formatEffortList(support.supportedEfforts);
+
+      if (command.effortReset) {
+        chatSessionStore.updateConfig(chatId, { preferredEffort: undefined });
+        await feishuClient.reply(
+          messageId,
+          [
+            currentEffort ? `✅ 已清除会话强度（原为: ${currentEffort}）` : '✅ 当前会话强度已是默认（自动）',
+            `当前模型: ${modelLabel}`,
+            `可选强度: ${supportText}`,
+          ].join('\n')
+        );
+        return;
+      }
+
+      if (command.effortRaw && !command.effortLevel) {
+        await feishuClient.reply(
+          messageId,
+          `❌ 不支持的强度: ${command.effortRaw}\n${EFFORT_USAGE_TEXT}\n可选强度: ${supportText}`
+        );
+        return;
+      }
+
+      if (!command.effortLevel) {
+        await feishuClient.reply(
+          messageId,
+          [
+            `当前强度: ${currentEffort || '默认（自动）'}`,
+            `当前模型: ${modelLabel}`,
+            `可选强度: ${supportText}`,
+            '临时覆盖: 在消息开头使用 #low / #high / #max / #xhigh',
+          ].join('\n')
+        );
+        return;
+      }
+
+      const requested = command.effortLevel;
+      if (!support.modelMatched) {
+        chatSessionStore.updateConfig(chatId, { preferredEffort: requested });
+        await feishuClient.reply(
+          messageId,
+          `⚠️ 已设置会话强度: ${requested}\n当前模型: ${modelLabel}\n无法识别当前模型能力，暂无法校验兼容性。`
+        );
+        return;
+      }
+
+      if (!support.supportedEfforts.includes(requested)) {
+        await feishuClient.reply(
+          messageId,
+          `❌ 当前模型不支持强度 ${requested}\n当前模型: ${modelLabel}\n可选强度: ${supportText}`
+        );
+        return;
+      }
+
+      chatSessionStore.updateConfig(chatId, { preferredEffort: requested });
+      await feishuClient.reply(
+        messageId,
+        `✅ 已设置会话强度: ${requested}\n当前模型: ${modelLabel}`
+      );
+    } catch (error) {
+      await feishuClient.reply(messageId, `❌ 设置强度失败: ${error}`);
     }
   }
 
@@ -1126,6 +1448,7 @@ export class CommandHandler {
   private async buildPanelCard(chatId: string, chatType: 'p2p' | 'group' = 'group'): Promise<object> {
     const session = chatSessionStore.getSession(chatId);
     const currentModel = session?.preferredModel || '默认';
+    const currentEffort = session?.preferredEffort || '默认（自动）';
 
     // 获取列表供卡片使用
     const [{ providers }, allAgents, runtimeConfig] = await Promise.all([
@@ -1142,6 +1465,7 @@ export class CommandHandler {
       : this.getDefaultRoleDisplay(defaultAgentName, visibleAgents);
 
     const modelOptions: { label: string; value: string }[] = [];
+    const modelOptionValues = new Set<string>();
     const safeProviders = Array.isArray(providers) ? providers : [];
 
     for (const p of safeProviders) {
@@ -1158,7 +1482,24 @@ export class CommandHandler {
 
         if (modelId && providerId) {
           const label = `[${p.name || providerId}] ${modelName}`;
-          modelOptions.push({ label, value: `${providerId}:${modelId}` });
+          const value = `${providerId}:${modelId}`;
+          if (!modelOptionValues.has(value)) {
+            modelOptionValues.add(value);
+            modelOptions.push({ label, value });
+          }
+        }
+      }
+    }
+
+    const selectedModel = session?.preferredModel || '';
+    let panelModelOptions = modelOptions.slice(0, PANEL_MODEL_OPTION_LIMIT);
+    if (selectedModel.includes(':') && panelModelOptions.every(item => item.value !== selectedModel)) {
+      const matched = modelOptions.find(item => item.value === selectedModel);
+      if (matched) {
+        if (panelModelOptions.length >= PANEL_MODEL_OPTION_LIMIT) {
+          panelModelOptions = [...panelModelOptions.slice(0, PANEL_MODEL_OPTION_LIMIT - 1), matched];
+        } else {
+          panelModelOptions = [...panelModelOptions, matched];
         }
       }
     }
@@ -1178,7 +1519,8 @@ export class CommandHandler {
       chatType,
       currentModel,
       currentAgent,
-      models: modelOptions.slice(0, 100),
+      currentEffort,
+      models: panelModelOptions,
       agents: agentOptions,
     });
   }

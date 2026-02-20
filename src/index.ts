@@ -21,7 +21,7 @@ import {
 
 async function main() {
   console.log('╔════════════════════════════════════════════════╗');
-  console.log('║     飞书 × OpenCode 桥接服务 v2.7.0 (Group)    ║');
+  console.log('║     飞书 × OpenCode 桥接服务 v2.7.2 (Group)    ║');
   console.log('╚════════════════════════════════════════════════╝');
 
   // 1. 验证配置

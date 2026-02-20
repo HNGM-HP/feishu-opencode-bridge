@@ -8,6 +8,31 @@ import { commandHandler } from './command.js';
 import type { FeishuCardActionEvent } from '../feishu/client.js';
 
 export class CardActionHandler {
+  private extractSelectedOption(value: unknown): string | undefined {
+    if (typeof value === 'string') {
+      const normalized = value.trim();
+      return normalized.length > 0 ? normalized : undefined;
+    }
+
+    if (!value || typeof value !== 'object') {
+      return undefined;
+    }
+
+    const record = value as Record<string, unknown>;
+    const candidates = [record.value, record.key, record.label];
+    for (const candidate of candidates) {
+      if (typeof candidate !== 'string') {
+        continue;
+      }
+      const normalized = candidate.trim();
+      if (normalized.length > 0) {
+        return normalized;
+      }
+    }
+
+    return undefined;
+  }
+
   async handle(event: FeishuCardActionEvent): Promise<object | void> {
     const actionValue = event.action.value as any;
     const action = actionValue?.action;
@@ -92,7 +117,7 @@ export class CardActionHandler {
 
   private async handleModelSelect(value: any, event: FeishuCardActionEvent): Promise<object> {
     const { chatId } = value;
-    const selectedOption = (event.action as any).option || value.selected;
+    const selectedOption = this.extractSelectedOption((event.action as Record<string, unknown>).option) || this.extractSelectedOption(value.selected);
 
     if (!chatId || !selectedOption) {
       return { toast: { type: 'error', content: '参数错误' } };
@@ -102,20 +127,26 @@ export class CardActionHandler {
     chatSessionStore.updateConfig(chatId, { preferredModel: selectedOption });
     console.log(`[CardAction] 已切换模型: ${selectedOption}`);
 
+    const reconciled = await commandHandler.reconcilePreferredEffort(chatId);
+    const effortNotice = reconciled.clearedEffort
+      ? `；强度 ${reconciled.clearedEffort} 不兼容，已回退为默认`
+      : '';
+    const toastText = `已切换模型: ${selectedOption}${effortNotice}`;
+
     // 只返回toast，不更新卡片
     // 卡片更新可能失败（错误码200672），所以只返回toast确保用户知道操作成功
     return {
       toast: {
         type: 'success',
-        content: `已切换模型: ${selectedOption}`,
-        i18n_content: { zh_cn: `已切换模型: ${selectedOption}`, en_us: `Model changed: ${selectedOption}` }
+        content: toastText,
+        i18n_content: { zh_cn: toastText, en_us: `Model changed: ${selectedOption}` }
       }
     };
   }
 
   private async handleAgentSelect(value: any, event: FeishuCardActionEvent): Promise<object> {
     const { chatId } = value;
-    const selectedOption = (event.action as any).option || value.selected;
+    const selectedOption = this.extractSelectedOption((event.action as Record<string, unknown>).option) || this.extractSelectedOption(value.selected);
 
     if (!chatId) {
       return { toast: { type: 'error', content: '参数错误' } };

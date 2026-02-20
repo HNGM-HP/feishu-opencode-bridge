@@ -214,6 +214,7 @@ export interface ControlCardData {
   chatType: 'p2p' | 'group';
   currentModel?: string;
   currentAgent?: string;
+  currentEffort?: string;
   models: Array<{ label: string; value: string }>;
   agents: Array<{ label: string; value: string }>;
 }
@@ -245,7 +246,7 @@ export function buildControlCard(data: ControlCardData): object {
         tag: 'div',
         text: {
           tag: 'lark_md',
-          content: `**当前模型**: ${data.currentModel || '跟随默认'}\n**当前角色**: ${data.currentAgent || '默认角色'}`,
+          content: `**当前模型**: ${data.currentModel || '跟随默认'}\n**当前角色**: ${data.currentAgent || '默认角色'}\n**当前强度**: ${data.currentEffort || '默认（自动）'}（用 /effort 修改）`,
         },
       },
       {

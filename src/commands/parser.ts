@@ -1,3 +1,5 @@
+import { normalizeEffortLevel, stripPromptEffortPrefix, type EffortLevel } from './effort.js';
+
 // 命令类型定义
 export type CommandType =
   | 'prompt'       // 普通消息，发送给AI
@@ -11,6 +13,7 @@ export type CommandType =
   | 'sessions'     // 列出会话
   | 'clear'        // 清空对话
   | 'panel'        // 控制面板
+  | 'effort'       // 调整推理强度
   | 'admin'        // 管理员设置
   | 'help'         // 显示帮助
   | 'status'       // 查看状态
@@ -32,6 +35,10 @@ export interface ParsedCommand {
   commandName?: string;    // 透传命令名称
   commandArgs?: string;    // 透传命令参数
   commandPrefix?: '/' | '!'; // 透传命令前缀
+  effortLevel?: EffortLevel;
+  effortRaw?: string;
+  effortReset?: boolean;
+  promptEffort?: EffortLevel;
   adminAction?: 'add';
 }
 
@@ -214,6 +221,38 @@ export function parseCommand(text: string): ParsedCommand {
       case 'controls':
         return { type: 'panel' };
 
+      case 'effort':
+      case 'strength': {
+        if (args.length === 0) {
+          return { type: 'effort' };
+        }
+
+        const rawEffort = args[0].trim();
+        const normalized = rawEffort.toLowerCase();
+        if (normalized === 'off' || normalized === 'reset' || normalized === 'default' || normalized === 'auto') {
+          return { type: 'effort', effortReset: true };
+        }
+
+        const effort = normalizeEffortLevel(rawEffort);
+        if (effort) {
+          return { type: 'effort', effortLevel: effort };
+        }
+
+        return {
+          type: 'effort',
+          effortRaw: rawEffort,
+        };
+      }
+
+      case 'fast':
+        return { type: 'effort', effortLevel: 'low' };
+
+      case 'balanced':
+        return { type: 'effort', effortLevel: 'high' };
+
+      case 'deep':
+        return { type: 'effort', effortLevel: 'xhigh' };
+
       case 'make_admin':
       case 'add_admin':
         return { type: 'admin', adminAction: 'add' };
@@ -242,7 +281,12 @@ export function parseCommand(text: string): ParsedCommand {
   }
 
   // 普通消息
-  return { type: 'prompt', text: trimmed };
+  const promptResult = stripPromptEffortPrefix(trimmed);
+  return {
+    type: 'prompt',
+    text: promptResult.text,
+    ...(promptResult.effort ? { promptEffort: promptResult.effort } : {}),
+  };
 }
 
 // 生成帮助文本
@@ -261,6 +305,10 @@ export function getHelpText(): string {
 • \`/agent\` 查看当前角色
 • \`/agent <名称>\` 切换角色 (e.g. \`/agent general\`)
 • \`/agent off\` 切回默认角色
+• \`/effort\` 查看当前强度
+• \`/effort <档位>\` 设置会话默认强度 (e.g. \`/effort high\`)
+• \`/effort default\` 清除会话强度，恢复模型默认
+• \`#xhigh 帮我深度分析这段代码\` 仅当前消息临时覆盖强度
 • \`创建角色 名称=旅行助手; 描述=帮我做行程规划; 类型=主; 工具=webfetch\` 新建自定义角色
 • \`/panel\` 推送交互式控制面板卡片 ✨
 • \`/undo\` 撤回上一轮对话 (如果你发错或 AI 答错)
@@ -279,6 +327,7 @@ export function getHelpText(): string {
 
 💡 **提示**
 • 切换的模型/角色仅对**当前会话**生效。
+• 强度优先级：\`#临时覆盖\` > \`/effort 会话默认\` > OpenCode 默认。
 • 其他未知 \`/xxx\` 命令会自动透传给 OpenCode（会话已绑定时生效）。
 • 支持透传白名单 shell 命令：\`!cd\`、\`!ls\`、\`!mkdir\`、\`!rm\`、\`!cp\`、\`!mv\`、\`!git\` 等；\`!vi\` / \`!vim\` / \`!nano\` 不会透传。
 • 如果遇到问题，试着使用 \`/panel\` 面板操作更方便。`;

@@ -183,6 +183,8 @@ sudo node scripts/deploy.mjs service-uninstall
 7. 执行 `/clear free session`，确认行为与“启动后自动扫描清理”一致。
 8. 执行 `/compact`，确认返回“上下文压缩完成”。
 9. 执行 `!ls`，确认 shell 命令可返回输出。
+10. 执行 `/effort` 与 `/effort high`，确认会话强度可查询/设置。
+11. 发送 `#xhigh 请分析这段代码` 后再执行 `/effort`，确认 `#` 仅临时覆盖，不改变会话默认强度。
 
 ## 8. 常见异常与处理
 

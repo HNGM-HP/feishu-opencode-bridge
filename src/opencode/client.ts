@@ -583,6 +583,7 @@ class OpencodeClientWrapper extends EventEmitter {
       providerId?: string;
       modelId?: string;
       agent?: string;
+      variant?: string;
     }
   ): Promise<{ info: Message; parts: Part[] }> {
     const client = this.getClient();
@@ -594,6 +595,7 @@ class OpencodeClientWrapper extends EventEmitter {
         parts: [{ type: 'text', text }],
         ...(options?.agent ? { agent: options.agent } : {}),
         ...(model ? { model } : {}),
+        ...(options?.variant ? { variant: options.variant } : {}),
       },
     });
 
@@ -608,6 +610,7 @@ class OpencodeClientWrapper extends EventEmitter {
       providerId?: string;
       modelId?: string;
       agent?: string;
+      variant?: string;
     },
     messageId?: string
   ): Promise<{ info: Message; parts: Part[] }> {
@@ -621,6 +624,7 @@ class OpencodeClientWrapper extends EventEmitter {
         // ...(messageId ? { messageID: messageId } : {}), // 已注释：避免传递飞书 MessageID 导致 Opencode 无法处理
         ...(options?.agent ? { agent: options.agent } : {}),
         ...(model ? { model } : {}),
+        ...(options?.variant ? { variant: options.variant } : {}),
       },
     });
 
@@ -635,6 +639,7 @@ class OpencodeClientWrapper extends EventEmitter {
       providerId?: string;
       modelId?: string;
       agent?: string;
+      variant?: string;
     }
   ): Promise<void> {
     this.getClient();
@@ -647,6 +652,7 @@ class OpencodeClientWrapper extends EventEmitter {
         parts: [{ type: 'text', text }],
         ...(options?.agent ? { agent: options.agent } : {}),
         ...(model ? { model } : {}),
+        ...(options?.variant ? { variant: options.variant } : {}),
       }),
     });
 
@@ -666,6 +672,7 @@ class OpencodeClientWrapper extends EventEmitter {
       providerId?: string;
       modelId?: string;
       agent?: string;
+      variant?: string;
     }
   ): Promise<void> {
     this.getClient();
@@ -678,6 +685,7 @@ class OpencodeClientWrapper extends EventEmitter {
         parts,
         ...(options?.agent ? { agent: options.agent } : {}),
         ...(model ? { model } : {}),
+        ...(options?.variant ? { variant: options.variant } : {}),
       }),
     });
 

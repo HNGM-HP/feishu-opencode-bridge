@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import type { EffortLevel } from '../commands/effort.js';
 
 // 群组会话数据结构
 export type ChatSessionType = 'p2p' | 'group';
@@ -18,6 +19,7 @@ interface ChatSessionData {
   lastFeishuAiMsgId?: string;
   preferredModel?: string; // e.g., "openai:gpt-4"
   preferredAgent?: string;
+  preferredEffort?: EffortLevel;
   interactionHistory: InteractionRecord[];
 }
 
@@ -238,8 +240,8 @@ class ChatSessionStore {
     return session.title.startsWith('飞书群聊') || session.title.startsWith('群聊');
   }
 
-  // 更新会话配置 (模型/Agent)
-  updateConfig(chatId: string, config: { preferredModel?: string; preferredAgent?: string }): void {
+  // 更新会话配置 (模型/角色/强度)
+  updateConfig(chatId: string, config: { preferredModel?: string; preferredAgent?: string; preferredEffort?: EffortLevel }): void {
     const session = this.data.get(chatId);
     if (session) {
       if ('preferredModel' in config) {
@@ -255,6 +257,14 @@ class ChatSessionStore {
           session.preferredAgent = config.preferredAgent;
         } else {
           delete session.preferredAgent;
+        }
+      }
+
+      if ('preferredEffort' in config) {
+        if (config.preferredEffort) {
+          session.preferredEffort = config.preferredEffort;
+        } else {
+          delete session.preferredEffort;
         }
       }
       this.save();

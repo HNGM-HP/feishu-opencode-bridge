@@ -1,4 +1,4 @@
-# 飞书 × OpenCode 桥接服务 v2.7.0 (Group)
+# 飞书 × OpenCode 桥接服务 v2.7.2 (Group)
 
 [![Node.js >= 18](https://img.shields.io/badge/Node.js-%3E%3D18-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -79,7 +79,7 @@
 | question 卡片闭环 | OpenCode question 在飞书内回答/跳过并继续任务 | `question.asked` |
 | 流式多卡防溢出 | 超过组件预算自动分页拆卡，旧页持续更新 | 流式卡片分页（预算 180） |
 | 双端撤回一致性 | 撤回时同时回滚飞书消息与 OpenCode 会话状态 | `/undo` |
-| 模型/Agent 可视化控制 | 按会话切换模型与角色，支持面板交互和命令操作 | `/panel`、`/model`、`/agent` |
+| 模型/角色/强度可视化控制 | 按会话切换模型、角色与推理强度，支持面板查看与命令操作 | `/panel`、`/model`、`/agent`、`/effort` |
 | 上下文压缩 | 在飞书直接触发会话 summarize，释放上下文窗口 | `/compact` |
 | Shell 命令透传 | 白名单 `!` 命令通过 OpenCode shell 执行并回显输出 | `!ls`、`!pwd`、`!git status` |
 | 服务端鉴权兼容 | 支持 OpenCode Server Basic Auth，不怕后续默认强制密码 | `OPENCODE_SERVER_USERNAME`、`OPENCODE_SERVER_PASSWORD` |
@@ -390,9 +390,13 @@ node scripts/deploy.mjs status
 | 命令 | 说明 |
 |---|---|
 | `/help` | 查看帮助 |
-| `/panel` | 打开控制面板（模型、Agent、停止、撤回） |
+| `/panel` | 打开控制面板（模型、角色、强度状态、停止、撤回） |
 | `/model` | 查看当前模型 |
 | `/model <provider:model>` | 切换模型（支持 `provider/model`） |
+| `/effort` | 查看当前会话推理强度与当前模型可选档位 |
+| `/effort <档位>` | 设置会话默认强度（支持 `none/minimal/low/medium/high/max/xhigh`） |
+| `/effort default` | 清除会话强度，回到模型默认策略 |
+| `/fast` `/balanced` `/deep` | 强度快捷命令（分别映射 `low/high/xhigh`） |
 | `/agent` | 查看当前 Agent |
 | `/agent <name>` | 切换 Agent |
 | `/agent off` | 关闭 Agent，回到默认 |
@@ -412,6 +416,8 @@ node scripts/deploy.mjs status
 | `/status` | 查看当前群绑定状态 |
 
 - `!` 透传仅支持白名单命令；`vi`/`vim`/`nano` 等交互式编辑器不会透传。
+- 单条临时覆盖可在消息开头使用 `#low` / `#high` / `#max` / `#xhigh`（仅当前条生效）。
+- 强度优先级：`#临时覆盖` > `/effort 会话默认` > 模型默认。
 
 <a id="Agent（角色）使用"></a>
 ## 🤖 Agent（角色）使用
