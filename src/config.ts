@@ -8,6 +8,13 @@ function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean 
   return fallback;
 }
 
+function parseNonNegativeIntEnv(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+  return parsed;
+}
+
 // 飞书配置
 export const feishuConfig = {
   appId: process.env.FEISHU_APP_ID || '',
@@ -60,8 +67,8 @@ export const permissionConfig = {
   // 自动允许的工具列表
   toolWhitelist: (process.env.TOOL_WHITELIST || 'Read,Glob,Grep,Task').split(',').filter(Boolean),
   
-  // 权限请求超时时间（毫秒）
-  requestTimeout: 60000,
+  // 权限请求超时时间（毫秒）；<= 0 表示不超时，始终等待用户回复
+  requestTimeout: parseNonNegativeIntEnv(process.env.PERMISSION_REQUEST_TIMEOUT_MS, 0),
 };
 
 // 输出配置

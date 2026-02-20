@@ -50,6 +50,7 @@ cp .env.example .env
 - `OPENCODE_SERVER_PASSWORD`（OpenCode 启用密码时必填）
 - `ENABLE_MANUAL_SESSION_BIND`（默认 `true`，控制是否允许绑定已有会话）
 - `TOOL_WHITELIST`
+- `PERMISSION_REQUEST_TIMEOUT_MS`（默认 `0`，表示权限请求不超时，持续等待用户回复）
 - `OUTPUT_UPDATE_INTERVAL`
 - `ATTACHMENT_MAX_SIZE`
 

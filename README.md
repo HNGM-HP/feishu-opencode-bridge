@@ -314,6 +314,7 @@ node scripts/deploy.mjs status
 | `DEFAULT_PROVIDER` | 否 | - | 默认模型提供商;与 `DEFAULT_MODEL` 同时配置才生效 |
 | `DEFAULT_MODEL` | 否 | - | 默认模型;未配置时跟随 OpenCode 自身默认模型 |
 | `TOOL_WHITELIST` | 否 | `Read,Glob,Grep,Task` | 自动放行权限标识列表 |
+| `PERMISSION_REQUEST_TIMEOUT_MS` | 否 | `0` | 权限请求在桥接侧的保留时长（毫秒）；`<=0` 表示不超时，持续等待回复 |
 | `OUTPUT_UPDATE_INTERVAL` | 否 | `3000` | 输出刷新间隔（ms） |
 | `ATTACHMENT_MAX_SIZE` | 否 | `52428800` | 附件大小上限（字节） |
 

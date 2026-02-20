@@ -35,6 +35,10 @@ class PermissionHandler {
   }
 
   private removeExpired(chatId: string): void {
+    if (permissionConfig.requestTimeout <= 0) {
+      return;
+    }
+
     const queue = this.pendingByChat.get(chatId);
     if (!queue || queue.length === 0) return;
 
