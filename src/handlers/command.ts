@@ -715,12 +715,18 @@ export class CommandHandler {
   }
 
   private buildSessionTitle(chatType: 'p2p' | 'group', userId: string): string {
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const min = String(now.getMinutes()).padStart(2, '0');
+    const timestamp = `${mm}-${dd}-${hh}-${min}`;
+
     if (chatType === 'p2p') {
-      const shortUserId = this.getPrivateSessionShortId(userId);
-      return `飞书私聊${shortUserId || '用户'}`;
+      return `私聊-${timestamp}`;
     }
 
-    return `群聊重置-${Date.now().toString().slice(-4)}`;
+    return `群聊-${timestamp}`;
   }
 
   async handle(
@@ -746,7 +752,7 @@ export class CommandHandler {
 
         case 'session':
           if (command.sessionAction === 'new') {
-            await this.handleNewSession(chatId, messageId, context.senderId, context.chatType, command.sessionDirectory);
+            await this.handleNewSession(chatId, messageId, context.senderId, context.chatType, command.sessionDirectory, command.sessionName);
           } else if (command.sessionAction === 'list') {
             await this.handleListSessions(chatId, messageId);
           } else if (command.sessionAction === 'switch' && command.sessionId) {
@@ -842,6 +848,10 @@ export class CommandHandler {
           await this.handleSendFile(chatId, messageId, command.text || '');
           break;
 
+        case 'rename':
+          await this.handleRename(chatId, messageId, command.renameTitle);
+          break;
+
         // 其他命令透传
         default:
           await this.handlePassthroughCommand(chatId, messageId, command.type.replace(/^\//, ''), command.commandArgs || '');
@@ -851,6 +861,37 @@ export class CommandHandler {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('[Command] 执行失败详情:', errorMessage);
       await feishuClient.reply(messageId, '❌ 命令执行出错，请稍后重试');
+    }
+  }
+
+  private async handleRename(chatId: string, messageId: string, newTitle?: string): Promise<void> {
+    const sessionId = chatSessionStore.getSessionId(chatId);
+    if (!sessionId) {
+      await feishuClient.reply(messageId, '❌ 当前没有活跃的会话，请先发送消息建立会话');
+      return;
+    }
+
+    // 无参数时提示用法（Phase 2 卡片交互预留位）
+    if (!newTitle || !newTitle.trim()) {
+      await feishuClient.reply(messageId, '用法: /rename <新名称>\n示例: /rename Q3后端API设计讨论');
+      return;
+    }
+
+    const trimmedTitle = newTitle.trim();
+
+    // 名称长度校验（飞书消息限制，兼容中文分词）
+    if (trimmedTitle.length > 100) {
+      await feishuClient.reply(messageId, `❌ 会话名称过长（${trimmedTitle.length} 字符），请控制在 100 字符以内`);
+      return;
+    }
+
+    const success = await opencodeClient.updateSession(sessionId, trimmedTitle);
+    if (success) {
+      // 同步更新本地缓存中的会话标题
+      chatSessionStore.updateTitle(chatId, trimmedTitle);
+      await feishuClient.reply(messageId, `✅ 会话已重命名为 "${trimmedTitle}"`);
+    } else {
+      await feishuClient.reply(messageId, '❌ 重命名失败，请稍后重试');
     }
   }
 
@@ -894,7 +935,8 @@ export class CommandHandler {
     messageId: string,
     userId: string,
     chatType: 'p2p' | 'group',
-    rawDirectory?: string
+    rawDirectory?: string,
+    customName?: string
   ): Promise<void> {
     // 1. 通过 DirectoryPolicy 解析目录
     const chatDefault = chatSessionStore.getSession(chatId)?.defaultDirectory;
@@ -913,8 +955,8 @@ export class CommandHandler {
       return;
     }
 
-    // 2. 创建会话
-    const title = this.buildSessionTitle(chatType, userId);
+    // 2. 创建会话（优先使用 --name 参数，其次使用默认命名规则）
+    const title = customName?.trim() || this.buildSessionTitle(chatType, userId);
     const effectiveDir = dirResult.source === 'server_default' ? undefined : dirResult.directory;
 
     try {

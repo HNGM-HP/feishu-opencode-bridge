@@ -302,9 +302,13 @@ export class P2PHandler {
     return normalized.slice(0, 4);
   }
 
-  private getPrivateSessionTitle(openId: string): string {
-    const shortOpenId = this.getPrivateSessionShortId(openId);
-    return `飞书私聊${shortOpenId || '用户'}`;
+  private getPrivateSessionTitle(_openId: string): string {
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    const hh = String(now.getHours()).padStart(2, '0');
+    const min = String(now.getMinutes()).padStart(2, '0');
+    return `私聊-${mm}-${dd}-${hh}-${min}`;
   }
 
   private isCreateGroupCommand(text: string): boolean {

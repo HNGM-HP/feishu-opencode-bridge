@@ -20,7 +20,8 @@ export type CommandType =
   | 'status'       // 查看状态
   | 'command'      // 透传命令
   | 'permission'   // 权限响应
-  | 'send_file';   // 发送文件到飞书
+  | 'send_file'    // 发送文件到飞书
+  | 'rename';      // 重命名当前会话
 
 // 解析后的命令
 export interface ParsedCommand {
@@ -33,6 +34,7 @@ export interface ParsedCommand {
   sessionAction?: 'new' | 'switch' | 'list';
   sessionId?: string;      // session switch的目标ID
   sessionDirectory?: string;
+  sessionName?: string;    // session new --name 参数指定的会话名称
   listAll?: boolean;
   projectAction?: 'list' | 'default_set' | 'default_clear' | 'default_show';
   projectValue?: string;
@@ -46,6 +48,7 @@ export interface ParsedCommand {
   effortReset?: boolean;
   promptEffort?: EffortLevel;
   adminAction?: 'add';
+  renameTitle?: string;    // rename 类型的新会话名称（可选，无参数时弹卡片）
 }
 
 const BANG_SHELL_ALLOWED_COMMANDS = new Set([
@@ -213,11 +216,21 @@ export function parseCommand(text: string): ParsedCommand {
           return { type: 'session', sessionAction: 'list' };
         }
         if (args[0].toLowerCase() === 'new') {
-          const sessionDirectory = args.slice(1).join(' ').trim();
+          const rest = args.slice(1);
+          // 解析可选的 --name <名称> 参数
+          let sessionName: string | undefined;
+          const nameIndex = rest.findIndex(arg => arg.toLowerCase() === '--name');
+          let remainingArgs = rest;
+          if (nameIndex !== -1) {
+            sessionName = rest.slice(nameIndex + 1).join(' ').trim() || undefined;
+            remainingArgs = rest.slice(0, nameIndex);
+          }
+          const sessionDirectory = remainingArgs.join(' ').trim();
           return {
             type: 'session',
             sessionAction: 'new',
             ...(sessionDirectory ? { sessionDirectory } : {}),
+            ...(sessionName ? { sessionName } : {}),
           };
         }
         // 切换到指定会话
@@ -318,6 +331,14 @@ export function parseCommand(text: string): ParsedCommand {
       case 'sendfile':
         return { type: 'send_file', text: args.join(' ') };
 
+      case 'rename': {
+        const renameTitle = args.join(' ').trim();
+        return {
+          type: 'rename',
+          ...(renameTitle ? { renameTitle } : {}),
+        };
+      }
+
       default:
         // 未知命令透传到OpenCode
         return {
@@ -346,7 +367,7 @@ export function getHelpText(): string {
 群聊中 @机器人 或回复机器人消息，私聊中直接发送内容，即可与 AI 对话。
 
 🪄 **私聊首次使用**
-首次私聊会自动完成会话绑定（标题：飞书私聊{OpenID去掉 ou_ 前缀后的前4位}），并推送建群卡片、帮助文档和 /panel 卡片。
+首次私聊会自动完成会话绑定（标题：私聊-MM-DD-HH-MM），并推送建群卡片、帮助文档和 /panel 卡片。
 
 🛠️ **常用命令**
 • \`/model\` 查看当前模型
@@ -365,19 +386,15 @@ export function getHelpText(): string {
 • \`/compact\` 压缩当前会话上下文（调用 OpenCode summarize）
 
 ⚙️ **会话管理**
-• \`/create_chat\` 或 \`/建群\` 打开建群卡片（下拉选择新建或绑定已有会话）
-• \`/session\` 或 \`/sessions\` 列出当前项目的会话
-• \`/sessions all\` 列出所有项目的全部会话
-• \`/session new\` 或 \`/session new <项目别名或绝对路径>\` 开启新话题 (重置上下文)
+• \`/session\` 或 \`/sessions\` 列出当前项目的会话；\`/sessions all\` 列出全部项目
+• \`/session new\` 开启新话题（重置上下文）；\`/session new <别名或路径>\` 指定项目
+• \`/session new --name <名称>\` 创建时直接命名 (e.g. \`/session new --name 技术架构评审\`)
+• \`/rename <新名称>\` 随时重命名当前会话 (e.g. \`/rename Q3后端API设计讨论\`)
 • \`/session <sessionId>\` 手动绑定已有会话（需开启 \`ENABLE_MANUAL_SESSION_BIND\`）
-• \`新建会话窗口\` 自然语言触发 \`/session new\`
-• \`/project list\` 列出可用项目（含别名与历史目录）
-• \`/project default\` 查看当前群默认项目
-• \`/project default set <项目名或路径>\` 设置当前群默认项目
-• \`/project default clear\` 清除当前群默认项目
-• \`/clear\` 清空当前上下文 (同上)
-• \`/clear free session\` 清理所有空闲/无人群聊
-• \`/status\` 查看连接状态和群聊生命周期信息
+• \`/create_chat\` 或 \`/建群\` 私聊中调出建群卡片（新建或绑定已有会话）
+• \`/project list\` 列出可用项目；\`/project default\` 查看/设置/清除群默认项目
+• \`/clear\` 等价 \`/session new\`；\`/clear free session\` 清理空闲群聊
+• \`/status\` 查看当前绑定状态和群聊生命周期信息
 
 🧹 **群聊生命周期**
 • 空群（仅剩机器人）默认有 24 小时宽限期，之后自动解散

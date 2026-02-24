@@ -150,7 +150,12 @@ export class GroupHandler {
     let sessionId = chatSessionStore.getSessionId(chatId);
     if (!sessionId) {
       // 如果没有绑定会话，自动创建一个（走 DirectoryPolicy）
-      const title = `群聊会话-${chatId.slice(-4)}`;
+      const _now = new Date();
+      const _mm = String(_now.getMonth() + 1).padStart(2, '0');
+      const _dd = String(_now.getDate()).padStart(2, '0');
+      const _hh = String(_now.getHours()).padStart(2, '0');
+      const _min = String(_now.getMinutes()).padStart(2, '0');
+      const title = `群聊-${_mm}-${_dd}-${_hh}-${_min}`;
       const chatDefault = chatSessionStore.getSession(chatId)?.defaultDirectory;
       const dirResult = DirectoryPolicy.resolve({ chatDefaultDirectory: chatDefault });
       const effectiveDir = dirResult.ok && dirResult.source !== 'server_default' ? dirResult.directory : undefined;

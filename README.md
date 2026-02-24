@@ -76,6 +76,7 @@
 | 手动会话绑定 | 不中断旧上下文，直接把指定 session 接入当前群 | `/session <sessionId>`、`ENABLE_MANUAL_SESSION_BIND` |
 | 迁移绑定与删除保护 | 绑定已有会话时自动迁移旧群映射，并保护会话不被误删 | 自动生效（手动绑定场景） |
 | 生命周期清理兜底 | 启动清理与手动清理共用同一规则，降低误清理概率 | `/clear free session` |
+| 会话命名控制 | 创建时命名或随时重命名，格式 `群聊/私聊-MM-DD-HH-MM` | `/rename`、`/session new --name` |
 | 权限卡片闭环 | OpenCode 权限请求在飞书内完成确认并回传结果 | `permission.asked` |
 | question 卡片闭环 | OpenCode question 在飞书内回答/跳过并继续任务 | `question.asked` |
 | 流式多卡防溢出 | 超过组件预算自动分页拆卡，旧页持续更新 | 流式卡片分页（预算 180） |
@@ -95,6 +96,10 @@
 
 <details>
 <summary>Step 1：私聊独立会话（点击展开）</summary>
+
+<p>
+  首次私聊会自动完成会话绑定（标题格式：`私聊-MM-DD-HH-MM`），并推送建群卡片、帮助文档和 /panel 卡片。
+</p>
 
 <p>
   <img src="assets/demo/1-1私聊独立会话.png" width="720" />
@@ -446,25 +451,26 @@ node scripts/deploy.mjs status
 | `创建角色 名称=...; 描述=...; 类型=...; 工具=...` | 自然语言创建自定义角色并切换 |
 | `/stop` | 中断当前会话执行 |
 | `/undo` | 撤回上一轮交互（OpenCode + 飞书同步） |
-| `/session` 或 `/sessions` | 列出当前项目会话（含未绑定与仅本地映射记录） |
+| `/session` 或 `/sessions` | 列出当前项目会话 |
 | `/sessions all` | 列出所有项目的全部会话 |
 | `/session new` | 开启新话题（重置上下文，使用默认项目） |
 | `/session new <项目别名或绝对路径>` | 在指定项目/目录中新建会话 |
+| `/session new --name <名称>` | 创建会话时直接命名（e.g. `/session new --name 技术评审`） |
+| `/rename <新名称>` | 随时重命名当前会话（e.g. `/rename Q3后端讨论`） |
 | `/session <sessionId>` | 手动绑定已有 OpenCode 会话（需启用 `ENABLE_MANUAL_SESSION_BIND`） |
+| `/create_chat` / `/建群` | 私聊中调出建群卡片（新建或绑定已有会话） |
 | `/project list` | 列出可用项目（别名 + 历史目录） |
 | `/project default` | 查看当前群默认项目 |
 | `/project default set <路径或别名>` | 设置当前群的默认工作项目 |
 | `/project default clear` | 清除当前群默认项目 |
-| `新建会话窗口` | 自然语言触发新建会话（等价 `/session new`） |
 | `/clear` | 等价于 `/session new` |
-| `/clear free session` | 手动触发一次与启动清理同规则的兜底扫描 |
+| `/clear free session` | 手动触发空闲群聊兜底扫描 |
 | `/compact` | 调用 OpenCode summarize，压缩当前会话上下文 |
+| `/status` | 查看当前群绑定状态 |
 | `!<shell命令>` | 透传白名单 shell 命令（如 `!ls`、`!pwd`、`!mkdir`、`!git status`） |
-| `/create_chat` / `/建群` | 私聊中调出建群卡片（下拉选择后点击“创建群聊”生效） |
 | `/send_file <路径>` | 直接发送指定路径的文件到当前群聊 |
 | `/send_file <描述>` | 让 AI 搜索文件后发送到当前群聊 |
 | `发送文件 <路径或描述>` | 中文自然语言触发文件发送（同上） |
-| `/status` | 查看当前群绑定状态 |
 
 - `!` 透传仅支持白名单命令；`vi`/`vim`/`nano` 等交互式编辑器不会透传。
 - 单条临时覆盖可在消息开头使用 `#low` / `#high` / `#max` / `#xhigh`（仅当前条生效）。

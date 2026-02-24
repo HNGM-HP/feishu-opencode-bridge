@@ -1058,6 +1058,38 @@ class OpencodeClientWrapper extends EventEmitter {
     return result.data!;
   }
 
+  // 更新会话标题
+  async updateSession(sessionId: string, title: string): Promise<boolean> {
+    const client = this.getClient();
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      console.warn('[OpenCode] updateSession: 标题不能为空');
+      return false;
+    }
+
+    try {
+      const result = await client.session.update({
+        path: { id: sessionId },
+        body: { title: trimmedTitle },
+      });
+
+      if (result.error) {
+        const statusCode = result.response?.status;
+        const detail = formatSdkError(result.error);
+        const message = statusCode
+          ? `会话重命名失败（HTTP ${statusCode}）: ${detail}`
+          : `会话重命名失败: ${detail}`;
+        console.error(`[OpenCode] ${appendAuthHint(message, statusCode)}`);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error(`[OpenCode] 更新会话标题失败: ${sessionId}`, error);
+      return false;
+    }
+  }
+
   // 删除会话
   async deleteSession(sessionId: string): Promise<boolean> {
     const client = this.getClient();
