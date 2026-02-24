@@ -129,6 +129,26 @@ export const directoryConfig = {
 };
 
 
+function parseRetentionMs(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value.trim(), 10);
+  if (!Number.isFinite(parsed) || parsed < -1) {
+    console.warn(`[Config] EMPTY_CHAT_RETENTION_MS 值非法: "${value}"，已回退到默认值: ${fallback}`);
+    return fallback;
+  }
+  return parsed;
+}
+
+// 群聊生命周期配置
+export const chatLifecycleConfig = {
+  // 空群保留时长（毫秒），默认 24 小时
+  // 设为 0 表示立即解散，设为 -1 表示永不自动解散
+  emptyChatRetentionMs: parseRetentionMs(process.env.EMPTY_CHAT_RETENTION_MS, 86400000),
+
+  // 是否启用空群自动清理
+  enableEmptyChatCleanup: parseBooleanEnv(process.env.ENABLE_EMPTY_CHAT_CLEANUP, true),
+};
+
 // 验证配置
 export function validateConfig(): void {
   const errors: string[] = [];

@@ -7,7 +7,7 @@ import { parseQuestionAnswerText } from '../opencode/question-parser.js';
 import { parseCommand } from '../commands/parser.js';
 import type { EffortLevel } from '../commands/effort.js';
 import { commandHandler } from './command.js';
-import { modelConfig, attachmentConfig } from '../config.js';
+import { modelConfig, attachmentConfig, userConfig } from '../config.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
 
 import { randomUUID } from 'crypto';
@@ -121,6 +121,13 @@ export class GroupHandler {
   async handleMessage(event: FeishuMessageEvent): Promise<void> {
     const { chatId, content, messageId, senderId, attachments } = event;
     const trimmed = content.trim();
+
+    // 0. 白名单访问控制检查
+    if (userConfig.isWhitelistEnabled && !userConfig.allowedUsers.includes(senderId)) {
+      console.log(`[Access] 用户 ${senderId} 不在白名单，拒绝访问`);
+      await feishuClient.reply(messageId, '抱歉，您当前不在机器人的允许使用名单中。如需权限，请联系管理员。');
+      return;
+    }
 
     // 1. 优先处理命令
     const command = parseCommand(trimmed);

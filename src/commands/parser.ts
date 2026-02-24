@@ -33,6 +33,7 @@ export interface ParsedCommand {
   sessionAction?: 'new' | 'switch' | 'list';
   sessionId?: string;      // session switch的目标ID
   sessionDirectory?: string;
+  listAll?: boolean;
   projectAction?: 'list' | 'default_set' | 'default_clear' | 'default_show';
   projectValue?: string;
   clearScope?: 'all' | 'free_session'; // 清理范围
@@ -224,7 +225,7 @@ export function parseCommand(text: string): ParsedCommand {
 
       case 'sessions':
       case 'list':
-        return { type: 'sessions' };
+        return { type: 'sessions', listAll: args.length > 0 && args[0].toLowerCase() === 'all' };
 
       case 'project':
         if (args.length === 0) {
@@ -365,7 +366,8 @@ export function getHelpText(): string {
 
 ⚙️ **会话管理**
 • \`/create_chat\` 或 \`/建群\` 打开建群卡片（下拉选择新建或绑定已有会话）
-• \`/session\` 列出全部会话（含未绑定与仅本地映射记录）
+• \`/session\` 或 \`/sessions\` 列出当前项目的会话
+• \`/sessions all\` 列出所有项目的全部会话
 • \`/session new\` 或 \`/session new <项目别名或绝对路径>\` 开启新话题 (重置上下文)
 • \`/session <sessionId>\` 手动绑定已有会话（需开启 \`ENABLE_MANUAL_SESSION_BIND\`）
 • \`新建会话窗口\` 自然语言触发 \`/session new\`
@@ -375,7 +377,14 @@ export function getHelpText(): string {
 • \`/project default clear\` 清除当前群默认项目
 • \`/clear\` 清空当前上下文 (同上)
 • \`/clear free session\` 清理所有空闲/无人群聊
-• \`/status\` 查看连接状态
+• \`/status\` 查看连接状态和群聊生命周期信息
+
+🧹 **群聊生命周期**
+• 空群（仅剩机器人）默认有 24 小时宽限期，之后自动解散
+• 可通过环境变量 \`EMPTY_CHAT_RETENTION_MS\` 调整：
+  - \`0\` = 立即解散
+  - \`-1\` = 永不自动解散
+  - 正数 = 宽限期毫秒数（默认 86400000 = 24小时）
 
 💡 **提示**
 • 切换的模型/角色仅对**当前会话**生效。

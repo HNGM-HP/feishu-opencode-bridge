@@ -24,6 +24,12 @@ interface ChatSessionData {
   projectName?: string;
   defaultDirectory?: string;
   interactionHistory: InteractionRecord[];
+
+  /**
+   * 群变为空的时间戳
+   * 用于宽限期计算
+   */
+  becameEmptyAt?: number;
 }
 
 interface SessionAliasRecord {
@@ -262,7 +268,7 @@ class ChatSessionStore {
     return session.title.startsWith('飞书群聊') || session.title.startsWith('群聊');
   }
 
-  // 更新会话配置 (模型/角色/强度)
+  // 更新会话配置 (模型/角色/强度/生命周期)
   updateConfig(
     chatId: string,
     config: {
@@ -270,9 +276,24 @@ class ChatSessionStore {
       preferredAgent?: string;
       preferredEffort?: EffortLevel;
       defaultDirectory?: string;
+      becameEmptyAt?: number;
     }
   ): void {
-    const session = this.data.get(chatId);
+    let session = this.data.get(chatId);
+    
+    // 如果记录不存在且包含生命周期字段，则创建一个轻量级记录
+    if (!session && ('becameEmptyAt' in config || 'preferredModel' in config || 'preferredAgent' in config || 'preferredEffort' in config || 'defaultDirectory' in config)) {
+      console.log(`[Store] 为 chatId=${chatId} 创建轻量级记录`);
+      session = {
+        chatId,
+        sessionId: '', // 无 session 绑定
+        creatorId: 'system',
+        createdAt: Date.now(),
+        interactionHistory: [],
+      };
+      this.data.set(chatId, session);
+    }
+
     if (session) {
       if ('preferredModel' in config) {
         if (config.preferredModel) {
@@ -303,6 +324,14 @@ class ChatSessionStore {
           session.defaultDirectory = config.defaultDirectory;
         } else {
           delete session.defaultDirectory;
+        }
+      }
+
+      if ('becameEmptyAt' in config) {
+        if (config.becameEmptyAt) {
+          session.becameEmptyAt = config.becameEmptyAt;
+        } else {
+          delete session.becameEmptyAt;
         }
       }
       this.save();

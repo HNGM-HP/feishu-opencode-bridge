@@ -1,7 +1,7 @@
 import { feishuClient } from '../feishu/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { opencodeClient } from '../opencode/client.js';
-import { userConfig } from '../config.js';
+import { chatLifecycleConfig } from '../config.js';
 
 export interface CleanupStats {
   scannedChats: number;
@@ -9,6 +9,7 @@ export interface CleanupStats {
   deletedSessions: number;
   skippedProtectedSessions: number;
   removedOrphanMappings: number;
+  deferredEmptyChats: number; // 新增：推迟清理的空群数
 }
 
 export class LifecycleHandler {
@@ -17,7 +18,7 @@ export class LifecycleHandler {
     console.log('[Lifecycle] 正在检查无效群聊...');
     const stats = await this.runCleanupScan();
     console.log(
-      `[Lifecycle] 清理统计: scanned=${stats.scannedChats}, disbanded=${stats.disbandedChats}, deletedSession=${stats.deletedSessions}, skippedProtected=${stats.skippedProtectedSessions}, removedOrphanMappings=${stats.removedOrphanMappings}`
+      `[Lifecycle] 清理统计: scanned=${stats.scannedChats}, disbanded=${stats.disbandedChats}, deletedSession=${stats.deletedSessions}, skippedProtected=${stats.skippedProtectedSessions}, removedOrphanMappings=${stats.removedOrphanMappings}, deferredEmpty=${stats.deferredEmptyChats}`
     );
     console.log('[Lifecycle] 清理完成');
   }
@@ -29,7 +30,10 @@ export class LifecycleHandler {
       deletedSessions: 0,
       skippedProtectedSessions: 0,
       removedOrphanMappings: 0,
+      deferredEmptyChats: 0,
     };
+    
+    const now = Date.now();
 
     const chats = await feishuClient.getUserChats();
     const activeChatIdSet = new Set(chats);
@@ -50,7 +54,7 @@ export class LifecycleHandler {
 
     for (const chatId of chats) {
       stats.scannedChats += 1;
-      await this.checkAndDisbandIfEmpty(chatId, stats);
+      await this.evaluateChatLifecycle(chatId, stats, now);
     }
 
     return stats;
@@ -59,48 +63,93 @@ export class LifecycleHandler {
   // 处理用户退群事件
   async handleMemberLeft(chatId: string, memberId: string): Promise<void> {
     console.log(`[Lifecycle] 用户 ${memberId} 退出群 ${chatId}`);
-    await this.checkAndDisbandIfEmpty(chatId);
+    // 不再立即检查，让定期扫描处理，避免临时退群导致误删
+    // 如果配置了立即清理模式(0ms)，则延迟检查
+    if (chatLifecycleConfig.emptyChatRetentionMs === 0) {
+      const stats: CleanupStats = {
+        scannedChats: 0,
+        disbandedChats: 0,
+        deletedSessions: 0,
+        skippedProtectedSessions: 0,
+        removedOrphanMappings: 0,
+        deferredEmptyChats: 0,
+      };
+      await this.evaluateChatLifecycle(chatId, stats, Date.now());
+    }
   }
 
-  // 检查群是否为空，为空则解散
-  private async checkAndDisbandIfEmpty(chatId: string, stats?: CleanupStats): Promise<void> {
+  // 评估群生命周期状态
+  private async evaluateChatLifecycle(chatId: string, stats: CleanupStats, now: number): Promise<void> {
     const members = await feishuClient.getChatMembers(chatId);
+    const sessionData = chatSessionStore.getSession(chatId);
 
     console.log(`[Lifecycle] 检查群 ${chatId} 成员数: ${members.length}`);
 
-    // 未配置白名单时：只要群里还有任意成员，就不自动解散
-    // 仅在成员数为 0 时才执行清理，避免误删仅剩 1 名用户的群
-    if (!userConfig.isWhitelistEnabled) {
-      if (members.length > 0) {
-        console.log(`[Lifecycle] 群 ${chatId} 未启用白名单且仍有成员，跳过解散`);
-        return;
-      }
+    // 判断群是否为空（严格只有机器人或无人）
+    // 注意：getChatMembers 返回的成员列表不包含机器人自身
+    const isEmpty = members.length === 0;
 
-      console.log(`[Lifecycle] 群 ${chatId} 未启用白名单且成员为 0，准备解散...`);
+    if (!isEmpty) {
+      // 群不为空，清空 becameEmptyAt
+      chatSessionStore.updateConfig(chatId, { becameEmptyAt: undefined });
+      return;
+    }
+
+    // 群为空，执行清理策略
+    await this.handleEmptyChat(chatId, stats, now, sessionData);
+  }
+
+  // 处理空群的清理逻辑
+  private async handleEmptyChat(
+    chatId: string,
+    stats: CleanupStats,
+    now: number,
+    sessionData: ReturnType<typeof chatSessionStore.getSession>
+  ): Promise<void> {
+    // 检查是否启用自动清理
+    if (!chatLifecycleConfig.enableEmptyChatCleanup) {
+      console.log(`[Lifecycle] 群 ${chatId} 为空但自动清理已禁用，跳过`);
+      return;
+    }
+
+    // 永久保留模式
+    if (chatLifecycleConfig.emptyChatRetentionMs === -1) {
+      console.log(`[Lifecycle] 群 ${chatId} 为空但设置了永久保留，跳过`);
+      return;
+    }
+
+    // 立即清理模式
+    if (chatLifecycleConfig.emptyChatRetentionMs === 0) {
+      console.log(`[Lifecycle] 群 ${chatId} 为空且设置为立即清理，准备解散...`);
       await this.cleanupAndDisband(chatId, stats);
       return;
     }
 
-    // 检查是否有白名单用户在群内
-    const hasAllowedUser = members.some(memberId => userConfig.allowedUsers.includes(memberId));
-    
-    if (hasAllowedUser) {
-      console.log(`[Lifecycle] 群 ${chatId} 包含白名单用户，跳过解散检查`);
+    // 宽限期模式
+    const becameEmptyAt = sessionData?.becameEmptyAt;
+
+    // 第一次发现为空，记录时间
+    if (!becameEmptyAt) {
+      chatSessionStore.updateConfig(chatId, { becameEmptyAt: now });
+      const remainingMs = chatLifecycleConfig.emptyChatRetentionMs;
+      console.log(`[Lifecycle] 群 ${chatId} 首次发现为空，设置宽限期 ${remainingMs}ms`);
+      stats.deferredEmptyChats += 1;
       return;
     }
 
-    // 二次确认：检查群主是否在白名单中（防止成员列表获取失败导致误删）
-    const chatInfo = await feishuClient.getChat(chatId);
-    if (chatInfo && userConfig.allowedUsers.includes(chatInfo.ownerId)) {
-      console.log(`[Lifecycle] 群 ${chatId} 群主(${chatInfo.ownerId})在白名单中，跳过解散检查`);
+    // 检查宽限期是否已过
+    const elapsedMs = now - becameEmptyAt;
+    const remainingMs = chatLifecycleConfig.emptyChatRetentionMs - elapsedMs;
+
+    if (remainingMs > 0) {
+      console.log(`[Lifecycle] 群 ${chatId} 为空，宽限期还剩 ${remainingMs}ms`);
+      stats.deferredEmptyChats += 1;
       return;
     }
-    
-    // 如果成员数 <= 1，认为群为空（只有机器人或无人）
-    if (members.length <= 1) {
-      console.log(`[Lifecycle] 群 ${chatId} 成员不足且无白名单用户，准备解散...`);
-      await this.cleanupAndDisband(chatId, stats);
-    }
+
+    // 宽限期已过，执行清理
+    console.log(`[Lifecycle] 群 ${chatId} 宽限期已过，准备解散...`);
+    await this.cleanupAndDisband(chatId, stats);
   }
 
   private async cleanupAndDisband(chatId: string, stats?: CleanupStats): Promise<void> {

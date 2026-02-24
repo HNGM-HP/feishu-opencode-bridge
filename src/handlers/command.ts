@@ -11,7 +11,7 @@ import {
 } from '../opencode/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { buildControlCard, buildStatusCard } from '../feishu/cards.js';
-import { modelConfig, userConfig } from '../config.js';
+import { modelConfig, userConfig, chatLifecycleConfig } from '../config.js';
 import { sendFileToFeishu, validateFilePath } from './file-sender.js';
 import { lifecycleHandler } from './lifecycle.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
@@ -752,7 +752,7 @@ export class CommandHandler {
           } else if (command.sessionAction === 'switch' && command.sessionId) {
             await this.handleSwitchSession(chatId, messageId, context.senderId, command.sessionId, context.chatType);
           } else {
-            await feishuClient.reply(messageId, '用法: /session（列出会话） 或 /session new 或 /session <sessionId>');
+            await feishuClient.reply(messageId, '用法: /sessions（列出当前项目会话） 或 /sessions all 或 /session new 或 /session <sessionId>');
           }
           break;
 
@@ -835,7 +835,7 @@ export class CommandHandler {
           break;
         
         case 'sessions':
-          await this.handleListSessions(chatId, messageId);
+          await this.handleListSessions(chatId, messageId, command.listAll);
           break;
 
         case 'send_file':
@@ -856,16 +856,37 @@ export class CommandHandler {
 
   private async handleStatus(chatId: string, messageId: string): Promise<void> {
     const sessionId = chatSessionStore.getSessionId(chatId);
-    // 这里简单返回文本，或者用 StatusCard
+    const session = chatSessionStore.getSession(chatId);
+    
+    // Session 状态
     const status = sessionId ? `当前绑定 Session: ${sessionId}` : '未绑定 Session';
     
-    // 如果能获取更多信息更好
-    let extra = '';
-    if (sessionId) {
-       // 尝试获取 session 详情? 暂时跳过
+    // 生命周期配置状态
+    let lifecycleInfo = '';
+    if (!chatLifecycleConfig.enableEmptyChatCleanup) {
+      lifecycleInfo = '\n🧹 **群聊生命周期**: 自动清理已禁用';
+    } else if (chatLifecycleConfig.emptyChatRetentionMs === -1) {
+      lifecycleInfo = '\n🧹 **群聊生命周期**: 永不自动解散';
+    } else if (chatLifecycleConfig.emptyChatRetentionMs === 0) {
+      lifecycleInfo = '\n🧹 **群聊生命周期**: 空群立即解散';
+    } else {
+      const hours = Math.round(chatLifecycleConfig.emptyChatRetentionMs / 3600000);
+      lifecycleInfo = `\n🧹 **群聊生命周期**: 空群宽限期 ${hours} 小时`;
+      
+      // 如果群已进入宽限期，显示剩余时间
+      if (session?.becameEmptyAt) {
+        const elapsed = Date.now() - session.becameEmptyAt;
+        const remaining = chatLifecycleConfig.emptyChatRetentionMs - elapsed;
+        if (remaining > 0) {
+          const remainingHours = Math.ceil(remaining / 3600000);
+          lifecycleInfo += `\n⏰ 宽限期剩余: ${remainingHours} 小时`;
+        } else {
+          lifecycleInfo += `\n⚠️ 宽限期已过期，即将自动解散`;
+        }
+      }
     }
 
-    await feishuClient.reply(messageId, `🤖 **OpenCode 状态**\n\n${status}\n${extra}`);
+    await feishuClient.reply(messageId, `🤖 **OpenCode 状态**\n\n${status}${lifecycleInfo}`);
   }
 
   private async handleNewSession(
@@ -1051,12 +1072,20 @@ export class CommandHandler {
     await feishuClient.reply(messageId, replyLines.join('\n'));
   }
 
-  private async handleListSessions(chatId: string, messageId: string): Promise<void> {
+  private async handleListSessions(chatId: string, messageId: string, listAll: boolean = false): Promise<void> {
     let sessions: Awaited<ReturnType<typeof opencodeClient.listSessions>> = [];
     let opencodeUnavailable = false;
+    
+    const sessionData = chatSessionStore.getSession(chatId);
+    const currentDirectory = sessionData?.resolvedDirectory || sessionData?.defaultDirectory;
+
     try {
-      const storeKnownDirs = chatSessionStore.getKnownDirectories();
-      sessions = await opencodeClient.listAllSessions(storeKnownDirs);
+      if (listAll) {
+        const storeKnownDirs = chatSessionStore.getKnownDirectories();
+        sessions = await opencodeClient.listAllSessions(storeKnownDirs);
+      } else {
+        sessions = await opencodeClient.listSessions(currentDirectory);
+      }
     } catch (error) {
       opencodeUnavailable = true;
       console.warn('[Command] 拉取 OpenCode 会话失败，回退到本地映射列表:', error);
@@ -1068,81 +1097,133 @@ export class CommandHandler {
       return rightTime - leftTime;
     });
 
-    const localBindings = new Map<string, { chatIds: string[]; title?: string }>();
+    const localBindings = new Map<string, { chatIds: string[]; title?: string; directory?: string }>();
     for (const boundChatId of chatSessionStore.getAllChatIds()) {
       const binding = chatSessionStore.getSession(boundChatId);
       if (!binding?.sessionId) continue;
+      
+      const bindingDir = binding.resolvedDirectory || binding.defaultDirectory;
+      
+      // If not listing all, filter out local bindings that don't match current directory
+      if (!listAll && bindingDir !== currentDirectory) {
+        continue;
+      }
 
       const existing = localBindings.get(binding.sessionId);
       if (existing) {
         existing.chatIds.push(boundChatId);
-        if (!existing.title && binding.title) {
-          existing.title = binding.title;
-        }
+        if (!existing.title && binding.title) existing.title = binding.title;
         continue;
       }
 
       localBindings.set(binding.sessionId, {
         chatIds: [boundChatId],
         title: binding.title,
+        directory: binding.resolvedDirectory
       });
     }
 
-    const tableHeader = 'SessionID | OpenCode侧会话名称 | 工作目录 | 绑定群明细 | 当前会话状态';
-    const rows: string[] = [];
+    interface SessionRow {
+      id: string;
+      title: string;
+      chatDetail: string;
+      status: string;
+    }
+
+    const groups = new Map<string, SessionRow[]>();
+    const addRowToGroup = (dir: string, row: SessionRow) => {
+      if (!groups.has(dir)) groups.set(dir, []);
+      groups.get(dir)!.push(row);
+    };
+
     for (const session of sortedSessions) {
       const bindingInfo = localBindings.get(session.id);
-      const title = session.title && session.title.trim().length > 0 ? session.title.trim() : '未命名会话';
-      const directory = session.directory && session.directory.trim().length > 0 ? session.directory.trim() : '-';
+      const title = session.title && session.title.trim() ? session.title.trim() : '未命名会话';
+      const directory = session.directory && session.directory.trim() ? session.directory.trim() : '全局默认项目';
       const chatDetail = bindingInfo ? bindingInfo.chatIds.join(', ') : '无';
-      const status = bindingInfo ? 'OpenCode可用/已绑定' : 'OpenCode可用/未绑定';
-      rows.push(`${session.id} | ${title} | ${directory} | ${chatDetail} | ${status}`);
+      const status = bindingInfo ? '已绑定' : '可用(未绑定)';
+      
+      addRowToGroup(directory, { id: session.id, title, chatDetail, status });
       localBindings.delete(session.id);
     }
 
     for (const [sessionId, bindingInfo] of localBindings.entries()) {
-      const localTitle = bindingInfo.title && bindingInfo.title.trim().length > 0
-        ? bindingInfo.title.trim()
-        : '本地绑定记录';
-      rows.push(`${sessionId} | ${localTitle} | 未知 | ${bindingInfo.chatIds.join(', ')} | 仅本地映射(可能已失活)`);
+      const localTitle = bindingInfo.title && bindingInfo.title.trim() ? bindingInfo.title.trim() : '本地记录';
+      const directory = bindingInfo.directory && bindingInfo.directory.trim() ? bindingInfo.directory.trim() : '未知(或全局)';
+      addRowToGroup(directory + ' [失效]', {
+        id: sessionId,
+        title: localTitle,
+        chatDetail: bindingInfo.chatIds.join(', '),
+        status: '失效(仅本地映射)'
+      });
     }
 
-    if (rows.length === 0) {
+    if (groups.size === 0) {
       const emptyMessage = opencodeUnavailable
         ? 'OpenCode 暂不可达，且当前无本地会话映射记录'
-        : '当前无可用会话记录';
+        : (listAll ? '当前无可用会话记录' : '当前工作目录无可用会话记录');
       await feishuClient.reply(messageId, emptyMessage);
       return;
     }
 
-    const rowChunks: string[] = [];
-    let currentRows = '';
-    for (const row of rows) {
-      if ((tableHeader.length + currentRows.length + row.length + 2) > 3000 && currentRows.length > 0) {
-        rowChunks.push(currentRows.trimEnd());
-        currentRows = '';
+    let totalCount = 0;
+    const chunks: string[] = [];
+    let currentChunk = '';
+    
+    // Sort directories to keep output consistent
+    const sortedDirs = Array.from(groups.keys()).sort();
+    
+    for (const dir of sortedDirs) {
+      const rows = groups.get(dir)!;
+      totalCount += rows.length;
+      
+      const dirHeader = `📁 **项目: ${dir}**\n| SessionID | 会话名称 | 状态 | 绑定群 |\n| --- | --- | --- | --- |\n`;
+      
+      let block = dirHeader;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowStr = `| ${row.id} | ${row.title} | ${row.status} | ${row.chatDetail} |\n`;
+        
+        // If adding this row to the current chunk makes it too large
+        if (currentChunk.length + block.length + rowStr.length > 3000) {
+          // If we already have something in the current chunk, save it
+          if (currentChunk.length > 0) {
+            chunks.push(currentChunk.trimEnd());
+            currentChunk = '';
+            // If we've started this directory block but haven't put it in a chunk yet
+            // we should add the header back to the new chunk if we already had rows
+            if (i > 0) {
+              block = dirHeader + rowStr;
+            } else {
+              block += rowStr;
+            }
+          } else {
+            // Unlikely to have a single row > 3000 chars, but handle gracefully
+            block += rowStr;
+          }
+        } else {
+          block += rowStr;
+        }
       }
-      currentRows += `${row}\n`;
-    }
-    if (currentRows.trim().length > 0) {
-      rowChunks.push(currentRows.trimEnd());
+      
+      currentChunk += `${block}\n`;
     }
 
-    const chunks = rowChunks.map(chunk => `${tableHeader}\n${chunk}`);
-
-    if (chunks.length === 0) {
-      await feishuClient.reply(messageId, `${tableHeader}\n（无数据）`);
-      return;
+    if (currentChunk.trim().length > 0) {
+      chunks.push(currentChunk.trimEnd());
     }
 
-    const totalCount = rows.length;
     const header = opencodeUnavailable
-      ? `📚 会话列表（总计 ${totalCount}，OpenCode 暂不可达，仅展示本地映射）`
+      ? `📚 会话列表（总计 ${totalCount}，OpenCode 暂不可达）`
       : `📚 会话列表（总计 ${totalCount}）`;
+
+    const hint = listAll 
+      ? '' 
+      : '\n💡 提示：使用 `/sessions all` 查看所有项目的会话\n';
 
     await feishuClient.reply(
       messageId,
-      `${header}\n${chunks[0]}`
+      `${header}${hint}\n${chunks[0]}`
     );
 
     for (let index = 1; index < chunks.length; index++) {
@@ -1805,7 +1886,7 @@ export class CommandHandler {
 
     await feishuClient.reply(
       messageId,
-      `✅ 清理完成\n- 扫描群聊: ${stats.scannedChats} 个\n- 解散群聊: ${stats.disbandedChats} 个\n- 清理会话: ${stats.deletedSessions} 个\n- 跳过删除(受保护): ${stats.skippedProtectedSessions} 个\n- 移除孤儿映射: ${stats.removedOrphanMappings} 个`
+      `✅ 清理完成\n- 扫描群聊: ${stats.scannedChats} 个\n- 解散群聊: ${stats.disbandedChats} 个\n- 清理会话: ${stats.deletedSessions} 个\n- 跳过删除(受保护): ${stats.skippedProtectedSessions} 个\n- 移除孤儿映射: ${stats.removedOrphanMappings} 个\n- 宽限期中(推迟清理): ${stats.deferredEmptyChats} 个`
     );
   }
 

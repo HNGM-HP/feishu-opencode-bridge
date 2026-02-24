@@ -51,6 +51,7 @@
 - [快速开始](#快速开始)
 - [部署与运维](#部署与运维)
 - [环境变量](#环境变量)
+- [迁移指南](#迁移指南)
 - [飞书后台配置](#飞书后台配置)
 - [命令速查](#命令速查)
 - [关键实现细节](#关键实现细节)
@@ -311,7 +312,9 @@ node scripts/deploy.mjs status
 | `OPENCODE_PORT` | 否 | `4096` | OpenCode 端口 |
 | `OPENCODE_SERVER_USERNAME` | 否 | `opencode` | OpenCode Server Basic Auth 用户名 |
 | `OPENCODE_SERVER_PASSWORD` | 否 | - | OpenCode Server Basic Auth 密码 |
-| `ALLOWED_USERS` | 否 | - | 飞书 open_id 白名单，逗号分隔；为空时不启用白名单 |
+| `ALLOWED_USERS` | 否 | - | 飞书 open_id 白名单，逗号分隔；仅用于消息处理权限控制，不影响群生命周期 |
+| `ENABLE_EMPTY_CHAT_CLEANUP` | 否 | `true` | 是否启用空群自动清理 |
+| `EMPTY_CHAT_RETENTION_MS` | 否 | `86400000` | 空群保留时长（毫秒）。`0`=立即解散，`-1`=永不自动解散 |
 | `ENABLE_MANUAL_SESSION_BIND` | 否 | `true` | 是否允许“绑定已有 OpenCode 会话”；关闭后仅允许新建会话 |
 | `DEFAULT_PROVIDER` | 否 | - | 默认模型提供商;与 `DEFAULT_MODEL` 同时配置才生效 |
 | `DEFAULT_MODEL` | 否 | - | 默认模型;未配置时跟随 OpenCode 自身默认模型 |
@@ -333,8 +336,9 @@ node scripts/deploy.mjs status
 
 `ALLOWED_USERS` 说明：
 
-- 未配置或留空：不启用白名单；生命周期清理仅在群成员数为 `0` 时才会自动解散群聊。
-- 已配置：启用白名单保护；当群成员不足且群内/群主都不在白名单时，才会自动解散。
+- 未配置或留空：不启用白名单；所有用户均可使用机器人。
+- 已配置：启用访问控制；仅白名单内的用户可以触发机器人回复。
+- **注意**：`ALLOWED_USERS` 不再影响群聊生命周期。无论是否在白名单，空群清理均由 `EMPTY_CHAT_RETENTION_MS` 统一管理。
 
 手动绑定会话说明（`ENABLE_MANUAL_SESSION_BIND=true` 时）：
 
@@ -357,6 +361,24 @@ node scripts/deploy.mjs status
 - JSON 格式映射短名到绝对路径，如 `{"frontend":"/home/user/frontend"}`。
 - 用户可通过 `/session new frontend` 使用别名创建会话，无需记忆完整路径。
 - 别名路径同样受 `ALLOWED_DIRECTORIES` 约束。
+
+<a id="迁移指南"></a>
+## 🔄 迁移指南 (v2.8.0+)
+
+本次更新重构了群组生命周期管理逻辑，将访问控制与清理逻辑解耦。
+
+### 行为变更
+
+1. **解耦白名单**：`ALLOWED_USERS` 仅控制“谁能用”，不再决定“群删不删”。
+2. **引入宽限期**：空群（仅剩机器人）不再立即删除，而是进入宽限期（默认 24 小时）。
+
+### 配置迁移建议
+
+| 场景 | 旧版配置 | 建议新版配置 |
+|---|---|---|
+| 追求极致清理（旧版默认） | `ALLOWED_USERS=` (空) | `EMPTY_CHAT_RETENTION_MS=0` |
+| 保护白名单用户的群 | `ALLOWED_USERS=user1,user2` | 保持 `ALLOWED_USERS`，按需调整 `EMPTY_CHAT_RETENTION_MS` |
+| 永不自动解散 | - | `EMPTY_CHAT_RETENTION_MS=-1` |
 
 <a id="飞书后台配置"></a>
 ## ⚙️ 飞书后台配置
@@ -424,7 +446,8 @@ node scripts/deploy.mjs status
 | `创建角色 名称=...; 描述=...; 类型=...; 工具=...` | 自然语言创建自定义角色并切换 |
 | `/stop` | 中断当前会话执行 |
 | `/undo` | 撤回上一轮交互（OpenCode + 飞书同步） |
-| `/session` | 列出全部会话（含未绑定与仅本地映射记录） |
+| `/session` 或 `/sessions` | 列出当前项目会话（含未绑定与仅本地映射记录） |
+| `/sessions all` | 列出所有项目的全部会话 |
 | `/session new` | 开启新话题（重置上下文，使用默认项目） |
 | `/session new <项目别名或绝对路径>` | 在指定项目/目录中新建会话 |
 | `/session <sessionId>` | 手动绑定已有 OpenCode 会话（需启用 `ENABLE_MANUAL_SESSION_BIND`） |

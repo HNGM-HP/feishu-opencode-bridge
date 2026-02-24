@@ -393,6 +393,13 @@ export class P2PHandler {
     const { chatId, content, senderId, messageId } = event;
     const trimmedContent = content.trim();
 
+    // 0. 白名单访问控制检查
+    if (userConfig.isWhitelistEnabled && !userConfig.allowedUsers.includes(senderId)) {
+      console.log(`[Access] 用户 ${senderId} 不在白名单，拒绝访问`);
+      await this.safeReply(messageId, chatId, '抱歉，您当前不在机器人的允许使用名单中。如需权限，请联系管理员。');
+      return;
+    }
+
     // 1. 检查命令
     const command = parseCommand(content);
 
