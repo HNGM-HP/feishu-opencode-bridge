@@ -746,12 +746,10 @@ export class CommandHandler {
         case 'session':
           if (command.sessionAction === 'new') {
             await this.handleNewSession(chatId, messageId, context.senderId, context.chatType, command.sessionDirectory);
-          } else if (command.sessionAction === 'list') {
-            await this.handleListSessions(chatId, messageId);
           } else if (command.sessionAction === 'switch' && command.sessionId) {
             await this.handleSwitchSession(chatId, messageId, context.senderId, command.sessionId, context.chatType);
           } else {
-            await feishuClient.reply(messageId, '用法: /session（列出会话） 或 /session new 或 /session <sessionId>');
+            await feishuClient.reply(messageId, '用法: /session new 或 /session <sessionId>（列出会话请用 /sessions）');
           }
           break;
 
@@ -834,7 +832,7 @@ export class CommandHandler {
           break;
         
         case 'sessions':
-          await this.handleListSessions(chatId, messageId);
+          await this.handleListSessions(chatId, messageId, command.listAll);
           break;
 
         case 'send':
@@ -1050,11 +1048,23 @@ export class CommandHandler {
     await feishuClient.reply(messageId, replyLines.join('\n'));
   }
 
-  private async handleListSessions(chatId: string, messageId: string): Promise<void> {
-    let sessions: Awaited<ReturnType<typeof opencodeClient.listSessionsAcrossProjects>> = [];
+  private async handleListSessions(chatId: string, messageId: string, listAll: boolean = false): Promise<void> {
+    let sessions: Awaited<ReturnType<typeof opencodeClient.listSessions>> = [];
     let opencodeUnavailable = false;
+
+    // 获取当前群的工作目录，用于非全量模式下过滤
+    const sessionData = chatSessionStore.getSession(chatId);
+    const currentDirectory = sessionData?.resolvedDirectory || sessionData?.defaultDirectory;
+
     try {
-      sessions = await opencodeClient.listSessionsAcrossProjects();
+      if (listAll) {
+        // 全量：聚合所有已知目录的会话
+        const storeKnownDirs = chatSessionStore.getKnownDirectories();
+        sessions = await opencodeClient.listAllSessions(storeKnownDirs);
+      } else {
+        // 默认：只查当前项目目录的会话
+        sessions = await opencodeClient.listSessions(currentDirectory ? { directory: currentDirectory } : undefined);
+      }
     } catch (error) {
       opencodeUnavailable = true;
       console.warn('[Command] 拉取 OpenCode 会话失败，回退到本地映射列表:', error);
@@ -1065,18 +1075,19 @@ export class CommandHandler {
       const binding = chatSessionStore.getSession(boundChatId);
       if (!binding?.sessionId) continue;
 
+      const bindingDir = binding.resolvedDirectory || binding.defaultDirectory;
+
+      // 非全量模式：跳过不属于当前目录的本地绑定
+      if (!listAll && bindingDir !== currentDirectory) {
+        continue;
+      }
+
       const existing = localBindings.get(binding.sessionId);
       if (existing) {
         existing.chatIds.push(boundChatId);
-        if (!existing.title && binding.title) {
-          existing.title = binding.title;
-        }
-        if (!existing.sessionDirectory && binding.sessionDirectory) {
-          existing.sessionDirectory = binding.sessionDirectory;
-        }
-        if (!existing.projectName && binding.projectName) {
-          existing.projectName = binding.projectName;
-        }
+        if (!existing.title && binding.title) existing.title = binding.title;
+        if (!existing.sessionDirectory && binding.sessionDirectory) existing.sessionDirectory = binding.sessionDirectory;
+        if (!existing.projectName && binding.projectName) existing.projectName = binding.projectName;
         continue;
       }
 
@@ -1106,22 +1117,12 @@ export class CommandHandler {
       const projectName = bindingInfo?.projectName;
       const chatDetail = bindingInfo ? bindingInfo.chatIds.join(', ') : '无';
       const status = bindingInfo ? 'OpenCode可用/已绑定' : 'OpenCode可用/未绑定';
-      rows.push({
-        directory,
-        projectName,
-        title,
-        sessionId: session.id,
-        chatDetail,
-        status,
-        statusRank: bindingInfo ? 0 : 1,
-      });
+      rows.push({ directory, projectName, title, sessionId: session.id, chatDetail, status, statusRank: bindingInfo ? 0 : 1 });
       localBindings.delete(session.id);
     }
 
     for (const [sessionId, bindingInfo] of Array.from(localBindings.entries())) {
-      const localTitle = bindingInfo.title && bindingInfo.title.trim().length > 0
-        ? bindingInfo.title.trim()
-        : '本地绑定记录';
+      const localTitle = bindingInfo.title && bindingInfo.title.trim().length > 0 ? bindingInfo.title.trim() : '本地绑定记录';
       const localDirectory = bindingInfo.sessionDirectory && bindingInfo.sessionDirectory.trim().length > 0
         ? bindingInfo.sessionDirectory.trim()
         : '-';
@@ -1138,46 +1139,31 @@ export class CommandHandler {
 
     const normalizeDirectoryForSort = (directory: string): string => {
       const normalized = directory.trim();
-      if (!normalized || normalized === '-') {
-        return '\uffff';
-      }
-      return normalized;
+      return (!normalized || normalized === '-') ? '\uffff' : normalized;
     };
 
     rows.sort((left, right) => {
       const directoryCompare = normalizeDirectoryForSort(left.directory).localeCompare(
-        normalizeDirectoryForSort(right.directory),
-        'zh-Hans-CN'
+        normalizeDirectoryForSort(right.directory), 'zh-Hans-CN'
       );
-      if (directoryCompare !== 0) {
-        return directoryCompare;
-      }
-
-      if (left.statusRank !== right.statusRank) {
-        return left.statusRank - right.statusRank;
-      }
-
+      if (directoryCompare !== 0) return directoryCompare;
+      if (left.statusRank !== right.statusRank) return left.statusRank - right.statusRank;
       const titleCompare = left.title.localeCompare(right.title, 'zh-Hans-CN');
-      if (titleCompare !== 0) {
-        return titleCompare;
-      }
-
+      if (titleCompare !== 0) return titleCompare;
       return left.sessionId.localeCompare(right.sessionId, 'en');
     });
 
     const tableHeader = '工作区目录 | SessionID | OpenCode侧会话名称 | 绑定群明细 | 当前会话状态';
     const rowTexts: string[] = [];
     for (const row of rows) {
-      const directoryDisplay = row.projectName
-        ? `${row.directory} (${row.projectName})`
-        : row.directory;
+      const directoryDisplay = row.projectName ? `${row.directory} (${row.projectName})` : row.directory;
       rowTexts.push(`${directoryDisplay} | ${row.sessionId} | ${row.title} | ${row.chatDetail} | ${row.status}`);
     }
 
     if (rowTexts.length === 0) {
       const emptyMessage = opencodeUnavailable
         ? 'OpenCode 暂不可达，且当前无本地会话映射记录'
-        : '当前无可用会话记录';
+        : (listAll ? '当前无可用会话记录' : '当前工作目录无可用会话记录');
       await feishuClient.reply(messageId, emptyMessage);
       return;
     }
@@ -1191,13 +1177,9 @@ export class CommandHandler {
       }
       currentRows += `${row}\n`;
     }
-
-    if (currentRows.trim().length > 0) {
-      rowChunks.push(currentRows.trimEnd());
-    }
+    if (currentRows.trim().length > 0) rowChunks.push(currentRows.trimEnd());
 
     const chunks = rowChunks.map(chunk => `${tableHeader}\n${chunk}`);
-
     if (chunks.length === 0) {
       await feishuClient.reply(messageId, `${tableHeader}\n（无数据）`);
       return;
@@ -1208,10 +1190,9 @@ export class CommandHandler {
       ? `📚 会话列表（总计 ${totalCount}，OpenCode 暂不可达，仅展示本地映射）`
       : `📚 会话列表（总计 ${totalCount}）`;
 
-    await feishuClient.reply(
-      messageId,
-      `${header}\n${chunks[0]}`
-    );
+    const hint = listAll ? '' : '\n💡 提示：使用 `/sessions all` 查看所有项目的会话\n';
+
+    await feishuClient.reply(messageId, `${header}${hint}\n${chunks[0]}`);
 
     for (let index = 1; index < chunks.length; index++) {
       await feishuClient.sendText(chatId, `📚 会话列表（续 ${index + 1}/${chunks.length}）\n${chunks[index]}`);

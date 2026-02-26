@@ -30,9 +30,10 @@ export interface ParsedCommand {
   agentName?: string;      // agent类型的名称
   roleAction?: 'create';
   roleSpec?: string;
-  sessionAction?: 'new' | 'switch' | 'list';
+  sessionAction?: 'new' | 'switch';
   sessionId?: string;      // session switch的目标ID
   sessionDirectory?: string; // session new 时指定的目录
+  listAll?: boolean;
   projectAction?: 'list' | 'default_set' | 'default_clear' | 'default_show';
   projectValue?: string;
   clearScope?: 'all' | 'free_session'; // 清理范围
@@ -210,7 +211,8 @@ export function parseCommand(text: string): ParsedCommand {
 
       case 'session':
         if (args.length === 0) {
-          return { type: 'session', sessionAction: 'list' };
+          // 无参数的 /session 直接等同于 /sessions（向后兼容）
+          return { type: 'sessions', listAll: false };
         }
         if (args[0].toLowerCase() === 'new') {
           const sessionDirectory = args.slice(1).join(' ').trim();
@@ -225,7 +227,7 @@ export function parseCommand(text: string): ParsedCommand {
 
       case 'sessions':
       case 'list':
-        return { type: 'sessions' };
+        return { type: 'sessions', listAll: args.length > 0 && args[0].toLowerCase() === 'all' };
 
       case 'project':
         if (args.length === 0) {
@@ -386,7 +388,8 @@ export function getHelpText(): string {
 
 ⚙️ **会话管理**
 • \`/create_chat\` 或 \`/建群\` 打开建群卡片（下拉按 工作区/Session短ID/简介 展示，支持跨工作区）
-• \`/session\` 列出全部工作区会话（含未绑定与仅本地映射记录）
+• \`/sessions\` 列出当前项目的会话
+• \`/sessions all\` 列出所有项目的全部会话
 • \`/session new\` 或 \`/session new <项目别名或绝对路径>\` 开启新话题 (重置上下文)
 • \`/session <sessionId>\` 手动绑定已有会话（支持 Web 端会话，需开启 \`ENABLE_MANUAL_SESSION_BIND\`）
 • \`新建会话窗口\` 自然语言触发 \`/session new\`
