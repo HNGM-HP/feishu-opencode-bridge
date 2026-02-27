@@ -340,6 +340,16 @@ export class DirectoryPolicy {
     return results;
   }
 
+  // 判断目标路径是否位于允许目录范围内
+  static isAllowedPath(targetPath: string, allowedDirectories?: string[]): boolean {
+    const normalizedAllowed = this.normalizeAllowedDirectories(allowedDirectories ?? directoryConfig.allowedDirectories);
+    if (normalizedAllowed.length === 0) {
+      return false;
+    }
+    const normalizedTarget = this.normalizePath(targetPath);
+    return this.isPathAllowed(normalizedTarget, normalizedAllowed);
+  }
+
   private static normalizePath(value: string): string {
     return path.resolve(path.normalize(value));
   }

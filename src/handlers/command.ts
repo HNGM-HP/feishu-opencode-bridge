@@ -1251,7 +1251,7 @@ export class CommandHandler {
          const chatDefault = chatSessionStore.getSession(chatId)?.defaultDirectory;
          const dirResult = DirectoryPolicy.resolve({ chatDefaultDirectory: chatDefault });
          const effectiveDir = dirResult.ok && dirResult.source !== 'server_default' ? dirResult.directory : undefined;
-         const newSession = await opencodeClient.createSession(title);
+         const newSession = await opencodeClient.createSession(title, effectiveDir);
           if (newSession) {
                chatSessionStore.setSession(chatId, newSession.id, userId, title, { chatType, resolvedDirectory: newSession.directory });
                session = chatSessionStore.getSession(chatId);

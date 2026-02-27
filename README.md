@@ -319,7 +319,7 @@ node scripts/deploy.mjs status
 | `PERMISSION_REQUEST_TIMEOUT_MS` | 否 | `0` | 权限请求在桥接侧的保留时长（毫秒）；`<=0` 表示不超时，持续等待回复 |
 | `OUTPUT_UPDATE_INTERVAL` | 否 | `3000` | 输出刷新间隔（ms） |
 | `ATTACHMENT_MAX_SIZE` | 否 | `52428800` | 附件大小上限（字节） |
-| `ALLOWED_DIRECTORIES` | 否 | - | 允许的工作目录根列表，逗号分隔绝对路径；未配置时禁止用户自定义路径 |
+| `ALLOWED_DIRECTORIES` | 否 | - | 允许的工作目录根列表，逗号分隔绝对路径；未配置时禁止用户自定义路径，同时 `/send` 文件发送会直接拒绝 |
 | `DEFAULT_WORK_DIRECTORY` | 否 | - | 全局默认工作目录（最低优先级兜底），不配置则跟随 OpenCode 服务端 |
 | `PROJECT_ALIASES` | 否 | `{}` | 项目别名 JSON 映射（如 `{"fe":"/home/user/fe"}`），支持短名创建会话 |
 | `GIT_ROOT_NORMALIZATION` | 否 | `true` | 是否自动将目录归一到 Git 仓库根目录 |
@@ -528,6 +528,7 @@ node scripts/deploy.mjs status
 - `/send <绝对路径>` 直接调用飞书上传 API，不经过 AI，0 延迟。
 - 图片（.png/.jpg/.gif/.webp 等）走图片通道（上限 10MB），其余走文件通道（上限 30MB），与飞书官方限制一致。
 - 内置敏感文件黑名单（.env、id_rsa、.pem 等），防止误发。
+- **安全策略**：仅允许发送位于 `ALLOWED_DIRECTORIES` 白名单范围内的文件；未配置 `ALLOWED_DIRECTORIES` 时，`/send` 默认拒绝。
 
 
 ### 8) 工作目录策略（DirectoryPolicy）

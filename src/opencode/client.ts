@@ -476,7 +476,7 @@ class OpencodeClientWrapper extends EventEmitter {
 
     try {
       const events = await this.client!.event.subscribe({
-        query: { directory: encodeURIComponent(normalizedDirectory) },
+        query: { directory: normalizedDirectory },
       });
       console.log(`[OpenCode] 目录事件流订阅成功: ${normalizedDirectory}`);
 
@@ -733,16 +733,16 @@ class OpencodeClientWrapper extends EventEmitter {
       void this.ensureDirectoryEventStream(options.directory);
     }
 
-    const response = await client.session.prompt({
-      path: { id: sessionId },
-      body: {
-        parts: [{ type: 'text', text }],
-        ...(options?.agent ? { agent: options.agent } : {}),
-        ...(model ? { model } : {}),
-        ...(options?.variant ? { variant: options.variant } : {}),
-      },
-      ...(options?.directory ? { query: { directory: encodeURIComponent(options.directory) } } : {}),
-    });
+      const response = await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          parts: [{ type: 'text', text }],
+          ...(options?.agent ? { agent: options.agent } : {}),
+          ...(model ? { model } : {}),
+          ...(options?.variant ? { variant: options.variant } : {}),
+        },
+      ...(options?.directory ? { query: { directory: options.directory } } : {}),
+      });
 
     return response.data as { info: Message; parts: Part[] };
   }
@@ -767,17 +767,17 @@ class OpencodeClientWrapper extends EventEmitter {
       void this.ensureDirectoryEventStream(options.directory);
     }
 
-    const response = await client.session.prompt({
-      path: { id: sessionId },
-      body: {
-        parts,
-        // ...(messageId ? { messageID: messageId } : {}), // 已注释：避免传递飞书 MessageID 导致 Opencode 无法处理
-        ...(options?.agent ? { agent: options.agent } : {}),
-        ...(model ? { model } : {}),
-        ...(options?.variant ? { variant: options.variant } : {}),
-      },
-      ...(options?.directory ? { query: { directory: encodeURIComponent(options.directory) } } : {}),
-    });
+      const response = await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          parts,
+          // ...(messageId ? { messageID: messageId } : {}), // 已注释：避免传递飞书 MessageID 导致 Opencode 无法处理
+          ...(options?.agent ? { agent: options.agent } : {}),
+          ...(model ? { model } : {}),
+          ...(options?.variant ? { variant: options.variant } : {}),
+        },
+      ...(options?.directory ? { query: { directory: options.directory } } : {}),
+      });
 
     return response.data as { info: Message; parts: Part[] };
   }
@@ -873,14 +873,14 @@ class OpencodeClientWrapper extends EventEmitter {
       void this.ensureDirectoryEventStream(options.directory);
     }
 
-    const result = await client.session.command({
-      path: { id: sessionId },
-      body: {
-        command,
-        arguments: args,
-      },
-      ...(options?.directory ? { query: { directory: encodeURIComponent(options.directory) } } : {}),
-    });
+      const result = await client.session.command({
+        path: { id: sessionId },
+        body: {
+          command,
+          arguments: args,
+        },
+      ...(options?.directory ? { query: { directory: options.directory } } : {}),
+      });
 
     if (result.error) {
       const statusCode = result.response?.status;
@@ -1048,7 +1048,7 @@ class OpencodeClientWrapper extends EventEmitter {
     const client = this.getClient();
     const directory = this.normalizeDirectory(options?.directory);
     const result = await client.project.list(
-      directory ? { query: { directory: encodeURIComponent(directory) } } : undefined
+      directory ? { query: { directory } } : undefined
     );
     return Array.isArray(result.data) ? result.data : [];
   }
@@ -1058,7 +1058,7 @@ class OpencodeClientWrapper extends EventEmitter {
     const client = this.getClient();
     const directory = this.normalizeDirectory(options?.directory);
     const result = await client.session.list(
-      directory ? { query: { directory: encodeURIComponent(directory) } } : undefined
+      directory ? { query: { directory } } : undefined
     );
     return Array.isArray(result.data) ? result.data : [];
   }
@@ -1159,7 +1159,7 @@ class OpencodeClientWrapper extends EventEmitter {
     const directory = this.normalizeDirectory(options?.directory);
     const result = await client.session.get({
       path: { id: normalizedSessionId },
-      ...(directory ? { query: { directory: encodeURIComponent(directory) } } : {}),
+      ...(directory ? { query: { directory } } : {}),
     });
 
     if (result.error) {
@@ -1221,7 +1221,7 @@ class OpencodeClientWrapper extends EventEmitter {
     }
     const result = await client.session.create({
       body: { title: title || '新对话' },
-      ...(normalizedDir ? { query: { directory: encodeURIComponent(normalizedDir) } } : {}),
+      ...(normalizedDir ? { query: { directory: normalizedDir } } : {}),
     });
     return result.data!;
   }
@@ -1265,7 +1265,7 @@ class OpencodeClientWrapper extends EventEmitter {
       const directory = this.normalizeDirectory(options?.directory);
       await client.session.delete({
         path: { id: sessionId },
-        ...(directory ? { query: { directory: encodeURIComponent(directory) } } : {}),
+        ...(directory ? { query: { directory } } : {}),
       });
       console.log(`[OpenCode] 已删除会话: ${sessionId}`);
       return true;

@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import { promises as fsp } from 'fs';
 import * as path from 'path';
 import { feishuClient } from '../feishu/client.js';
+import { DirectoryPolicy } from '../utils/directory-policy.js';
 
 // 敏感文件名黑名单（基于文件名模式匹配）
 const SENSITIVE_NAME_PATTERNS = [
@@ -40,6 +41,11 @@ const SENSITIVE_PATH_PREFIXES = [
  * 注意：resolvedPath 必须已经经过 path.resolve() 处理（绝对路径）。
  */
 export function validateFilePath(resolvedPath: string): { safe: boolean; reason?: string } {
+  // 0. 允许目录白名单校验（未配置时直接拒绝）
+  if (!DirectoryPolicy.isAllowedPath(resolvedPath)) {
+    return { safe: false, reason: '路径不在允许的工作目录范围内' };
+  }
+
   const basename = path.basename(resolvedPath);
 
   // 1. 精确文件名匹配
