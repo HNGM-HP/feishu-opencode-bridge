@@ -30,6 +30,7 @@ export class P2PHandler {
   private createChatSelectionMap: Map<string, string> = new Map();
   private createChatProjectMap: Map<string, { value: string; expiresAt: number }> = new Map();
   private createChatDirectoryInputMap: Map<string, { value: string; expiresAt: number }> = new Map();
+  private createChatNameInputMap: Map<string, { value: string; expiresAt: number }> = new Map();
 
   private async safeReply(
     messageId: string | undefined,
@@ -211,6 +212,45 @@ export class P2PHandler {
   ): void {
     const key = `${chatId}:${openId || ''}`;
     this.createChatDirectoryInputMap.delete(key);
+  }
+
+  private rememberCreateChatNameInput(
+    value: string,
+    chatId: string,
+    messageId?: string | null,
+    openId?: string
+  ): void {
+    const key = `${chatId}:${openId || ''}`;
+    this.createChatNameInputMap.set(key, {
+      value,
+      expiresAt: Date.now() + P2PHandler.CARD_SELECTION_TTL_MS,
+    });
+  }
+
+  private getRememberedCreateChatNameInput(
+    chatId: string,
+    messageId?: string | null,
+    openId?: string
+  ): string | undefined {
+    const key = `${chatId}:${openId || ''}`;
+    const entry = this.createChatNameInputMap.get(key);
+    if (!entry) {
+      return undefined;
+    }
+    if (entry.expiresAt <= Date.now()) {
+      this.createChatNameInputMap.delete(key);
+      return undefined;
+    }
+    return entry.value;
+  }
+
+  private clearCreateChatNameInput(
+    chatId: string,
+    messageId?: string | null,
+    openId?: string
+  ): void {
+    const key = `${chatId}:${openId || ''}`;
+    this.createChatNameInputMap.delete(key);
   }
 
   
@@ -501,11 +541,12 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
     selectedSessionId: string,
     chatId?: string,
     messageId?: string,
-    rawDirectory?: string
+    rawDirectory?: string,
+    customChatName?: string
   ): Promise<void> {
     const bindExistingSession = selectedSessionId !== CREATE_CHAT_NEW_SESSION_VALUE;
     if (bindExistingSession && !userConfig.enableManualSessionBind) {
-      await this.safeReply(messageId, chatId, '❌ 当前环境未开启“绑定已有会话”能力');
+      await this.safeReply(messageId, chatId, '❌ 当前环境未开启"绑定已有会话"能力');
       return;
     }
 
@@ -522,7 +563,8 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
 
     console.log(`[P2P] 用户 ${openId} 请求创建新会话群，模式=${bindExistingSession ? '绑定已有会话' : '新建会话'}`);
 
-    const chatName = `OpenCode会话-${Date.now().toString().slice(-4)}`;
+    // 使用用户指定的群名，或自动生成
+    const chatName = customChatName || `会话-${Date.now().toString().slice(-6)}`;
     const createResult = await feishuClient.createChat(chatName, [openId], '由 OpenCode 自动创建的会话群');
     if (!createResult.chatId) {
       await this.safeReply(messageId, chatId, '❌ 创建群聊失败，请重试');
@@ -701,20 +743,44 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
       return;
     }
 
-    if (actionTag === 'create_chat_submit') {
-      const selectedSessionId =
-        this.getRememberedCreateChatSelection(chatId, messageId, openId) ||
-        this.getStringValue(actionValue.selectedSessionId) ||
-        this.getStringValue(actionValue.selected) ||
-        CREATE_CHAT_NEW_SESSION_VALUE;
-      const selectedProject = this.getRememberedCreateChatProjectSelection(chatId, messageId, openId);
+    if (actionTag === 'create_chat_name_input') {
+      const inputValue = this.getCardActionOption(event)
+        || this.getCardActionInputValue(event)
+        || '';
+      if (inputValue) {
+        this.rememberCreateChatNameInput(inputValue, chatId, messageId, openId);
+      }
+      // 输入不需要 toast
+      return;
+    }
 
-      // form 容器提交时，input 值在 action.form_value 中（key 为 input 的 name 属性）
+    if (actionTag === 'create_chat_submit') {
+      // form 容器提交时，所有 input/select_static 值均在 action.form_value 中
       const eventAny = event as unknown as { action?: { form_value?: Record<string, string> } };
       const formValue = eventAny.action?.form_value;
+
+      // 会话来源：优先从 form_value 读，回退到记忆 map
+      const selectedSessionId =
+        formValue?.session_source?.trim() ||
+        this.getRememberedCreateChatSelection(chatId, messageId, openId) ||
+        this.getStringValue(actionValue.selectedSessionId) ||
+        CREATE_CHAT_NEW_SESSION_VALUE;
+
+      // 工作项目：优先从 form_value 读，回退到记忆 map
+      const selectedProject =
+        formValue?.project_source?.trim() ||
+        this.getRememberedCreateChatProjectSelection(chatId, messageId, openId);
+
+      // 自定义工作目录
       const customPath = formValue?.custom_directory?.trim()
         || this.getRememberedCreateChatDirectoryInput(chatId, messageId, openId)
         || '';
+
+      // 群名：优先从 form_value 读，回退到记忆 map
+      const customChatName =
+        formValue?.chat_name?.trim() ||
+        this.getRememberedCreateChatNameInput(chatId, messageId, openId) ||
+        undefined;
 
       const rawDirectory = selectedProject && selectedProject !== '__default__'
         ? selectedProject
@@ -723,7 +789,8 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
       this.clearCreateChatSelection(chatId, messageId, openId);
       this.clearCreateChatProjectSelection(chatId, messageId, openId);
       this.clearCreateChatDirectoryInput(chatId, messageId, openId);
-      await this.createGroupWithSessionSelection(openId, selectedSessionId, chatId, messageId, rawDirectory);
+      this.clearCreateChatNameInput(chatId, messageId, openId);
+      await this.createGroupWithSessionSelection(openId, selectedSessionId, chatId, messageId, rawDirectory, customChatName);
       return;
     }
   }
