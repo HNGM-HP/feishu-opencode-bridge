@@ -8,7 +8,7 @@ export type ChatSessionType = 'p2p' | 'group';
 interface ChatSessionData {
   chatId: string;
   sessionId: string;
-  sessionDirectory?: string;
+  sessionDirectory?: string;  // 创建会话时原始输入的目录
   creatorId: string; // 创建者ID
   createdAt: number;
   title?: string;
@@ -21,6 +21,9 @@ interface ChatSessionData {
   preferredModel?: string; // e.g., "openai:gpt-4"
   preferredAgent?: string;
   preferredEffort?: EffortLevel;
+  resolvedDirectory?: string;  // 经过 DirectoryPolicy 校验后的目录
+  projectName?: string;        // 关联的项目名称/别名
+  defaultDirectory?: string;   // 群级默认目录（不随会话重绑丢失）
   interactionHistory: InteractionRecord[];
 }
 
@@ -41,7 +44,9 @@ export interface InteractionRecord {
 export interface SessionBindingOptions {
   protectSessionDelete?: boolean;
   chatType?: ChatSessionType;
-  sessionDirectory?: string;
+  sessionDirectory?: string;   // 创建会话时原始输入的目录
+  resolvedDirectory?: string;  // 经过 DirectoryPolicy 校验后的目录
+  projectName?: string;        // 关联的项目名称/别名
 }
 
 // 存储文件路径
@@ -83,8 +88,8 @@ class ChatSessionStore {
 
   private inferChatTypeFromTitle(title?: string): ChatSessionType | undefined {
     if (!title) return undefined;
-    if (title.startsWith('飞书私聊')) return 'p2p';
-    if (title.startsWith('飞书群聊') || title.startsWith('群聊')) return 'group';
+    if (title.startsWith('飞书私聊') || title.startsWith('私聊-')) return 'p2p';
+    if (title.startsWith('飞书群聊') || title.startsWith('群聊-') || title.startsWith('群聊会话')) return 'group';
     return undefined;
   }
 
@@ -98,7 +103,17 @@ class ChatSessionStore {
   getSession(chatId: string): ChatSessionData | undefined {
     return this.data.get(chatId);
   }
-  
+
+  // 获取所有已知的工作目录（从 resolvedDirectory 和 defaultDirectory 去重收集）
+  getKnownDirectories(): string[] {
+    const dirs = new Set<string>();
+    for (const data of this.data.values()) {
+      if (data.resolvedDirectory) dirs.add(data.resolvedDirectory);
+      if (data.defaultDirectory) dirs.add(data.defaultDirectory);
+    }
+    return [...dirs];
+  }
+
   // 通过 SessionID 反查 ChatID
   getChatId(sessionId: string): string | undefined {
     this.cleanupExpiredSessionAliases();
@@ -172,6 +187,13 @@ class ChatSessionStore {
       title,
       ...(resolvedChatType ? { chatType: resolvedChatType } : {}),
       ...(options?.protectSessionDelete ? { protectSessionDelete: true } : {}),
+      ...(options?.resolvedDirectory ? { resolvedDirectory: options.resolvedDirectory } : {}),
+      ...(options?.projectName ? { projectName: options.projectName } : {}),
+      // 保留群级配置（不随会话重绑丢失）
+      ...(current?.defaultDirectory ? { defaultDirectory: current.defaultDirectory } : {}),
+      ...(current?.preferredModel ? { preferredModel: current.preferredModel } : {}),
+      ...(current?.preferredAgent ? { preferredAgent: current.preferredAgent } : {}),
+      ...(current?.preferredEffort ? { preferredEffort: current.preferredEffort } : {}),
       interactionHistory: [],
     };
     this.data.set(chatId, data);
@@ -219,7 +241,7 @@ class ChatSessionStore {
       return true;
     }
 
-    return typeof session.title === 'string' && session.title.startsWith('飞书私聊');
+    return typeof session.title === 'string' && (session.title.startsWith('飞书私聊') || session.title.startsWith('私聊-'));
   }
 
   isGroupChatSession(chatId: string): boolean {
@@ -240,11 +262,19 @@ class ChatSessionStore {
       return false;
     }
 
-    return session.title.startsWith('飞书群聊') || session.title.startsWith('群聊');
+    return session.title.startsWith('飞书群聊') || session.title.startsWith('群聊-') || session.title.startsWith('群聊会话');
   }
 
-  // 更新会话配置 (模型/角色/强度)
-  updateConfig(chatId: string, config: { preferredModel?: string; preferredAgent?: string; preferredEffort?: EffortLevel }): void {
+  // 更新会话配置 (模型/角色/强度/默认目录)
+  updateConfig(
+    chatId: string,
+    config: {
+      preferredModel?: string;
+      preferredAgent?: string;
+      preferredEffort?: EffortLevel;
+      defaultDirectory?: string;
+    }
+  ): void {
     const session = this.data.get(chatId);
     if (session) {
       if ('preferredModel' in config) {
@@ -270,6 +300,32 @@ class ChatSessionStore {
           delete session.preferredEffort;
         }
       }
+
+      if ('defaultDirectory' in config) {
+        if (config.defaultDirectory) {
+          session.defaultDirectory = config.defaultDirectory;
+        } else {
+          delete session.defaultDirectory;
+        }
+      }
+      this.save();
+    }
+  }
+
+  // 更新会话标题（/rename 命令后同步本地缓存）
+  updateTitle(chatId: string, title: string): void {
+    const session = this.data.get(chatId);
+    if (session) {
+      session.title = title;
+      this.save();
+    }
+  }
+
+  // 更新会话的工作目录缓存（不影响其他字段）
+  updateResolvedDirectory(chatId: string, directory: string): void {
+    const session = this.data.get(chatId);
+    if (session) {
+      session.resolvedDirectory = directory;
       this.save();
     }
   }
