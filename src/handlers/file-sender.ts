@@ -3,6 +3,12 @@ import { promises as fsp } from 'fs';
 import * as path from 'path';
 import { feishuClient } from '../feishu/client.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
+import { COMMAND_DOC_PATH } from '../commands/command-doc.js';
+
+// 系统生成文件豁免列表（绕过 ALLOWED_DIRECTORIES 校验）
+const SYSTEM_GENERATED_PATHS: Set<string> = new Set([
+  path.resolve(COMMAND_DOC_PATH),
+]);
 
 // 敏感文件名黑名单（基于文件名模式匹配）
 const SENSITIVE_NAME_PATTERNS = [
@@ -41,26 +47,38 @@ const SENSITIVE_PATH_PREFIXES = [
  * 注意：resolvedPath 必须已经经过 path.resolve() 处理（绝对路径）。
  */
 export function validateFilePath(resolvedPath: string): { safe: boolean; reason?: string } {
-  // 0. 允许目录白名单校验（未配置时直接拒绝）
+  // 0. 系统生成文件豁免（绕过白名单校验）
+  if (SYSTEM_GENERATED_PATHS.has(resolvedPath)) {
+    // 仍需检查敏感文件名
+    const basename = path.basename(resolvedPath);
+    for (const pattern of SENSITIVE_NAME_PATTERNS) {
+      if (pattern.test(basename)) {
+        return { safe: false, reason: `拒绝发送敏感文件: ${basename}` };
+      }
+    }
+    return { safe: true };
+  }
+
+  // 1. 允许目录白名单校验（未配置时直接拒绝）
   if (!DirectoryPolicy.isAllowedPath(resolvedPath)) {
     return { safe: false, reason: '路径不在允许的工作目录范围内' };
   }
 
   const basename = path.basename(resolvedPath);
 
-  // 1. 精确文件名匹配
+  // 2. 精确文件名匹配
   if (SENSITIVE_EXACT_NAMES.has(basename)) {
     return { safe: false, reason: `拒绝发送敏感文件: ${basename}` };
   }
 
-  // 2. 文件名模式匹配
+  // 3. 文件名模式匹配
   for (const pattern of SENSITIVE_NAME_PATTERNS) {
     if (pattern.test(basename)) {
       return { safe: false, reason: `拒绝发送敏感文件: ${basename}` };
     }
   }
 
-  // 3. 路径目录黑名单（统一转为正斜杠以兼容 Windows 路径格式）
+  // 4. 路径目录黑名单（统一转为正斜杠以兼容 Windows 路径格式）
   const normalizedPath = resolvedPath.replace(/\\/g, '/');
   for (const prefix of SENSITIVE_PATH_PREFIXES) {
     if (normalizedPath.includes(prefix)) {

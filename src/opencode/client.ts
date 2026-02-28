@@ -240,6 +240,17 @@ export interface OpencodeAgentInfo {
   native?: boolean;
 }
 
+export interface OpencodeCommandInfo {
+  name: string;
+  description?: string;
+  agent?: string;
+  model?: string;
+  source?: 'command' | 'mcp' | 'skill';
+  template: string;
+  subtask?: boolean;
+  hints: string[];
+}
+
 export interface OpencodeAgentConfig {
   description?: string;
   mode?: AgentMode;
@@ -1402,6 +1413,14 @@ class OpencodeClientWrapper extends EventEmitter {
     }
 
     return agents;
+  }
+
+  // 获取可用命令列表（slash command）
+  async getCommands(): Promise<OpencodeCommandInfo[]> {
+    const client = this.getClient();
+    const result = await client.command.list();
+    const raw = Array.isArray(result.data) ? result.data : [];
+    return raw as OpencodeCommandInfo[];
   }
 
   // 回复问题 (question 工具)

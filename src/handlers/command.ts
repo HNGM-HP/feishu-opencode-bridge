@@ -11,6 +11,7 @@ import {
 } from '../opencode/client.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { buildControlCard, buildStatusCard } from '../feishu/cards.js';
+import { writeCommandDoc, type CommandDocData } from '../commands/command-doc.js';
 import { modelConfig, userConfig } from '../config.js';
 import { sendFileToFeishu } from './file-sender.js';
 import { lifecycleHandler } from './lifecycle.js';
@@ -835,6 +836,10 @@ export class CommandHandler {
 
         case 'panel':
           await this.handlePanel(chatId, messageId, context.chatType);
+          break;
+
+        case 'commands':
+          await this.handleCommandsCard(chatId, messageId);
           break;
         
         case 'sessions':
@@ -1817,6 +1822,110 @@ export class CommandHandler {
       agents: agentOptions,
     });
   }
+
+  private buildCommandListText(commands: Array<{ name: string; description?: string; source?: string; hints?: string[] }>): string {
+    if (!commands || commands.length === 0) {
+      return '当前未获取到可用命令列表。';
+    }
+
+    const groups: Record<string, Array<{ name: string; description?: string; hints?: string[] }>> = {
+      command: [],
+      mcp: [],
+      skill: [],
+      other: [],
+    };
+
+    for (const cmd of commands) {
+      const source = cmd.source || 'other';
+      const target = groups[source] || groups.other;
+      target.push(cmd);
+    }
+
+    const lines: string[] = ['📚 OpenCode 可用命令'];
+    const pushGroup = (label: string, items: Array<{ name: string; description?: string; hints?: string[] }>): void => {
+      if (items.length === 0) return;
+      const sorted = items.slice().sort((a, b) => a.name.localeCompare(b.name));
+      lines.push(`\n【${label}】`);
+      for (const item of sorted) {
+        const desc = item.description ? ` - ${item.description}` : '';
+        lines.push(`• /${item.name}${desc}`);
+      }
+    };
+
+    pushGroup('内置', groups.command);
+    pushGroup('MCP', groups.mcp);
+    pushGroup('技能', groups.skill);
+    pushGroup('其他', groups.other);
+
+    lines.push('\n💡 支持 // 命名空间透传，例如：//superpowers:brainstorming');
+    return lines.join('\n');
+  }
+
+  private splitLongText(text: string, maxLength: number): string[] {
+    const trimmed = text.trim();
+    if (!trimmed) {
+      return [];
+    }
+
+    if (trimmed.length <= maxLength) {
+      return [trimmed];
+    }
+
+    const lines = trimmed.split('\n');
+    const chunks: string[] = [];
+    let buffer = '';
+    for (const line of lines) {
+      const next = buffer ? `${buffer}\n${line}` : line;
+      if (next.length > maxLength && buffer) {
+        chunks.push(buffer);
+        buffer = line;
+      } else {
+        buffer = next;
+      }
+    }
+
+    if (buffer.trim().length > 0) {
+      chunks.push(buffer);
+    }
+
+    return chunks;
+  }
+
+  private async handleCommandsCard(chatId: string, messageId: string): Promise<void> {
+    try {
+      const commands = await opencodeClient.getCommands();
+      const groups: Record<string, Array<{ name: string; description?: string; source?: string }>> = {
+        command: [],
+        mcp: [],
+        skill: [],
+        other: [],
+      };
+      for (const cmd of commands) {
+        const source = cmd.source || 'other';
+        const target = groups[source] || groups.other;
+        target.push(cmd);
+      }
+
+      const docData: CommandDocData = {
+        updatedAt: new Date().toLocaleString('zh-CN', { hour12: false }),
+        total: commands.length,
+        groups,
+      };
+
+      const docPath = await writeCommandDoc(docData);
+      const result = await sendFileToFeishu({ filePath: docPath, chatId });
+      if (!result.success) {
+        await feishuClient.reply(messageId, `❌ 命令清单发送失败: ${result.error || '未知错误'}`);
+        return;
+      }
+
+      await feishuClient.reply(messageId, `✅ 命令清单已发送：${result.fileName || 'commands.md'}`);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      await feishuClient.reply(messageId, `❌ 获取命令列表失败: ${errorMessage}`);
+    }
+  }
+
 
   public async pushPanelCard(chatId: string, chatType: 'p2p' | 'group' = 'group'): Promise<void> {
     const card = await this.buildPanelCard(chatId, chatType);

@@ -335,6 +335,8 @@ RELIABILITY_LOOPBACK_ONLY=true
 | `/undo` | 撤回上一轮交互 |
 | `/compact` | 压缩上下文 |
 | `!<shell 命令>` | 透传 shell 命令 |
+| `/commands` | 生成并发送最新命令清单文件 |
+| `//<命令名>` | 透传命名空间 slash 命令（如 `//superpowers:brainstorming`） |
 
 ### Discord 命令
 

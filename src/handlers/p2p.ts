@@ -8,7 +8,7 @@ import {
   type CreateChatCardData,
   type CreateChatSessionOption,
 } from '../feishu/cards.js';
-import { DirectoryPolicy, type DirectorySource } from '../utils/directory-policy.js';
+import { DirectoryPolicy } from '../utils/directory-policy.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
 import { parseCommand, getHelpText, type ParsedCommand } from '../commands/parser.js';
 import { commandHandler } from './command.js';
@@ -297,10 +297,11 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
     ];
 
     let totalSessionCount = 0;
-    const knownDirectorySet = new Set<string>(chatSessionStore.getKnownDirectories());
+    let projectOptions: Array<{ name: string; directory: string; source: 'alias' | 'history' }> = [];
+    let sessions: OpencodeSession[] = [];
     if (userConfig.enableManualSessionBind) {
       try {
-        const sessions = this.sortSessionsForCreateChat(await opencodeClient.listSessionsAcrossProjects());
+        sessions = this.sortSessionsForCreateChat(await opencodeClient.listSessionsAcrossProjects());
         totalSessionCount = sessions.length;
 
         let previousDirectory = '';
@@ -311,31 +312,18 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
             value: session.id,
           });
           previousDirectory = directory;
-          if (session.directory) {
-            knownDirectorySet.add(session.directory);
-          }
         }
       } catch (error) {
         console.warn('[P2P] 加载 OpenCode 会话列表失败，建群卡片将仅显示新建选项:', error);
       }
     }
 
-    if (directoryConfig.defaultWorkDirectory) {
-      knownDirectorySet.add(directoryConfig.defaultWorkDirectory);
-    }
-    for (const directory of directoryConfig.allowedDirectories) {
-      if (directory) {
-        knownDirectorySet.add(directory);
-      }
-    }
-
-    const availableProjects: Array<{ name: string; directory: string; source: DirectorySource }> =
-      DirectoryPolicy.listAvailableProjects([...knownDirectorySet]);
-    const projectOptions: Array<{ name: string; directory: string; source: 'alias' | 'history' }> =
-      availableProjects.map((project: { name: string; directory: string; source: DirectorySource }) => ({
-        ...project,
-        source: project.source === 'alias' ? 'alias' : 'history',
-      }));
+    const storeKnownDirs = chatSessionStore.getKnownDirectories();
+    const knownDirs = [...new Set([...storeKnownDirs, ...sessions.map(session => session.directory).filter(Boolean)])];
+    projectOptions = DirectoryPolicy.listAvailableProjects(knownDirs).map(project => ({
+      ...project,
+      source: project.source === 'alias' ? 'alias' : 'history',
+    }));
 
     const hasSelected = sessionOptions.some(option => option.value === selectedSessionId);
     return {
@@ -614,7 +602,7 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
       protectSessionDelete = true;
       targetDirectory = selectedSession.directory;
     } else {
-      let session: Awaited<ReturnType<typeof opencodeClient.createSession>> | null = null;
+      let session;
       try {
         session = await opencodeClient.createSession(sessionTitle, effectiveDir);
       } catch (error) {

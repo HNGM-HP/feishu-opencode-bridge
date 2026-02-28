@@ -549,9 +549,10 @@ function buildCreateChatSelectorElements(data: CreateChatCardData): object[] {
   });
 
   // 3. 工作项目选择器（可选）
+  const projectCandidates = data.projectOptions || [];
   const projectOpts = [
     { text: { tag: 'plain_text', content: '跟随默认项目' }, value: '__default__' },
-    ...(data.projectOptions || []).map(project => ({
+    ...projectCandidates.map(project => ({
       text: {
         tag: 'plain_text',
         content: `${project.name}（${project.directory.length > 40 ? '...' + project.directory.slice(-37) : project.directory}）`,

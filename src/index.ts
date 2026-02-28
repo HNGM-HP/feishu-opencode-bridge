@@ -1781,6 +1781,19 @@ async function main() {
     // Discord 启动失败不影响 Feishu 流程
   }
   // 8. 启动飞书客户端
+  feishuClient.setCardActionHandler(async (event) => {
+    const actionValue = event.action?.value;
+    const action = actionValue && typeof actionValue === 'object'
+      ? (actionValue as Record<string, unknown>).action
+      : undefined;
+    const actionName = typeof action === 'string' ? action : '';
+
+    if (actionName.startsWith('create_chat')) {
+      return await p2pHandler.handleCardAction(event);
+    }
+
+    return await cardActionHandler.handle(event);
+  });
   await feishuClient.start();
 
   // 9. 启动清理检查
