@@ -1,6 +1,7 @@
 import * as lark from '@larksuiteoapi/node-sdk';
 import { feishuConfig } from '../config.js';
 import { EventEmitter } from 'events';
+import type { ReadStream } from 'fs';
 
 function formatError(error: unknown): { message: string; responseData?: unknown } {
   if (error instanceof Error) {
@@ -982,6 +983,123 @@ class FeishuClient extends EventEmitter {
       const formatted = formatError(error);
       console.error('[飞书] 邀请进群失败:', formatted.message, formatted.responseData ?? '');
       return false;
+    }
+  }
+
+  // 上传图片，返回 image_key
+  async uploadImage(imageData: Buffer | ReadStream): Promise<string | null> {
+    try {
+      const response = await this.client.im.image.create({
+        data: {
+          image_type: 'message',
+          image: imageData,
+        },
+      });
+
+      const imageKey = response?.image_key || null;
+      if (imageKey) {
+        console.log(`[飞书] 上传图片成功: imageKey=${imageKey.slice(0, 16)}...`);
+      } else {
+        console.log('[飞书] 上传图片返回空 image_key');
+      }
+      return imageKey;
+    } catch (error) {
+      const formatted = formatError(error);
+      console.error(`[飞书] 上传图片失败: ${formatted.message}`);
+      return null;
+    }
+  }
+
+  // 上传文件，返回 file_key
+  async uploadFile(
+    fileData: Buffer | ReadStream,
+    fileName: string,
+    fileType: 'opus' | 'mp4' | 'pdf' | 'doc' | 'xls' | 'ppt' | 'stream'
+  ): Promise<string | null> {
+    try {
+      const response = await this.client.im.file.create({
+        data: {
+          file_type: fileType,
+          file_name: fileName,
+          file: fileData,
+        },
+      });
+
+      const fileKey = response?.file_key || null;
+      if (fileKey) {
+        console.log(`[飞书] 上传文件成功: fileKey=${fileKey.slice(0, 16)}..., name=${fileName}`);
+      } else {
+        console.log('[飞书] 上传文件返回空 file_key');
+      }
+      return fileKey;
+    } catch (error) {
+      const formatted = formatError(error);
+      console.error(`[飞书] 上传文件失败: ${formatted.message}`);
+      return null;
+    }
+  }
+
+  // 发送图片消息
+  async sendImageMessage(chatId: string, imageKey: string): Promise<string | null> {
+    try {
+      const response = await this.client.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: chatId,
+          msg_type: 'image',
+          content: JSON.stringify({ image_key: imageKey }),
+        },
+      });
+
+      const msgId = response.data?.message_id || null;
+      if (msgId) {
+        console.log(`[飞书] 发送图片消息成功: msgId=${msgId.slice(0, 16)}...`);
+      } else {
+        console.log('[飞书] 发送图片消息返回空消息ID');
+      }
+      return msgId;
+    } catch (error) {
+      const formatted = formatError(error);
+      const apiCode = extractApiCode(formatted.responseData);
+      if (apiCode === 230002) {
+        console.warn(`[飞书] 群不可用，发送图片消息失败: chatId=${chatId}`);
+        this.emit('chatUnavailable', chatId);
+        return null;
+      }
+      console.error(`[飞书] 发送图片消息失败: ${formatted.message}`);
+      return null;
+    }
+  }
+
+  // 发送文件消息
+  async sendFileMessage(chatId: string, fileKey: string): Promise<string | null> {
+    try {
+      const response = await this.client.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: chatId,
+          msg_type: 'file',
+          content: JSON.stringify({ file_key: fileKey }),
+        },
+      });
+
+      const msgId = response.data?.message_id || null;
+      if (msgId) {
+        console.log(`[飞书] 发送文件消息成功: msgId=${msgId.slice(0, 16)}...`);
+      } else {
+        console.log('[飞书] 发送文件消息返回空消息ID');
+      }
+      return msgId;
+    } catch (error) {
+      const formatted = formatError(error);
+      const apiCode = extractApiCode(formatted.responseData);
+      if (apiCode === 230002) {
+        console.warn(`[飞书] 群不可用，发送文件消息失败: chatId=${chatId}`);
+        this.emit('chatUnavailable', chatId);
+        return null;
+      }
+      console.error(`[飞书] 发送文件消息失败: ${formatted.message}`);
+      return null;
     }
   }
 

@@ -10,6 +10,7 @@ export type CommandType =
   | 'agent'        // 切换Agent
   | 'role'         // 角色相关操作
   | 'session'      // 会话操作
+  | 'project'      // 项目/目录操作
   | 'sessions'     // 列出会话
   | 'clear'        // 清空对话
   | 'panel'        // 控制面板
@@ -18,7 +19,9 @@ export type CommandType =
   | 'help'         // 显示帮助
   | 'status'       // 查看状态
   | 'command'      // 透传命令
-  | 'permission';  // 权限响应
+  | 'permission'   // 权限响应
+  | 'send'         // 发送文件到飞书
+  | 'rename';      // 重命名当前会话
 
 // 解析后的命令
 export interface ParsedCommand {
@@ -28,8 +31,13 @@ export interface ParsedCommand {
   agentName?: string;      // agent类型的名称
   roleAction?: 'create';
   roleSpec?: string;
-  sessionAction?: 'new' | 'switch' | 'list';
+  sessionAction?: 'new' | 'switch';
   sessionId?: string;      // session switch的目标ID
+  sessionDirectory?: string; // session new 时指定的目录
+  sessionName?: string;    // session new --name 参数指定的会话名称
+  listAll?: boolean;
+  projectAction?: 'list' | 'default_set' | 'default_clear' | 'default_show';
+  projectValue?: string;
   clearScope?: 'all' | 'free_session'; // 清理范围
   clearSessionId?: string;
   permissionResponse?: 'y' | 'n' | 'yes' | 'no';
@@ -41,6 +49,7 @@ export interface ParsedCommand {
   effortReset?: boolean;
   promptEffort?: EffortLevel;
   adminAction?: 'add';
+  renameTitle?: string;    // rename 类型的新会话名称（可选，无参数时弹卡片）
 }
 
 const BANG_SHELL_ALLOWED_COMMANDS = new Set([
@@ -132,6 +141,12 @@ export function parseCommand(text: string): ParsedCommand {
     };
   }
 
+  // 中文自然语言发送文件（不带 /）
+  const sendFileMatch = trimmed.match(/^发送文件\s+([\s\S]+)$/);
+  if (sendFileMatch) {
+    return { type: 'send', text: sendFileMatch[1].trim() };
+  }
+
   // 中文自然语言新建会话窗口（不带 /）
   if (trimmed === '新建会话窗口' || trimmed === '创建新会话') {
     return {
@@ -199,17 +214,60 @@ export function parseCommand(text: string): ParsedCommand {
 
       case 'session':
         if (args.length === 0) {
-          return { type: 'session', sessionAction: 'list' };
+          // 无参数的 /session 直接等同于 /sessions（向后兼容）
+          return { type: 'sessions', listAll: false };
         }
         if (args[0].toLowerCase() === 'new') {
-          return { type: 'session', sessionAction: 'new' };
+          const rest = args.slice(1);
+          // 解析可选的 --name <名称> 参数
+          let sessionName: string | undefined;
+          const nameIndex = rest.findIndex(arg => arg.toLowerCase() === '--name');
+          let remainingArgs = rest;
+          if (nameIndex !== -1) {
+            sessionName = rest.slice(nameIndex + 1).join(' ').trim() || undefined;
+            remainingArgs = rest.slice(0, nameIndex);
+          }
+          const sessionDirectory = remainingArgs.join(' ').trim();
+          return {
+            type: 'session',
+            sessionAction: 'new',
+            ...(sessionDirectory ? { sessionDirectory } : {}),
+            ...(sessionName ? { sessionName } : {}),
+          };
         }
         // 切换到指定会话
         return { type: 'session', sessionAction: 'switch', sessionId: args[0] };
 
       case 'sessions':
       case 'list':
-        return { type: 'sessions' };
+        return { type: 'sessions', listAll: args.length > 0 && args[0].toLowerCase() === 'all' };
+
+      case 'project':
+        if (args.length === 0) {
+          return { type: 'project', projectAction: 'list' };
+        }
+        if (args[0].toLowerCase() === 'list') {
+          return { type: 'project', projectAction: 'list' };
+        }
+        if (args[0].toLowerCase() === 'default') {
+          if (args.length === 1) {
+            return { type: 'project', projectAction: 'default_show' };
+          }
+          const action = args[1].toLowerCase();
+          if (action === 'set') {
+            const projectValue = args.slice(2).join(' ').trim();
+            return {
+              type: 'project',
+              projectAction: 'default_set',
+              ...(projectValue ? { projectValue } : {}),
+            };
+          }
+          if (action === 'clear') {
+            return { type: 'project', projectAction: 'default_clear' };
+          }
+          return { type: 'project', projectAction: 'default_show' };
+        }
+        return { type: 'project' };
 
       case 'clear':
       case 'reset':
@@ -289,6 +347,20 @@ export function parseCommand(text: string): ParsedCommand {
       case 'session.compact':
         return { type: 'compact' };
 
+      case 'send':
+      case 'send-file':
+      case 'sendfile':
+      case 'send_file':
+        return { type: 'send', text: args.join(' ') };
+
+      case 'rename': {
+        const renameTitle = args.join(' ').trim();
+        return {
+          type: 'rename',
+          ...(renameTitle ? { renameTitle } : {}),
+        };
+      }
+
       default:
         // 未知命令透传到OpenCode
         return {
@@ -317,7 +389,7 @@ export function getHelpText(): string {
 群聊中 @机器人 或回复机器人消息，私聊中直接发送内容，即可与 AI 对话。
 
 🪄 **私聊首次使用**
-首次私聊会自动完成会话绑定（标题：飞书私聊{OpenID去掉 ou_ 前缀后的前4位}），并推送建群卡片、帮助文档和 /panel 卡片。
+首次私聊会自动完成会话绑定（标题：私聊-MM-DD-HH-MM），并推送建群卡片、帮助文档和 /panel 卡片。
 
 🛠️ **常用命令**
 • \`/model\` 查看当前模型
@@ -336,20 +408,24 @@ export function getHelpText(): string {
 • \`/compact\` 压缩当前会话上下文（调用 OpenCode summarize）
 
 ⚙️ **会话管理**
-• \`/create_chat\` 或 \`/建群\` 打开建群卡片（下拉按 工作区/Session短ID/简介 展示，支持跨工作区）
-• \`/session\` 列出全部工作区会话（含未绑定与仅本地映射记录）
-• \`/session new\` 开启新话题 (重置上下文)
-• \`/session <sessionId>\` 手动绑定已有会话（支持 Web 端会话，需开启 \`ENABLE_MANUAL_SESSION_BIND\`）
-• \`新建会话窗口\` 自然语言触发 \`/session new\`
-• \`/clear\` 清空当前上下文 (同上)
-• \`/clear free session\` 或 \`/clear_free_session\` 清理所有空闲/无人群聊
-• \`/clear free session <sessionId>\` 或 \`/clear_free_session <sessionId>\` 删除指定 OpenCode 会话并移除本地映射
-• \`/status\` 查看连接状态
+• \`/session\` 或 \`/sessions\` 列出当前项目的会话；\`/sessions all\` 列出全部项目
+• \`/session new\` 开启新话题（重置上下文）；\`/session new <别名或路径>\` 指定项目
+• \`/session new --name <名称>\` 创建时直接命名 (e.g. \`/session new --name 技术架构评审\`)
+• \`/rename <新名称>\` 随时重命名当前会话 (e.g. \`/rename Q3后端API设计讨论\`)
+• \`/session <sessionId>\` 手动绑定已有会话（需开启 \`ENABLE_MANUAL_SESSION_BIND\`）
+• \`/create_chat\` 或 \`/建群\` 私聊中调出建群卡片（新建或绑定已有会话）
+• \`/project list\` 列出可用项目；\`/project default\` 查看/设置/清除群默认项目
+• \`/clear\` 等价 \`/session new\`；\`/clear free session\` 清理空闲群聊
+• \`/status\` 查看当前绑定状态和群聊生命周期信息
 
 💡 **提示**
 • 切换的模型/角色仅对**当前会话**生效。
 • 强度优先级：\`#临时覆盖\` > \`/effort 会话默认\` > OpenCode 默认。
 • 其他未知 \`/xxx\` 命令会自动透传给 OpenCode（会话已绑定时生效）。
 • 支持透传白名单 shell 命令：\`!cd\`、\`!ls\`、\`!mkdir\`、\`!rm\`、\`!cp\`、\`!mv\`、\`!git\` 等；\`!vi\` / \`!vim\` / \`!nano\` 不会透传。
-• 如果遇到问题，试着使用 \`/panel\` 面板操作更方便。`;
+• 如果遇到问题，试着使用 \`/panel\` 面板操作更方便。
+
+📤 **文件发送**
+• \`/send <绝对路径>\` 直接发送文件到群聊 (e.g. \`/send /path/to/file.png\` 或 \`/send C:\\Users\\你\\Desktop\\图片.jpg\`)
+• \`发送文件 <路径或描述>\` 中文自然语言触发（同上）`;
 }

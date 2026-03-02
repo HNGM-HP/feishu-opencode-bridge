@@ -85,6 +85,49 @@ export const attachmentConfig = {
   maxSize: parseInt(process.env.ATTACHMENT_MAX_SIZE || String(50 * 1024 * 1024), 10),
 };
 
+function parseProjectAliases(value: string | undefined): Record<string, string> {
+  if (!value) {
+    return {};
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+
+    const result = Object.create(null) as Record<string, string>;
+    for (const [key, item] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof item === 'string' && item.trim()) {
+        // 过滤原型污染 key
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+          continue;
+        }
+        result[key] = item.trim();
+      }
+    }
+    return result;
+  } catch (error) {
+    console.warn('[Config] PROJECT_ALIASES 解析失败:', error);
+    return {};
+  }
+}
+
+// 目录配置
+export const directoryConfig = {
+  allowedDirectories: (process.env.ALLOWED_DIRECTORIES || '')
+    .split(',')
+    .map(item => item.trim())
+    .filter(item => item.length > 0),
+  defaultWorkDirectory: process.env.DEFAULT_WORK_DIRECTORY?.trim() || undefined,
+  projectAliases: parseProjectAliases(process.env.PROJECT_ALIASES),
+  gitRootNormalization: parseBooleanEnv(process.env.GIT_ROOT_NORMALIZATION, true),
+  maxPathLength: 500,
+  get isAllowlistEnforced() {
+    return this.allowedDirectories.length > 0;
+  },
+};
+
 // 验证配置
 export function validateConfig(): void {
   const errors: string[] = [];

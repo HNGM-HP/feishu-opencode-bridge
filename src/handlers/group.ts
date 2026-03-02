@@ -8,6 +8,8 @@ import { parseCommand } from '../commands/parser.js';
 import type { EffortLevel } from '../commands/effort.js';
 import { commandHandler } from './command.js';
 import { modelConfig, attachmentConfig } from '../config.js';
+import { DirectoryPolicy } from '../utils/directory-policy.js';
+import { buildSessionTimestamp } from '../utils/session-title.js';
 
 import { randomUUID } from 'crypto';
 import path from 'path';
@@ -141,15 +143,17 @@ export class GroupHandler {
     // 3. 获取或创建会话
     let sessionId = chatSessionStore.getSessionId(chatId);
     if (!sessionId) {
-      // 如果没有绑定会话，自动创建一个
-      const title = `群聊会话-${chatId.slice(-4)}`;
-      const session = await opencodeClient.createSession(title);
+      // 如果没有绑定会话，自动创建一个（走 DirectoryPolicy）
+      const title = `群聊-${buildSessionTimestamp()}`;
+      const chatDefault = chatSessionStore.getSession(chatId)?.defaultDirectory;
+      const dirResult = DirectoryPolicy.resolve({ chatDefaultDirectory: chatDefault });
+      const effectiveDir = dirResult.ok && dirResult.source !== 'server_default' ? dirResult.directory : undefined;
+      const session = await opencodeClient.createSession(title, effectiveDir);
       if (session) {
         sessionId = session.id;
-        // 尝试获取群名作为 title，或者用默认的
         chatSessionStore.setSession(chatId, sessionId, senderId, title, {
           chatType: 'group',
-          sessionDirectory: session.directory,
+          resolvedDirectory: session.directory,
         }); // senderId 暂时作为 creator
       } else {
         await feishuClient.reply(messageId, '❌ 无法创建 OpenCode 会话');
@@ -322,8 +326,15 @@ export class GroupHandler {
       console.log(`[Group] 发送消息: chat=${chatId}, session=${sessionId.slice(0, 8)}...`);
 
       const parts: OpencodePartInput[] = [];
-      if (text) {
-        parts.push({ type: 'text', text });
+
+      // 按需注入文件发送指令：仅在检测到发送意图关键词时注入
+      let effectiveText = text;
+      if (effectiveText && /发给我|发送文件|上传|传给我|send.*file/i.test(effectiveText)) {
+        effectiveText += '\n[feishu-bridge: 如需发送文件到当前群聊，执行 echo FEISHU_SEND_FILE <文件绝对路径>]';
+      }
+
+      if (effectiveText) {
+        parts.push({ type: 'text', text: effectiveText });
       }
 
       if (attachments && attachments.length > 0) {
@@ -365,6 +376,24 @@ export class GroupHandler {
 
       // 异步触发 OpenCode 请求，后续输出通过事件流持续推送
       const variant = promptEffort || config?.preferredEffort;
+      // 从 store 获取会话的工作目录，传递给 OpenCode 以切换 Instance 上下文
+      const sessionData = chatSessionStore.getSession(chatId);
+      let directory = sessionData?.resolvedDirectory;
+      // 如果 store 没有记录（老会话），尝试从 OpenCode 聚合查询并回写缓存
+      if (!directory) {
+        try {
+          const storeKnownDirs = chatSessionStore.getKnownDirectories();
+          const sessions = await opencodeClient.listAllSessions(storeKnownDirs);
+          const matched = sessions.find(s => s.id === sessionId);
+          if (matched?.directory) {
+            directory = matched.directory;
+            // 回写缓存，后续消息不再重复查询
+            chatSessionStore.updateResolvedDirectory(chatId, directory);
+          }
+        } catch {
+          // 获取失败不阻塞消息发送
+        }
+      }
       await opencodeClient.sendMessagePartsAsync(
         sessionId,
         parts,
@@ -373,6 +402,7 @@ export class GroupHandler {
           modelId,
           agent: config?.preferredAgent,
           ...(variant ? { variant } : {}),
+          ...(directory ? { directory } : {}),
         }
       );
 
@@ -388,6 +418,12 @@ export class GroupHandler {
         await feishuClient.reply(messageId, `❌ ${errorMessage}`);
       }
     }
+  }
+
+  // 公开的 prompt 调度方法，供 command 层（如 /send 命令）调用
+  async dispatchPrompt(sessionId: string, text: string, chatId: string, messageId: string): Promise<void> {
+    const config = chatSessionStore.getSession(chatId);
+    await this.processPrompt(sessionId, text, chatId, messageId, undefined, config);
   }
 
   // 处理附件

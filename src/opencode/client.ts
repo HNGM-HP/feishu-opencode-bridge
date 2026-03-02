@@ -41,6 +41,12 @@ type PermissionCorrelation = {
   callId?: string;
 };
 
+type DirectoryEventStreamEntry = {
+  controller: AbortController;
+  active: boolean;
+  reconnectTimer: NodeJS.Timeout | null;
+};
+
 function getPermissionLabel(props: PermissionEventProperties): string {
   if (typeof props.permission === 'string' && props.permission.trim()) {
     return props.permission;
@@ -315,6 +321,9 @@ class OpencodeClientWrapper extends EventEmitter {
   private eventReconnectAttempt = 0;
   private eventListeningEnabled = false;
   private eventStreamActive = false;
+  private directoryEventStreams: Map<string, DirectoryEventStreamEntry> = new Map();
+  // 防止并发调用 ensureDirectoryEventStream 对同一目录建立多条 SSE 连接
+  private pendingDirectoryStreams: Map<string, Promise<void>> = new Map();
 
   constructor() {
     super();
@@ -392,6 +401,123 @@ class OpencodeClientWrapper extends EventEmitter {
       this.eventReconnectTimer = null;
       void this.startEventListener();
     }, delay);
+  }
+
+  private clearDirectoryEventReconnectTimer(directory: string): void {
+    const entry = this.directoryEventStreams.get(directory);
+    if (!entry || !entry.reconnectTimer) {
+      return;
+    }
+    clearTimeout(entry.reconnectTimer);
+    entry.reconnectTimer = null;
+  }
+
+  private scheduleDirectoryEventReconnect(directory: string, reason: string): void {
+    if (!this.eventListeningEnabled || !this.client) {
+      return;
+    }
+
+    const entry = this.directoryEventStreams.get(directory);
+    if (!entry || entry.reconnectTimer) {
+      return;
+    }
+
+    const delay = 3000;
+    console.warn(`[OpenCode] ${reason}，将在 ${Math.round(delay / 1000)} 秒后重连目录事件流: ${directory}`);
+    entry.reconnectTimer = setTimeout(() => {
+      entry.reconnectTimer = null;
+      void this.ensureDirectoryEventStream(directory);
+    }, delay);
+  }
+
+  private async ensureDirectoryEventStream(directory: string): Promise<void> {
+    if (!this.client || !this.eventListeningEnabled) {
+      return;
+    }
+
+    const normalizedDirectory = directory.trim();
+    if (!normalizedDirectory) {
+      return;
+    }
+
+    // 防竞态：同一目录正在建立连接时，等待而非重复创建
+    const pending = this.pendingDirectoryStreams.get(normalizedDirectory);
+    if (pending) {
+      await pending;
+      return;
+    }
+
+    const promise = this._createDirectoryEventStream(normalizedDirectory);
+    this.pendingDirectoryStreams.set(normalizedDirectory, promise);
+    try {
+      await promise;
+    } finally {
+      this.pendingDirectoryStreams.delete(normalizedDirectory);
+    }
+  }
+
+  private async _createDirectoryEventStream(normalizedDirectory: string): Promise<void> {
+    const existing = this.directoryEventStreams.get(normalizedDirectory);
+    if (existing?.active) {
+      return;
+    }
+
+    if (existing) {
+      this.clearDirectoryEventReconnectTimer(normalizedDirectory);
+      existing.controller.abort();
+    }
+
+    const controller = new AbortController();
+    this.directoryEventStreams.set(normalizedDirectory, {
+      controller,
+      active: true,
+      reconnectTimer: null,
+    });
+
+    try {
+      const events = await this.client!.event.subscribe({
+        query: { directory: normalizedDirectory },
+      });
+      console.log(`[OpenCode] 目录事件流订阅成功: ${normalizedDirectory}`);
+
+      (async () => {
+        try {
+          for await (const event of events.stream) {
+            if (controller.signal.aborted || !this.eventListeningEnabled) {
+              break;
+            }
+
+            if (event.type.toLowerCase().includes('permission')) {
+              console.log(`[OpenCode] 目录事件: ${event.type}`, JSON.stringify(event.properties || {}).slice(0, 1200));
+            }
+
+            this.handleEvent(event);
+          }
+
+          if (!controller.signal.aborted && this.eventListeningEnabled) {
+            const entry = this.directoryEventStreams.get(normalizedDirectory);
+            if (entry) {
+              entry.active = false;
+            }
+            this.scheduleDirectoryEventReconnect(normalizedDirectory, '目录事件流已结束');
+          }
+        } catch (error) {
+          if (!controller.signal.aborted && this.eventListeningEnabled) {
+            console.error(`[OpenCode] 目录事件流中断: ${normalizedDirectory}`, error);
+            const entry = this.directoryEventStreams.get(normalizedDirectory);
+            if (entry) {
+              entry.active = false;
+            }
+            this.scheduleDirectoryEventReconnect(normalizedDirectory, '目录事件流中断');
+          }
+        }
+      })();
+    } catch (error) {
+      console.error(`[OpenCode] 目录事件流订阅失败: ${normalizedDirectory}`, error);
+      // 先清理可能存在的重连定时器，再删除条目，防止僵尸 timer 继续触发
+      this.clearDirectoryEventReconnectTimer(normalizedDirectory);
+      this.directoryEventStreams.delete(normalizedDirectory);
+    }
   }
 
   // 启动SSE事件监听
@@ -597,20 +723,26 @@ class OpencodeClientWrapper extends EventEmitter {
       modelId?: string;
       agent?: string;
       variant?: string;
+      directory?: string;
     }
   ): Promise<{ info: Message; parts: Part[] }> {
     const client = this.getClient();
     const model = this.resolveModelOption(options);
 
-    const response = await client.session.prompt({
-      path: { id: sessionId },
-      body: {
-        parts: [{ type: 'text', text }],
-        ...(options?.agent ? { agent: options.agent } : {}),
-        ...(model ? { model } : {}),
-        ...(options?.variant ? { variant: options.variant } : {}),
-      },
-    });
+    if (options?.directory) {
+      void this.ensureDirectoryEventStream(options.directory);
+    }
+
+      const response = await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          parts: [{ type: 'text', text }],
+          ...(options?.agent ? { agent: options.agent } : {}),
+          ...(model ? { model } : {}),
+          ...(options?.variant ? { variant: options.variant } : {}),
+        },
+      ...(options?.directory ? { query: { directory: options.directory } } : {}),
+      });
 
     return response.data as { info: Message; parts: Part[] };
   }
@@ -624,22 +756,28 @@ class OpencodeClientWrapper extends EventEmitter {
       modelId?: string;
       agent?: string;
       variant?: string;
+      directory?: string;
     },
     messageId?: string
   ): Promise<{ info: Message; parts: Part[] }> {
     const client = this.getClient();
     const model = this.resolveModelOption(options);
 
-    const response = await client.session.prompt({
-      path: { id: sessionId },
-      body: {
-        parts,
-        // ...(messageId ? { messageID: messageId } : {}), // 已注释：避免传递飞书 MessageID 导致 Opencode 无法处理
-        ...(options?.agent ? { agent: options.agent } : {}),
-        ...(model ? { model } : {}),
-        ...(options?.variant ? { variant: options.variant } : {}),
-      },
-    });
+    if (options?.directory) {
+      void this.ensureDirectoryEventStream(options.directory);
+    }
+
+      const response = await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          parts,
+          // ...(messageId ? { messageID: messageId } : {}), // 已注释：避免传递飞书 MessageID 导致 Opencode 无法处理
+          ...(options?.agent ? { agent: options.agent } : {}),
+          ...(model ? { model } : {}),
+          ...(options?.variant ? { variant: options.variant } : {}),
+        },
+      ...(options?.directory ? { query: { directory: options.directory } } : {}),
+      });
 
     return response.data as { info: Message; parts: Part[] };
   }
@@ -653,12 +791,18 @@ class OpencodeClientWrapper extends EventEmitter {
       modelId?: string;
       agent?: string;
       variant?: string;
+      directory?: string;
     }
   ): Promise<void> {
     this.getClient();
     const model = this.resolveModelOption(options);
 
-    const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/prompt_async`, {
+    if (options?.directory) {
+      void this.ensureDirectoryEventStream(options.directory);
+    }
+
+    const dirQuery = options?.directory ? `?directory=${encodeURIComponent(options.directory)}` : '';
+    const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/prompt_async${dirQuery}`, {
       method: 'POST',
       headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -686,12 +830,18 @@ class OpencodeClientWrapper extends EventEmitter {
       modelId?: string;
       agent?: string;
       variant?: string;
+      directory?: string;
     }
   ): Promise<void> {
     this.getClient();
     const model = this.resolveModelOption(options);
 
-    const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/prompt_async`, {
+    if (options?.directory) {
+      void this.ensureDirectoryEventStream(options.directory);
+    }
+
+    const dirQuery = options?.directory ? `?directory=${encodeURIComponent(options.directory)}` : '';
+    const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/prompt_async${dirQuery}`, {
       method: 'POST',
       headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -714,17 +864,23 @@ class OpencodeClientWrapper extends EventEmitter {
   async sendCommand(
     sessionId: string,
     command: string,
-    args: string
+    args: string,
+    options?: { directory?: string }
   ): Promise<{ info: Message; parts: Part[] }> {
     const client = this.getClient();
 
-    const result = await client.session.command({
-      path: { id: sessionId },
-      body: {
-        command,
-        arguments: args,
-      },
-    });
+    if (options?.directory) {
+      void this.ensureDirectoryEventStream(options.directory);
+    }
+
+      const result = await client.session.command({
+        path: { id: sessionId },
+        body: {
+          command,
+          arguments: args,
+        },
+      ...(options?.directory ? { query: { directory: options.directory } } : {}),
+      });
 
     if (result.error) {
       const statusCode = result.response?.status;
@@ -742,9 +898,13 @@ class OpencodeClientWrapper extends EventEmitter {
     sessionId: string,
     command: string,
     agent: string,
-    options?: { providerId?: string; modelId?: string }
+    options?: { providerId?: string; modelId?: string; directory?: string }
   ): Promise<ShellExecutionResult> {
     this.getClient();
+
+    if (options?.directory) {
+      void this.ensureDirectoryEventStream(options.directory);
+    }
 
     const model = options?.providerId && options?.modelId
       ? {
@@ -753,7 +913,8 @@ class OpencodeClientWrapper extends EventEmitter {
         }
       : undefined;
 
-    const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/shell`, {
+    const dirQuery = options?.directory ? `?directory=${encodeURIComponent(options.directory)}` : '';
+    const response = await fetch(`${opencodeConfig.baseUrl}/session/${sessionId}/shell${dirQuery}`, {
       method: 'POST',
       headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
@@ -957,6 +1118,36 @@ class OpencodeClientWrapper extends EventEmitter {
     return Array.from(merged.values());
   }
 
+  // 聚合查询所有已知目录的 session（默认 Instance + 各自定义 directory Instance）
+  async listAllSessions(knownDirectories: string[]): Promise<Session[]> {
+    const allSessions: Session[] = [];
+    const seen = new Set<string>();
+
+    // 1. 默认 Instance
+    try {
+      const defaultSessions = await this.listSessions();
+      for (const s of defaultSessions) {
+        if (!seen.has(s.id)) { seen.add(s.id); allSessions.push(s); }
+      }
+    } catch {
+      // 默认 Instance 查询失败不阻塞
+    }
+
+    // 2. 各自定义目录的 Instance
+    for (const dir of knownDirectories) {
+      try {
+        const sessions = await this.listSessions({ directory: dir });
+        for (const s of sessions) {
+          if (!seen.has(s.id)) { seen.add(s.id); allSessions.push(s); }
+        }
+      } catch {
+        // 单个目录查询失败不阻塞其他
+      }
+    }
+
+    return allSessions;
+  }
+
   // 通过 ID 获取会话（可按目录限定）
   async getSessionById(sessionId: string, options?: SessionQueryOptions): Promise<Session | null> {
     const client = this.getClient();
@@ -1022,12 +1213,49 @@ class OpencodeClientWrapper extends EventEmitter {
   }
 
   // 创建新会话
-  async createSession(title?: string): Promise<Session> {
+  async createSession(title?: string, directory?: string): Promise<Session> {
     const client = this.getClient();
+    const normalizedDir = this.normalizeDirectory(directory);
+    if (normalizedDir) {
+      void this.ensureDirectoryEventStream(normalizedDir);
+    }
     const result = await client.session.create({
       body: { title: title || '新对话' },
+      ...(normalizedDir ? { query: { directory: normalizedDir } } : {}),
     });
     return result.data!;
+  }
+
+  // 更新会话标题
+  async updateSession(sessionId: string, title: string): Promise<boolean> {
+    const client = this.getClient();
+    const trimmedTitle = title.trim();
+    if (!trimmedTitle) {
+      console.warn('[OpenCode] updateSession: 标题不能为空');
+      return false;
+    }
+
+    try {
+      const result = await client.session.update({
+        path: { id: sessionId },
+        body: { title: trimmedTitle },
+      });
+
+      if (result.error) {
+        const statusCode = result.response?.status;
+        const detail = formatSdkError(result.error);
+        const message = statusCode
+          ? `会话重命名失败（HTTP ${statusCode}）: ${detail}`
+          : `会话重命名失败: ${detail}`;
+        console.error(`[OpenCode] ${appendAuthHint(message, statusCode)}`);
+        return false;
+      }
+
+      return true;
+    } catch (error) {
+      console.error(`[OpenCode] 更新会话标题失败: ${sessionId}`, error);
+      return false;
+    }
   }
 
   // 删除会话
@@ -1192,6 +1420,11 @@ class OpencodeClientWrapper extends EventEmitter {
       this.eventAbortController.abort();
       this.eventAbortController = null;
     }
+    for (const [directory, entry] of this.directoryEventStreams) {
+      this.clearDirectoryEventReconnectTimer(directory);
+      entry.controller.abort();
+    }
+    this.directoryEventStreams.clear();
     this.client = null;
     console.log('[OpenCode] 已断开连接');
   }
