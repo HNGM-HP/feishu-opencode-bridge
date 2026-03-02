@@ -21,7 +21,7 @@ import {
 
 async function main() {
   console.log('╔════════════════════════════════════════════════╗');
-  console.log('║     飞书 × OpenCode 桥接服务 v2.7.5 (Group)    ║');
+  console.log('║     飞书 × OpenCode 桥接服务 v2.7.6 (Group)    ║');
   console.log('╚════════════════════════════════════════════════╝');
 
   // 1. 验证配置
@@ -103,7 +103,7 @@ async function main() {
       permissionId: head.permissionId,
       tool: head.tool,
       description: head.description,
-      risk: head.risk,
+      risk: head。risk,
       pendingCount,
     };
   };
@@ -142,7 +142,7 @@ async function main() {
   const appendTimelineText = (
     bufferKey: string,
     segmentKey: string,
-    type: 'text' | 'reasoning',
+    输入: 'text' | 'reasoning',
     deltaText: string
   ): void => {
     if (!deltaText) return;
@@ -161,7 +161,7 @@ async function main() {
       trimTimeline(timeline);
     }
     timeline.segments.set(segmentKey, {
-      type,
+      输入，
       text: deltaText,
     });
   };
@@ -194,7 +194,7 @@ async function main() {
     const segmentKey = `tool:${toolKey}`;
     const timeline = getOrCreateTimelineState(bufferKey);
     const previous = timeline.segments.get(segmentKey);
-    if (previous && previous.type === 'tool') {
+    if (上一处 && previous.type === 'tool') {
       timeline.segments.set(segmentKey, {
         type: 'tool',
         name: state.name,
@@ -246,7 +246,7 @@ async function main() {
         if (!segment.text.trim()) continue;
         segments.push({
           type: segment.type,
-          text: segment.text,
+          text: segment。text,
         });
         continue;
       }
@@ -331,7 +331,7 @@ async function main() {
       return;
     }
 
-    map.set(normalizedKey, {
+    map。set(normalizedKey, {
       chatId: normalizedChatId,
       expiresAt: Date.now() + CORRELATION_CACHE_TTL_MS,
     });
@@ -364,7 +364,7 @@ async function main() {
     return entry.chatId;
   };
 
-  type PermissionChatResolution = {
+  输入 PermissionChatResolution = {
     chatId?: string;
     source: 'session' | 'parent_session' | 'related_session' | 'tool_call' | 'message' | 'unresolved';
   };
