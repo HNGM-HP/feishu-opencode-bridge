@@ -1,4 +1,4 @@
-# 飞书 × OpenCode 桥接服务 v2.7.5 (Group)
+# 飞书 × OpenCode 桥接服务 v2.7.6 (Group)
 
 [![Node.js >= 18](https://img.shields.io/badge/Node.js-%3E%3D18-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
@@ -476,19 +476,9 @@ node scripts/deploy.mjs status
 
 - `类型` 支持 `主/子`（或 `primary/subagent`）。
 
-### 3) 配置默认 Agent（提醒）
+### 3) 配置 Agent（提醒）
 
-- 可在 OpenCode 配置文件 `opencode.json` 设置 `default_agent`。
-- 当桥接侧未显式指定角色时，会跟随 OpenCode 的默认 Agent。
-
-```json
-{
-  "$schema": "https://opencode.ai/config.json",
-  "default_agent": "companion"
-}
-```
-
-- 修改后如果 `/panel` 未立即显示新角色，重启 OpenCode 即可。
+- 配置后如果 `/panel` 未立即显示新角色，重启 OpenCode 即可。
 
 <a id="关键实现细节"></a>
 ## 📌 关键实现细节
