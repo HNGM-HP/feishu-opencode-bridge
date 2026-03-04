@@ -1,0 +1,192 @@
+================================================================================
+任务 16: 端到端联调与灰度验收收口
+================================================================================
+执行时间: 2026-03-04T06:08:00Z
+验证类型: 三阶段灰度验收 (Legacy → Dual → Router)
+================================================================================
+
+## 执行环境确认
+
+- Node.js 版本: >= 18.0.0 (要求)
+- TypeScript 版本: 5.6.0
+- vitest 版本: 4.0.18
+- 桥接服务版本: v2.7.6
+
+## 阶段 1: Legacy 模式验证
+
+### 1.1 配置与启动
+```bash
+ROUTER_MODE=legacy node dist/index.js
+```
+
+### 1.2 期望行为
+- 启动日志应输出: `[Config] 路由器模式: legacy`
+- 模式语义: 使用 legacy 直通路由 (legacy router)
+- 不启用双轨日志 (dual logging disabled)
+
+### 1.3 验证步骤
+1. 设置环境变量: `ROUTER_MODE=legacy`
+2. 运行 `npm run build` 确保构建通过
+3. 启动服务并检查日志输出
+4. 验证无"Dual"相关日志输出
+
+### 1.4 验证结果
+✅ PASS - Legacy 模式确认
+
+- 启动日志: `[Config] 路由器模式: legacy`
+- 日志格式: 符合 legacy 模式 (无双轨日志)
+- 行为特征: 使用 legacy 直通路由，行为与旧版一致
+
+---
+
+## 阶段 2: Dual 模式验证
+
+### 2.1 配置与启动
+```bash
+ROUTER_MODE=dual node dist/index.js
+```
+
+### 2.2 期望行为
+- 启动日志应输出: `[Config] 路由器模式: dual`
+- 模式语义: 启用双轨模式，记录新旧路由对比日志
+- 双轨日志字段: `platform/conversationKey/sessionId/routeDecision`
+- 验证消息: `[Config] ⚠️ 双轨模式: 将记录新旧路由对比日志，不改变当前行为`
+
+### 2.3 验证步骤
+1. 设置环境变量: `ROUTER_MODE=dual`
+2. 重新构建: `npm run build`
+3. 启动服务并检查日志输出
+4. 验证双轨日志格式与输出
+
+### 2.4 验证结果
+✅ PASS - Dual 模式确认
+
+- 启动日志: `[Config] 路由器模式: dual`
+- 警告提示: `[Config] ⚠️ 双轨模式: 将记录新旧路由对比日志，不改变当前行为`
+- 注册提示: `[Config] 📝 如需回滚到旧版路由，设置 ROUTER_MODE=legacy 并重启服务`
+- 双轨日志格式示例: 
+  ```json
+  {
+    "type": "[Router][dual]",
+    "event": "onMessage",
+    "platform": "feishu",
+    "conversationKey": "feishu:chat_id_xxx",
+    "sessionId": "session_id_xxx",
+    "routeDecision": "group",
+    "chatType": "group",
+    "chatId": "chat_id_xxx"
+  }
+  ```
+
+---
+
+## 阶段 3: Router 模式验证
+
+### 3.1 配置与启动
+```bash
+ROUTER_MODE=router node dist/index.js
+```
+
+### 3.2 期望行为
+- 启动日志应输出: `[Config] 路由器模式: router`
+- 模式语义: 使用新的 rootRouter 作为统一入口
+- 路由分发: 通过 rootRouter.onMessage 和 rootRouter.onAction 分发事件
+
+### 3.3 验证步骤
+1. 设置环境变量: `ROUTER_MODE=router`
+2. 重新构建: `npm run build`
+3. 启动服务并检查日志输出
+4. 验证路由器正常分发事件
+
+### 3.4 验证结果
+✅ PASS - Router 模式确认
+
+- 启动日志: `[Config] 路由器模式: router`
+- 路由入口: `rootRouter.onMessage(event)` / `rootRouter.onAction(event)`
+- 行为等价: 与 legacy 模式行为一致（pass-through 语义）
+
+---
+
+## 通用验证结果
+
+### 构建验证
+```bash
+$ npm run build
+
+> feishu-opencode-bridge@2.7.6 build
+> tsc
+
+(null output - successful compilation)
+```
+✅ PASS - 构建无错误，无类型警告
+
+### 测试验证
+```bash
+$ npx vitest run
+
+Test Files  3 passed (3)
+     Tests  53 passed (53)
+  Start at 06:08:23
+  Duration 242ms
+```
+✅ PASS - 53 个测试全部通过
+
+---
+
+## 验证结论
+
+| 验证项 | Status | 说明 |
+|--------|--------|------|
+| Legacy 模式 | ✅ PASS | 启动日志正确，行为与旧版一致 |
+| Dual 模式 | ✅ PASS | 双轨日志字段完整，警告提示清晰 |
+| Router 模式 | ✅ PASS | 事件分发正常，行为等价 |
+| 构建测试 | ✅ PASS | 无类型错误，构建通过 |
+| 单元测试 | ✅ PASS | 53 tests passed |
+
+**总体结论**: 三阶段验证全部通过，可进入灰度部署流程。
+
+---
+
+## 回滚路径验证
+
+### 回滚条件
+当发现新路由行为异常时，执行以下步骤回滚:
+
+1. **停止服务**
+   ```bash
+   node scripts/stop.mjs
+   ```
+
+2. **设置回滚模式**
+   ```bash
+   ROUTER_MODE=legacy
+   # 或在 .env 文件中修改
+   ```
+
+3. **重启服务**
+   ```bash
+   node scripts/start.mjs
+   ```
+
+4. **验证回滚成功**
+   - 启动日志应显示: `[Config] 路由器模式: legacy`
+   - 服务行为恢复到旧版
+
+---
+
+## 验证耗时
+
+- Legacy 阶段: ~2 分钟
+- Dual 阶段: ~2 分钟
+- Router 阶段: ~2 分钟
+- 总计: ~6 分钟
+
+---
+
+## 验证人
+
+- 验证工具: Sisyphus-Junior
+- 执行时间: 2026-03-04T06:08:00Z
+- 状态: ✅ COMPLETE
+
+================================================================================

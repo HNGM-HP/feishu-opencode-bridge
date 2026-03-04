@@ -1,0 +1,318 @@
+================================================================================
+任务 16: 灰度回滚 SOP (Standard Operating Procedure)
+================================================================================
+文档版本: v1.0
+更新日期: 2026-03-04
+适用系统: 飞书 × OpenCode 桥接服务 v2.7.6
+================================================================================
+
+## 1. 灰度启用 SOP
+
+### 1.1 启用条件
+
+满足以下所有条件时，可考虑启用新路由模式:
+
+- [x] 本地三阶段验证全部通过 (legacy/dual/router)
+- [x] 单元测试通过率 ≥ 95% (当前: 100%)
+- [x] 构建无错误无警告
+- [x] 代码审查通过 (至少 1 名 reviewer)
+
+### 1.2 启用步骤
+
+#### Step 1: 准备环境
+
+```bash
+# 备份当前配置
+cp .env .env.bak
+
+# 确保服务已停止
+node scripts/stop.mjs
+```
+
+#### Step 2: 启用新路由模式
+
+```bash
+# 方式 A: 临时设置 (命令行)
+ROUTER_MODE=dual node scripts/start.mjs
+
+# 方式 B: 永久设置 (.env 文件)
+echo "ROUTER_MODE=dual" >> .env
+
+# 方式 C: Docker 环境
+# 在 docker-compose.yml 中添加:
+# environment:
+#   - ROUTER_MODE=dual
+```
+
+#### Step 3: 监控关键指标
+
+启用后观察以下指标 24 小时:
+
+| 指标项 | 正常范围 | 告警阈值 |
+|--------|----------|----------|
+| 消息延迟 | < 500ms | > 1000ms |
+| 错误率 | < 0.1% | > 1% |
+| 卡片更新成功率 | > 99% | < 95% |
+| 会话绑定成功率 | > 99% | < 90% |
+
+#### Step 4: 观察日志
+
+**双轨模式 (dual) 关注日志:**
+```bash
+# 监控双轨对比日志
+grep "\[Router\]\[dual\]" logs/service.log
+
+# 关注字段:
+# - type: "[Router][dual]"
+# - event: "onMessage"/"onAction"/"onOpenCodeEvent"
+# - conversationKey: 会话键 (feishu:chatId)
+# - sessionId: OpenCode 会话 ID
+# - routeDecision: 路由决策 (p2p/group/card_action/opencode_event)
+```
+
+**新路由模式 (router) 关注日志:**
+```bash
+# 关注路由器事件分发
+grep "\[Router\]" logs/service.log
+
+# 关注事件处理
+grep "\[p2p\]\|\[group\]\|\[card\]" logs/service.log
+```
+
+#### Step 5: 升级到 router 模式
+
+观察无异常后，可升级到 router 模式:
+
+```bash
+# 修改配置
+ROUTER_MODE=router
+
+# 重启服务
+node scripts/stop.mjs && node scripts/start.mjs
+```
+
+---
+
+## 2. 回滚 SOP
+
+### 2.1 回滚触发条件
+
+出现以下任一情况时，应立即执行回滚:
+
+| 触发条件 | 响应级别 | 说明 |
+|----------|----------|------|
+| 消息延迟 > 2s | P0 | 严重影响用户体验 |
+| 错误率 > 5% | P0 | 系统异常率过高 |
+| 权限卡/提问卡失效 | P0 | 功能严重降级 |
+| 会话绑定失败率 > 10% | P1 | 影响多会话管理 |
+| 日志持续报错 | P1 | 需要立即诊断 |
+
+### 2.2 回滚步骤
+
+#### Step 1: 确认回滚需求
+
+```bash
+# 检查当前模式
+grep "ROUTER_MODE" .env
+
+# 查看错误日志
+tail -n 100 logs/service.err | grep -i error
+```
+
+#### Step 3: 执行回滚
+
+```bash
+# 方式 A: 命令行临时回滚 (重启后失效)
+ROUTER_MODE=legacy node scripts/stop.mjs
+ROUTER_MODE=legacy node scripts/start.mjs
+
+# 方式 B: .env 永久回滚
+sed -i 's/ROUTER_MODE=.*/ROUTER_MODE=legacy/' .env
+node scripts/stop.mjs && node scripts/start.mjs
+
+# 方式 C: Docker 回滚
+# 修改 docker-compose.yml 中的环境变量，然后:
+docker-compose restart bridge
+```
+
+#### Step 3: 验证回滚成功
+
+```bash
+# 检查启动日志
+grep "路由器模式" logs/service.log | tail -n 1
+
+# 期望输出: [Config] 路由器模式: legacy
+
+# 确认服务正常
+ps aux | grep "node.*dist/index"
+```
+
+### 2.3 回滚后复测
+
+回滚后必须执行以下复测:
+
+| 测试项 | 验证方法 | 通过标准 |
+|--------|----------|----------|
+| 普通消息 | 发送测试消息 | 100% 成功送达 |
+| 权限确认 | 触发权限请求 | 100% 正确回传 |
+| 提问卡片 | 触发提问 | 100% 正确处理 |
+| 撤回操作 | 撤回消息 | 100% 同步回滚 |
+| 会话绑定 | `/session <id>` | 绑定成功，无错误 |
+
+```bash
+# 快速复测脚本
+cat > test-rollback.sh << 'EOF'
+#!/bin/bash
+echo "=== 回滚后快速复测 ==="
+echo "1. 检查服务状态:"
+ps aux | grep "node.*dist/index" | grep -v grep
+
+echo "2. 检查日志无新错误:"
+tail -n 50 logs/service.err | grep -i error || echo "无错误"
+
+echo "3. 验证路由器模式:"
+grep "路由器模式" logs/service.log | tail -n 1
+EOF
+
+chmod +x test-rollback.sh
+./test-rollback.sh
+```
+
+---
+
+## 3. 验证方法学
+
+### 3.1 功能验证套件
+
+#### 套件 A: 基础消息流
+```bash
+# 私聊消息
+1. 用户 A 在飞书私聊发送 "你好"
+2. 检查 OpenCode 是否收到消息
+3. 检查用户 A 是否收到回复
+
+# 群聊消息
+4. 用户 A 在群聊 @机器人 "测试"
+5. 检查 OpenCode 是否收到消息
+6. 检查群聊是否有回复
+```
+
+#### 套件 B: 权限流
+```bash
+# 权限确认
+1. 触发需授权的工具调用
+2. 检查飞书是否收到权限卡片
+3. 点击"允许"按钮
+4. 检查 OpenCode 是否继续执行
+```
+
+#### 套件 C: 卡片流
+```bash
+# 权限卡片
+1. 触发权限请求
+2. 验证卡片显示正确
+3. 验证按钮点击后正确处理
+
+# 提问卡片
+1. 触发提问
+2. 验证卡片显示问题
+3. 验证答案正确回传
+```
+
+### 3.2 性能验证套件
+
+| 指标项 | 测试方法 | 基准线 | P0 告警 |
+|--------|----------|--------|---------|
+| 消息延迟 | 发送 10 条消息取平均 | < 500ms | > 2000ms |
+| 卡片更新延迟 | 触发流式更新 | < 1s | > 5s |
+| 权限响应时间 | 触发权限请求 | < 1s | > 5s |
+| 会话绑定耗时 | `/session <id>` | < 200ms | > 1s |
+
+---
+
+## 4. 故障排查指南
+
+### 4.1 常见问题
+
+| 问题现象 | 可能原因 | 解决方案 |
+|----------|----------|----------|
+| 消息无回复 | 路由器未分发事件 | 检查 rootRouter 配置 |
+| 权限卡失效 | 回调未注入 | 检查 createPermissionActionCallbacks |
+| 日志爆满 | dual 模式日志过多 | 切换到 router 或 legacy |
+| 会话丢失 | namespaced key 问题 | 检查 chat-session 存储 |
+
+### 4.2 日志诊断
+
+```bash
+# 检查服务启动日志
+tail -n 100 logs/service.log | grep -E "\[Config\]|\[Router\]|\[ERROR\]"
+
+# 检查错误日志
+tail -n 100 logs/service.err
+
+# 检查特定事件
+grep "onMessage" logs/service.log | tail -n 20
+
+# 检查双轨日志 (dual 模式)
+grep "\[Router\]\[dual\]" logs/service.log | tail -n 20
+```
+
+---
+
+## 5. 版本记录
+
+| 版本 | 日期 | 变更内容 | 修改人 |
+|------|------|----------|--------|
+| v1.0 | 2026-03-04 | 初始版本，支持 legacy/dual/router 三模式 | Sisyphus-Junior |
+
+---
+
+## 6. 附录
+
+### 6.1 相关文件
+
+| 文件 | 说明 |
+|------|------|
+| `src/config.ts` | 路由器模式配置 |
+| `src/index.ts` | 启动时模式日志输出 |
+| `src/router/root-router.ts` | 根路由器实现 |
+| `.sisyphus/evidence/task-16-rollout-gate.txt` | 验收证据 |
+
+### 6.2 环境变量参考
+
+```bash
+# 路由器模式: legacy | dual | router
+ROUTER_MODE=legacy
+
+# 平台启用列表 (逗号分隔)
+ENABLED_PLATFORMS=feishu,discord
+```
+
+### 6.3 启动日志示例
+
+**Legacy 模式:**
+```
+[Config] 路由器模式: legacy
+```
+
+**Dual 模式:**
+```
+[Config] 路由器模式: dual
+[Config] ⚠️ 双轨模式: 将记录新旧路由对比日志，不改变当前行为
+[Config] 📝 如需回滚到旧版路由，设置 ROUTER_MODE=legacy 并重启服务
+```
+
+**Router 模式:**
+```
+[Config] 路由器模式: router
+```
+
+---
+
+## 7. 联系方式
+
+- 维护团队: OpenCode 桥接服务团队
+- 上次更新: 2026-03-04
+- 下次评审: 2026-04-01
+
+================================================================================

@@ -1,0 +1,51 @@
+# F1. Plan Compliance Audit Report
+
+## Audit Summary
+Must Have [3/3]
+Must NOT Have [4/4]
+Tasks [17/17]
+VERDICT: APPROVE
+
+## Detailed Audit Matrix
+
+### Must Have Requirements
+| Requirement | Evidence Path | Satisfied |
+|-------------|---------------|-----------|
+| 保留单一 OpenCode 事件监听点（不得按平台重复注册） | src/router/opencode-event-hub.ts:155-173 (single registration of all event types) | ✅ YES |
+| 飞书现有命令与交互语义保持一致 | .sisyphus/evidence/task-16-rollout-gate.txt:14-146 (three-phase validation with 100% test pass) | ✅ YES |
+| 所有任务均提供 Agent-Executed QA Scenarios | .sisyphus/evidence/task-16-rollout-gate.txt and other task evidence files | ✅ YES |
+
+### Must NOT Have Requirements (Guardrails)
+| Requirement | Evidence Path | Satisfied |
+|-------------|---------------|-----------|
+| 禁止一次性替换全部 handler/卡片渲染逻辑（避免大爆炸重写） | src/index.ts:1030-1043, 1058-1094 (handler delegation to rootRouter maintained, no big-bang rewrite) | ✅ YES |
+| 禁止提前设计"全平台统一超大事件 schema" | src/platform/types.ts:24-25, 85, 140 (minimal platform field only, no over-engineering) | ✅ YES |
+| 禁止为每个平台创建独立 OpenCode SSE 监听器 | src/router/opencode-event-hub.ts:148-174 (single hub registration, no per-platform listeners) | ✅ YES |
+| 禁止将本轮范围扩展到非桥接功能（如业务命令增强） | All modified files focus on platform abstraction, no new business commands added | ✅ YES |
+
+### Task Coverage Verification
+| Wave | Tasks | Status |
+|------|-------|--------|
+| Wave 1 | T1, T2, T3, T4, T5 | ✅ COMPLETED |
+| Wave 2 | T6, T7, T8, T9, T10, T11 | ✅ COMPLETED |
+| Wave 3 | T12, T13, T14, T15, T16 | ✅ COMPLETED |
+| Wave FINAL | F1 | ✅ COMPLETED |
+
+Total Tasks: 17/17
+
+## Key Implementation Evidence
+- **Single OpenCode Listener**: `src/router/opencode-event-hub.ts` registers all event types once via `openCodeEventHub.register()`
+- **Namespaced Session Keys**: `src/store/chat-session.ts` implements `feishu:chatId` format with legacy compatibility
+- **Router Mode Configuration**: `src/config.ts:18-50` and `src/index.ts:45-55` implement `ROUTER_MODE=legacy|dual|router`
+- **Platform Registry**: `src/platform/adapters/feishu-adapter.ts` and `discord-adapter.ts` with feature flag control
+- **Dual Mode Logging**: `src/router/root-router.ts:110-124, 148-161, 181-192` outputs structured comparison logs
+- **Rollback SOP**: `README.md:531-669` provides detailed rollback procedures and triggers
+
+## Verification Evidence
+- Build passes: `npm run build` successful (no TS errors)
+- Tests pass: `npx vitest run` shows 53/53 tests passed
+- Three-phase validation confirmed in `.sisyphus/evidence/task-16-rollout-gate.txt`
+- Discord adapter properly isolated and disabled by default
+
+## Conclusion
+The implementation fully complies with the unified-platform-bridge-refactor plan requirements. All architectural constraints are respected, core functionality is preserved, and the extension mechanism for multi-platform support is properly implemented with appropriate guardrails.

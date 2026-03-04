@@ -1,0 +1,41 @@
+{
+  "name": "feishu-opencode-bridge",
+  "version": "2.8.2",
+  "type": "module",
+  "description": "飞书机器人 × OpenCode 桥接服务，通过飞书聊天控制OpenCode",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "start": "node dist/index.js",
+    "deploy:bridge": "node scripts/deploy.mjs deploy",
+    "manage:bridge": "node scripts/deploy.mjs menu",
+    "start:bridge": "node scripts/start.mjs",
+    "stop:bridge": "node scripts/stop.mjs"
+  },
+  "keywords": [
+    "feishu",
+    "opencode",
+    "chatbot",
+    "ai"
+  ],
+  "author": "",
+  "license": "GPLv3",
+  "dependencies": {
+    "@larksuiteoapi/node-sdk": "^1.36.3",
+    "@opencode-ai/sdk": "latest",
+    "discord.js": "^14.25.1",
+    "dotenv": "^16.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^4.0.18"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
