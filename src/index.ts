@@ -13,8 +13,7 @@ import { lifecycleHandler } from './handlers/lifecycle.js';
 import { createDiscordHandler } from './handlers/discord.js';
 import { commandHandler } from './handlers/command.js';
 import { cardActionHandler } from './handlers/card-action.js';
-import { validateConfig } from './config.js';
-import { routerConfig } from './config.js';
+import { validateConfig, routerConfig, outputConfig } from './config.js';
 import { rootRouter } from './router/root-router.js';
 import {
   createPermissionActionCallbacks,
@@ -32,7 +31,7 @@ import {
 async function main() {
 
   console.log('╔════════════════════════════════════════════════╗');
-  console.log('║     飞书 × OpenCode 桥接服务 v2.8.2 (Group)    ║');
+  console.log('║   飞书 × OpenCode 桥接服务 v2.8.3-beta (Group)  ║');
   console.log('╚════════════════════════════════════════════════╝');
 
   // 1. 验证配置
@@ -475,9 +474,9 @@ async function main() {
     return `${platform}:${resolvedConversationId}`;
   };
 
-  const buildPortableUpdateText = (data: StreamCardData): string => {
+  const buildPortableUpdateText = (data: StreamCardData, showThinking: boolean = true): string => {
     const mainText = data.text.trim();
-    const thinkingText = data.thinking.trim();
+    const thinkingText = showThinking ? data.thinking.trim() : '';
 
     if (mainText && thinkingText) {
       const safeThinking = thinkingText.replace(/```/g, '` ` `');
@@ -524,7 +523,7 @@ async function main() {
     return '⏳ 正在处理...';
   };
 
-  const buildPortableUpdatePayload = (data: StreamCardData, conversationId: string): { discordText: string; discordComponents?: Array<{
+  const buildPortableUpdatePayload = (data: StreamCardData, conversationId: string, platform: string = 'feishu'): { discordText: string; discordComponents?: Array<{
     type: 'select';
     customId: string;
     placeholder: string;
@@ -532,7 +531,33 @@ async function main() {
     minValues?: number;
     maxValues?: number;
   }> } => {
-    const baseText = buildPortableUpdateText(data);
+    // 根据平台读取可见性配置
+    const showThinkingChain = platform === 'discord'
+      ? outputConfig.discord.showThinkingChain
+      : platform === 'feishu'
+        ? outputConfig.feishu.showThinkingChain
+        : outputConfig.showThinkingChain;
+    const showToolChain = platform === 'discord'
+      ? outputConfig.discord.showToolChain
+      : platform === 'feishu'
+        ? outputConfig.feishu.showToolChain
+        : outputConfig.showToolChain;
+
+    // 过滤 segments，移除 tool 和 reasoning 类型（当对应开关关闭时）
+    const filteredSegments = showToolChain && showThinkingChain
+      ? data.segments
+      : (data.segments ?? []).filter(segment => {
+          if (!showToolChain && segment.type === 'tool') return false;
+          if (!showThinkingChain && segment.type === 'reasoning') return false;
+          return true;
+        });
+
+    const filteredData: StreamCardData = {
+      ...data,
+      segments: filteredSegments,
+    };
+
+    const baseText = buildPortableUpdateText(filteredData, showThinkingChain);
     if (!data.pendingQuestion) {
       return { discordText: baseText };
     }
@@ -1105,7 +1130,7 @@ async function main() {
 
     if (platform !== 'feishu') {
       const sender = platform === 'discord' ? discordAdapter.getSender() : feishuAdapter.getSender();
-      const payload = buildPortableUpdatePayload(cardData, conversationId);
+      const payload = buildPortableUpdatePayload(cardData, conversationId, platform);
       const nextMessageIds: string[] = [];
       const existingMessageId = existingMessageIds[0];
 

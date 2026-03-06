@@ -1,221 +1,141 @@
-# OpenCode 桥接项目架构概览
+# 飞书 × OpenCode 桥接架构（v2.8.3-beta）
 
-## 一、项目整体目录结构
+本文档描述当前版本的真实运行架构，重点说明平台接入、路由调度、事件闭环、目录一致性和可运维策略。
 
-```
-D:\feishu-opencode-bridge\
-├── .env                          # 环境变量（实际配置）
-├── .env.example                  # 环境变量模板
-├── .gitignore
-├── .chat-sessions.json           # 运行时持久化：群聊-会话绑定
-├── .user-sessions.json           # 运行时持久化：用户-会话映射
-├── .session-directories.json     # 会话-工作目录映射
-├── .session-groups.json          # 用户-群组映射
-├── AGENTS.md                     # AI 代理开发指南
-├── AI_Deployment_Guide.md        # 部署指南
-├── LICENSE                       # GPLv3
-├── README.md
-├── package.json                  # 项目配置 & 脚本
-├── package-lock.json
-├── tsconfig.json
-│
-├── assets/
-│   └── opencode-agents/          # OpenCode 预设角色 Markdown
-│       ├── bridge-emotional-support.md
-│       ├── bridge-legal-assistant.md
-│       └── bridge-personal-assistant.md
-│
-├── scripts/                      # 部署/启停脚本（多平台）
-│   ├── deploy.mjs / deploy.cmd / deploy.sh / deploy.ps1
-│   ├── start.mjs / start.cmd / start.sh / start.ps1
-│   └── stop.mjs / stop.cmd / stop.sh / stop.ps1
-│
-└── src/                          # ========= 核心源码 =========
-    ├── index.ts                  # 【入口 & 路由调度】
-    ├── config.ts                 # 全局配置（飞书/OpenCode/权限/输出等）
-    │
-    ├── commands/                 # 命令解析层
-    │   └── parser.ts             # 斜杠命令解析器 & 帮助文本
-    │
-    ├── handlers/                 # 事件处理层（Handler）
-    │   ├── command.ts            # 命令统一执行器（模型/角色/会话/undo/panel 等）
-    │   ├── p2p.ts                # 私聊消息处理器
-    │   ├── group.ts              # 群聊消息处理器
-    │   ├── card-action.ts        # 飞书卡片按钮动作处理器
-    │   └── lifecycle.ts         # 生命周期管理（群清理/成员退出/解散）
-    │
-    ├── feishu/                   # 飞书 SDK 封装层
-    │   ├── client.ts             # 飞书 API 客户端（消息/群/卡片/事件等）
-    │   ├── cards.ts              # 飞书卡片模板（权限/状态/控制面板/提问/欢迎）
-    │   ├── cards-stream.ts       # 流式输出卡片构建
-    │   └── streamer.ts           # 卡片流式更新器（节流推送）
-    │
-    ├── opencode/                 # OpenCode SDK 封装层
-    │   ├── client.ts             # OpenCode API 客户端（会话/消息/命令/权限/SSE）
-    │   ├── output-buffer.ts      # 输出缓冲区（聚合流式输出，定时推送飞书）
-    │   ├── session-queue.ts      # 会话请求队列（保证同会话消息串行）
-    │   ├── delayed-handler.ts    # 延迟响应处理器（超时后通过 SSE 收到的迟到响应）
-    │   ├── question-handler.ts   # AI 提问处理器（管理待回答问题状态）
-    │   └── question-parser.ts    # 问题答案文本解析器
-    │
-    ├── permissions/              # 权限管理层
-    │   └── handler.ts            # 工具权限白名单 & 待处理权限请求管理
-    │
-    ├── store/                    # 数据持久化层
-    │   ├── chat-session.ts       # 【核心】群聊 <-> OpenCode会话 绑定存储
-    │   ├── user-session.ts       # 用户 <-> 会话列表 映射存储
-    │   ├── session-directory.ts  # 会话 <-> 工作目录 映射存储
-    │   └── session-group.ts      # 用户 <-> 群组 映射存储
-    │
-    └── utils/                    # 工具层
-        └── async-queue.ts        # 通用异步串行队列
+## 1. 架构目标
+
+- 在 Feishu 与 Discord 两端提供一致的任务闭环能力（消息、权限、提问、流式输出、回滚）。
+- 保持平台能力边界，不强行复用不适配的交互范式。
+- 保证会话与目录的一致性，降低“日志显示成功但任务未继续”的风险。
+- 用分层结构替代入口堆逻辑，支持后续平台扩展与灰度演进。
+
+## 2. 分层模型
+
+```mermaid
+flowchart TB
+  subgraph PlatformAdapters[平台适配层]
+    FE[Feishu Adapter]
+    DC[Discord Adapter]
+  end
+
+  subgraph Ingress[入口路由层]
+    RR[RootRouter]
+    DH[DiscordHandler]
+  end
+
+  subgraph Domain[领域处理层]
+    PH[PermissionHandler]
+    QH[QuestionHandler]
+    OB[OutputBuffer]
+    CS[ChatSessionStore]
+    DP[DirectoryPolicy]
+    LC[LifecycleHandler]
+  end
+
+  subgraph OpenCodeIntegration[OpenCode 集成层]
+    OC[OpencodeClientWrapper]
+    EH[OpenCodeEventHub]
+  end
+
+  FE --> RR
+  RR --> PH
+  RR --> QH
+  RR --> OB
+
+  DC --> DH
+  DH --> PH
+  DH --> QH
+  DH --> OB
+
+  PH --> OC
+  QH --> OC
+  EH --> OB
+  EH --> PH
+  EH --> QH
+
+  Domain <--> CS
+  Domain <--> DP
+  OC <--> EH
+  OC <--> OpenCodeServer[(OpenCode Server)]
+  LC --> CS
 ```
 
-## 二、入口文件与路由/调度
+## 3. 核心模块职责
 
-### 入口文件: `src/index.ts` (910 行)
+### 3.1 平台适配层
 
-这是整个项目的核心调度中枢，`main()` 函数按以下步骤启动：
+- `src/platform/adapters/feishu-adapter.ts`：接收飞书事件并转换为统一事件模型。
+- `src/platform/adapters/discord-adapter.ts`：接收 Discord 网关消息和组件交互。
 
-1. **验证配置** (`validateConfig()`)
-2. **连接 OpenCode** (`opencodeClient.connect()`)
-3. **配置输出缓冲** — 设置 `outputBuffer.setUpdateCallback()` 将流式输出聚合后推送为飞书卡片
-4. **监听飞书消息** — 按 `chatType` 分发到 `p2pHandler` 或 `groupHandler`
-5. **监听飞书卡片动作** — `setCardActionHandler` 处理按钮回调，按 action 类型分发：
-   - `create_chat` → `p2pHandler.handleCardAction`
-   - `permission_allow/deny` → 直接调用 `opencodeClient.respondToPermission`
-   - `question_skip` → `groupHandler.handleQuestionSkipAction`
-   - 其他 → `cardActionHandler.handle`
-6. **监听 OpenCode 事件**:
-   - `permissionRequest` → 白名单检查或发送权限确认卡片
-   - `sessionStatus` → 重试提示 / 完成标记
-   - `sessionIdle` → 完成兜底
-   - `sessionError` → 错误显示
-   - `messageUpdated` → 记录 openCodeMsgId / 处理 assistant error
-   - `messagePartUpdated` → 流式输出（文本/思考/工具/subtask/retry/compaction）
-   - `questionAsked` → 发送提问卡片
-7. **监听生命周期事件** — 成员退群 / 群解散 / 消息撤回（触发 undo）
-8. **启动飞书客户端** (`feishuClient.start()`)
-9. **启动清理检查** (`lifecycleHandler.cleanUpOnStart()`)
-10. **优雅退出处理** — SIGINT/SIGTERM/SIGUSR2 信号
+### 3.2 入口路由层
 
-## 三、核心模块职责
+- `src/router/root-router.ts`：Feishu 消息与卡片动作统一入口。
+- `src/handlers/discord.ts`：Discord 命令、面板、文本权限/问题处理与消息收发编排。
+- `src/router/action-handlers.ts`：从入口剥离权限/问题动作回调，降低耦合。
 
-### 1. 命令解析层 (`src/commands/parser.ts`)
+### 3.3 领域处理层
 
-**核心函数**: `parseCommand(text: string): ParsedCommand`
+- `src/permissions/handler.ts`：权限请求队列、白名单判定、出队与超时清理。
+- `src/opencode/question-handler.ts`：问题状态管理（多题推进、跳过、提交）。
+- `src/opencode/output-buffer.ts`：流式片段聚合、节流触发、状态标记。
+- `src/store/chat-session.ts`：`platform:conversationId` 命名空间映射与会话别名。
+- `src/utils/directory-policy.ts`：目录安全策略、白名单约束、Git 根归一化。
+- `src/handlers/lifecycle.ts`：生命周期扫描、清理与解散逻辑。
 
-**支持的命令类型**:
-- `/stop`, `/abort`, `/cancel` → 中断执行
-- `/undo`, `/revert` → 撤回上一步
-- `/model [name]` → 切换/查看模型
-- `/agent [name]` → 切换/查看角色
-- `/role [create ...]`, `/角色` → 角色操作
-- `/session [new|list|<id>]` → 会话管理
-- `/sessions`, `/list` → 列出会话
-- `/clear [free session]`, `/reset` → 清空上下文
-- `/panel`, `/controls` → 控制面板
-- `/make_admin`, `/add_admin` → 管理员
-- `/help`, `/h`, `/?` → 帮助
-- `/status` → 状态
-- **其他任何 `/xxx` 未知命令** → 透传到 OpenCode
+### 3.4 OpenCode 集成层
 
-### 2. 命令执行层 (`src/handlers/command.ts`)
+- `src/opencode/client.ts`：会话/消息/命令/权限/问题统一封装。
+- `src/router/opencode-event-hub.ts`：OpenCode 事件单入口，分发到权限、提问、输出。
 
-**核心类**: `CommandHandler`
+## 4. 关键链路
 
-**`handle()` 方法** — 统一命令分发：
-```
-help → 回复帮助文本
-status → handleStatus()
-session → handleNewSession() / handleListSessions()
-clear → handleClearFreeSession() / handleNewSession()
-stop → opencodeClient.abortSession()
-command → handlePassthroughCommand() (透传到 OpenCode)
-model → handleModel()
-agent → handleAgent()
-role → handleRoleCreate()
-undo → handleUndo()
-panel → handlePanel() / pushPanelCard()
-sessions → handleListSessions()
-default → handlePassthroughCommand()
-```
+### 4.1 消息链路（入站 -> OpenCode）
 
-### 3. 消息处理层
+1. 平台适配器收到消息并归一化。
+2. RootRouter/DiscordHandler 完成命令解析与会话定位。
+3. 根据会话配置拼装模型、角色、强度、目录参数。
+4. 调用 `opencodeClient.sendMessage*` 进入 OpenCode。
 
-**私聊处理器 (`src/handlers/p2p.ts`)**:
-- 首次私聊引导
-- 建群快捷命令
-- 命令解析与执行
+### 4.2 事件链路（OpenCode -> 出站）
 
-**群聊处理器 (`src/handlers/group.ts`)**:
-- 命令解析与执行
-- 问题回答处理
-- 发送到 OpenCode
+1. `opencodeClient` 监听事件流。
+2. `OpenCodeEventHub` 处理 `messagePartUpdated/sessionStatus/...`。
+3. Timeline 与 OutputBuffer 聚合并节流。
+4. Feishu 走卡片流，Discord 走文本/组件更新。
 
-### 4. 数据持久化层
+### 4.3 权限闭环链路
 
-**群聊-会话绑定** (`src/store/chat-session.ts`):
-- `chatId` ↔ `sessionId` 双向映射
-- 交互历史管理（最多20条）
-- 配置存储（模型/角色偏好）
+1. 收到 `permission.asked` 后先判定白名单。
+2. 命中白名单时自动允许；若失败，降级入队等待人工确认。
+3. 人工确认支持卡片动作和文本兜底两条路径。
+4. 权限回传支持目录感知与候选目录回退，减少目录切换后的假死。
 
-**用户-会话映射** (`src/store/user-session.ts`):
-- 用户当前会话
-- 用户会话列表
+## 5. 目录一致性策略
 
-**会话-目录映射** (`src/store/session-directory.ts`):
-- `sessionId` → 工作目录路径
+- 会话创建/切换统一经过目录策略校验。
+- `create_chat` 工作目录来源按三类合并：
+  - `DEFAULT_WORK_DIRECTORY`
+  - `ALLOWED_DIRECTORIES`
+  - 已存在会话目录（历史/绑定）
+- 权限回传带目录候选信息，优先命中当前会话目录，再回退到候选目录列表。
 
-**用户-群组映射** (`src/store/session-group.ts`):
-- 用户活跃群聊
-- 群组列表
+## 6. 平台边界原则
 
-### 5. SDK 封装层
+- Feishu 与 Discord 是独立平台：
+  - 不跨平台借调 UI 组件。
+  - 不跨平台复用会话展示语义。
+- 共性逻辑下沉到领域层（权限、问题、会话映射、目录策略）。
+- 平台差异留在入口层和适配层（卡片/组件/文本交互）。
 
-**飞书 SDK** (`src/feishu/client.ts`):
-- 飞书 API 客户端
-- 卡片构建与更新
-- 消息发送与接收
+## 7. 运行与排障建议
 
-**OpenCode SDK** (`src/opencode/client.ts`):
-- OpenCode API 客户端
-- 会话管理
-- 流式输出处理
-- SSE 事件监听
+- 先看路由模式和平台启用日志，再看会话映射与权限队列状态。
+- 权限问题优先核查：队列 key、session 绑定、目录候选是否正确。
+- 卡片问题优先核查：路由动作是否进入对应 handler，是否被平台能力限制。
+- 修改核心链路后必须跑：`npm run build` + `npm test`。
 
-## 四、架构总结
+## 8. 未来扩展点
 
-该项目是一个 **飞书机器人 ↔ OpenCode AI** 的桥接服务，核心架构：
-
-```
-飞书用户消息
-    │
-    ▼
-src/index.ts (入口/路由调度)
-    ├── p2p消息 → handlers/p2p.ts → 首次引导/建群/命令/普通消息
-    ├── group消息 → handlers/group.ts → 命令/问题回答/发送到OpenCode
-    ├── 卡片动作 → handlers/card-action.ts → 停止/撤回/切模型/切角色
-    └── 生命周期 → handlers/lifecycle.ts → 群清理/成员退出
-         │
-         ▼
-    commands/parser.ts (解析斜杠命令)
-    handlers/command.ts (执行命令)
-         │
-         ▼
-    opencode/client.ts (与OpenCode通信)
-         │  ├── 同步/异步发送消息
-         │  ├── SSE 事件流 → 流式输出/权限/提问/状态
-         │  └── 命令透传
-         │
-         ▼
-    opencode/output-buffer.ts → feishu/cards-stream.ts → 飞书卡片更新
-    store/chat-session.ts (持久化绑定关系)
-```
-
-**关键设计模式**:
-- 单例模式：所有 client/store/handler 均为全局单例导出
-- 事件驱动：飞书 SDK EventDispatcher + OpenCode SSE EventEmitter
-- 流式输出：OutputBuffer 聚合 → 定时回调 → 飞书卡片更新
-- 命令模式：parser 解析 → command handler 统一分发执行
-- 双向映射：chatId ↔ sessionId 通过 ChatSessionStore 双向查找
+- 增加新的平台适配器（只需接入统一事件模型和 sender 接口）。
+- 将更多跨平台能力收敛到 action-handlers 与 event-hub。
+- 继续增强目录实例自愈能力与权限重试可观测性。

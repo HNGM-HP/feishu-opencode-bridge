@@ -251,31 +251,31 @@ export class OpenCodeEventHub {
     const resolution = resolvePermissionChat(event);
     const chatId = resolution.chatId;
     const route = chatId ? this.resolveConversationRoute(event.sessionId, chatId) : null;
-    console.log(
-      `[权限] 收到请求: ${event.tool}, ID: ${event.permissionId}, Session: ${event.sessionId}, source=${resolution.source}`
+    const routeSession = route
+      ? chatSessionStore.getSessionByConversation(route.platform, route.conversationId)
+      : undefined;
+    const permissionDirectory = routeSession?.resolvedDirectory || routeSession?.defaultDirectory;
+    const permissionFallbackDirectories = Array.from(
+      new Set(
+        [
+          routeSession?.resolvedDirectory,
+          routeSession?.defaultDirectory,
+          ...chatSessionStore.getKnownDirectories(),
+        ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      )
+    );
+    const candidateSessionIds = Array.from(
+      new Set(
+        [event.sessionId, event.parentSessionId, event.relatedSessionId]
+          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      )
     );
 
-    if (chatId) {
-      chatSessionStore.rememberSessionAlias(event.sessionId, chatId, CORRELATION_CACHE_TTL_MS);
-      if (event.parentSessionId) {
-        chatSessionStore.rememberSessionAlias(event.parentSessionId, chatId, CORRELATION_CACHE_TTL_MS);
+    const enqueuePermissionRequest = (): void => {
+      if (!chatId || !route) {
+        return;
       }
-      if (event.relatedSessionId) {
-        chatSessionStore.rememberSessionAlias(event.relatedSessionId, chatId, CORRELATION_CACHE_TTL_MS);
-      }
-      setCorrelationChatRef(toolCallChatMap, event.callId, chatId);
-      setCorrelationChatRef(messageChatMap, event.messageId, chatId);
-    }
 
-    // 1. 检查白名单
-    if (permissionHandler.isToolWhitelisted(event.tool)) {
-      console.log(`[权限] 工具 ${event.tool} 在白名单中，自动允许`);
-      await opencodeClient.respondToPermission(event.sessionId, event.permissionId, true);
-      return;
-    }
-
-    // 2. 查找聊天 ID
-    if (chatId && route) {
       const bufferKey = route.bufferKey;
       if (!outputBuffer.get(bufferKey)) {
         outputBuffer.getOrCreate(bufferKey, route.conversationId, event.sessionId, null);
@@ -306,6 +306,79 @@ export class OpenCodeEventHub {
         'permission'
       );
       outputBuffer.touch(bufferKey);
+    };
+
+    console.log(
+      `[权限] 收到请求: ${event.tool}, ID: ${event.permissionId}, Session: ${event.sessionId}, source=${resolution.source}`
+    );
+
+    if (chatId) {
+      chatSessionStore.rememberSessionAlias(event.sessionId, chatId, CORRELATION_CACHE_TTL_MS);
+      if (event.parentSessionId) {
+        chatSessionStore.rememberSessionAlias(event.parentSessionId, chatId, CORRELATION_CACHE_TTL_MS);
+      }
+      if (event.relatedSessionId) {
+        chatSessionStore.rememberSessionAlias(event.relatedSessionId, chatId, CORRELATION_CACHE_TTL_MS);
+      }
+      setCorrelationChatRef(toolCallChatMap, event.callId, chatId);
+      setCorrelationChatRef(messageChatMap, event.messageId, chatId);
+    }
+
+    // 1. 检查白名单
+    if (permissionHandler.isToolWhitelisted(event.tool)) {
+      console.log(`[权限] 工具 ${event.tool} 在白名单中，自动允许`);
+      let responded = false;
+      let respondedSessionId = event.sessionId;
+
+      for (const sessionId of candidateSessionIds) {
+        const ok = await opencodeClient.respondToPermission(
+          sessionId,
+          event.permissionId,
+          true,
+          false,
+          {
+            ...(permissionDirectory ? { directory: permissionDirectory } : {}),
+            ...(permissionFallbackDirectories.length > 0
+              ? { fallbackDirectories: permissionFallbackDirectories }
+              : {}),
+          }
+        );
+        if (ok) {
+          responded = true;
+          respondedSessionId = sessionId;
+          break;
+        }
+      }
+
+      if (responded) {
+        if (chatId && route) {
+          permissionHandler.resolveForChat(route.permissionChatKey, event.permissionId);
+        }
+        console.log(
+          `[权限] 自动允许成功: permission=${event.permissionId}, session=${respondedSessionId}`
+        );
+        return;
+      }
+
+      console.error(
+        `[权限] 自动允许失败: permission=${event.permissionId}, triedSessions=${candidateSessionIds.join(',') || event.sessionId}`
+      );
+      if (chatId && route) {
+        enqueuePermissionRequest();
+        upsertTimelineNote(
+          route.bufferKey,
+          `permission-auto-allow-failed:${event.sessionId}:${event.permissionId}`,
+          '⚠️ 自动允许失败，请回复“允许/拒绝”手动确认权限。',
+          'permission'
+        );
+        outputBuffer.touch(route.bufferKey);
+      }
+      return;
+    }
+
+    // 2. 查找聊天 ID
+    if (chatId && route) {
+      enqueuePermissionRequest();
     } else {
       console.warn(
         `[权限] ⚠️ 未找到关联的群聊 (Session: ${event.sessionId}, parent=${event.parentSessionId || '-'}, related=${event.relatedSessionId || '-'}, call=${event.callId || '-'}, message=${event.messageId || '-'})，无法展示权限交互`

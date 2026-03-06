@@ -541,25 +541,23 @@ function buildCreateChatSelectorElements(data: CreateChatCardData): object[] {
   });
 
   // 3. 工作项目选择器（可选）
-  if (data.projectOptions && data.projectOptions.length > 0) {
-    const projectOpts = [
-      { text: { tag: 'plain_text', content: '跟随默认项目' }, value: '__default__' },
-      ...data.projectOptions.map(project => ({
-        text: {
-          tag: 'plain_text',
-          content: `${project.name}（${project.directory.length > 40 ? '...' + project.directory.slice(-37) : project.directory}）`,
-        },
-        value: project.directory,
-      })),
-    ];
-    formElements.push({
-      tag: 'select_static',
-      name: 'project_source',
-      placeholder: { tag: 'plain_text', content: '选择工作项目（可选）' },
-      value: { action: 'create_chat_project_select' },
-      options: projectOpts,
-    });
-  }
+  const projectOpts = [
+    { text: { tag: 'plain_text', content: '跟随默认项目' }, value: '__default__' },
+    ...(data.projectOptions || []).map(project => ({
+      text: {
+        tag: 'plain_text',
+        content: `${project.name}（${project.directory.length > 40 ? '...' + project.directory.slice(-37) : project.directory}）`,
+      },
+      value: project.directory,
+    })),
+  ];
+  formElements.push({
+    tag: 'select_static',
+    name: 'project_source',
+    placeholder: { tag: 'plain_text', content: '选择工作项目（可选）' },
+    value: { action: 'create_chat_project_select' },
+    options: projectOpts,
+  });
 
   // 4. 自定义工作目录输入框（可选）
   if (data.allowCustomPath) {

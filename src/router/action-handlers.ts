@@ -26,7 +26,7 @@ export type UpsertTimelineNote = (
 ) => void;
 
 // 辅助函数
-const toString = (value: unknown): string | undefined => {
+const toTrimmedString = (value: unknown): string | undefined => {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
@@ -102,12 +102,48 @@ export function createPermissionActionCallbacks(
     event: FeishuMessageEvent
   ) => Promise<boolean>;
 } {
+  const resolvePermissionDirectoryOptions = (
+    sessionId: string,
+    chatIdHint?: string
+  ): { directory?: string; fallbackDirectories?: string[] } => {
+    const conversation = chatSessionStore.getConversationBySessionId(sessionId);
+    const boundSession = conversation
+      ? chatSessionStore.getSessionByConversation(conversation.platform, conversation.conversationId)
+      : undefined;
+
+    const queueHintSession = chatIdHint
+      ? chatSessionStore.getSession(chatIdHint)
+      : undefined;
+
+    const directory = boundSession?.resolvedDirectory
+      || queueHintSession?.resolvedDirectory
+      || boundSession?.defaultDirectory
+      || queueHintSession?.defaultDirectory;
+
+    const fallbackDirectories = Array.from(
+      new Set(
+        [
+          boundSession?.resolvedDirectory,
+          boundSession?.defaultDirectory,
+          queueHintSession?.resolvedDirectory,
+          queueHintSession?.defaultDirectory,
+          ...chatSessionStore.getKnownDirectories(),
+        ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      )
+    );
+
+    return {
+      ...(directory ? { directory } : {}),
+      ...(fallbackDirectories.length > 0 ? { fallbackDirectories } : {}),
+    };
+  };
+
   const handlePermissionAction = async (
     actionValue: Record<string, unknown>,
     action: 'permission_allow' | 'permission_deny'
   ): Promise<CardActionResponse> => {
-    const sessionId = toString(actionValue.sessionId);
-    const permissionId = toString(actionValue.permissionId);
+    const sessionId = toTrimmedString(actionValue.sessionId);
+    const permissionId = toTrimmedString(actionValue.permissionId);
 
     if (!sessionId || !permissionId) {
       return {
@@ -131,7 +167,14 @@ export function createPermissionActionCallbacks(
       rememberRaw === 'always' ||
       rememberRaw === '始终允许';
 
-    const responded = await opencodeClient.respondToPermission(sessionId, permissionId, allow, remember);
+    const permissionDirectoryOptions = resolvePermissionDirectoryOptions(sessionId);
+    const responded = await opencodeClient.respondToPermission(
+      sessionId,
+      permissionId,
+      allow,
+      remember,
+      permissionDirectoryOptions
+    );
 
     if (!responded) {
       console.error(`[权限] 响应失败: session=${sessionId}, permission=${permissionId}`);
@@ -188,11 +231,13 @@ export function createPermissionActionCallbacks(
       return true;
     }
 
+    const permissionDirectoryOptions = resolvePermissionDirectoryOptions(pending.sessionId, event.chatId);
     const responded = await opencodeClient.respondToPermission(
       pending.sessionId,
       pending.permissionId,
       decision.allow,
-      decision.remember
+      decision.remember,
+      permissionDirectoryOptions
     );
 
     if (!responded) {
@@ -246,8 +291,8 @@ export function createQuestionActionCallbacks(): {
     event: FeishuCardActionEvent,
     actionValue: Record<string, unknown>
   ): Promise<CardActionResponse> => {
-    const chatId = toString(actionValue.chatId) || event.chatId;
-    const requestId = toString(actionValue.requestId);
+    const chatId = toTrimmedString(actionValue.chatId) || event.chatId;
+    const requestId = toTrimmedString(actionValue.requestId);
     const questionIndex = toInteger(actionValue.questionIndex);
 
     if (!chatId) {

@@ -16,6 +16,11 @@ export interface PermissionRequestEvent {
   callId?: string;
 }
 
+export interface PermissionResponseOptions {
+  directory?: string;
+  fallbackDirectories?: string[];
+}
+
 interface PermissionEventProperties {
   sessionID?: string;
   sessionId?: string;
@@ -714,6 +719,42 @@ class OpencodeClientWrapper extends EventEmitter {
     return normalized.length > 0 ? normalized : undefined;
   }
 
+  private buildPermissionDirectoryCandidates(options?: PermissionResponseOptions): Array<string | undefined> {
+    const candidates: Array<string | undefined> = [];
+    const seen = new Set<string>();
+
+    const pushDirectory = (directory?: string): void => {
+      const normalized = this.normalizeDirectory(directory);
+      if (!normalized) {
+        if (!seen.has('__default__')) {
+          seen.add('__default__');
+          candidates.push(undefined);
+        }
+        return;
+      }
+
+      const key = process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+      if (seen.has(key)) {
+        return;
+      }
+
+      seen.add(key);
+      candidates.push(normalized);
+    };
+
+    pushDirectory(options?.directory);
+
+    if (Array.isArray(options?.fallbackDirectories)) {
+      for (const directory of options!.fallbackDirectories) {
+        pushDirectory(directory);
+      }
+    }
+
+    pushDirectory(undefined);
+
+    return candidates;
+  }
+
   // 发送消息并等待响应
   async sendMessage(
     sessionId: string,
@@ -1013,34 +1054,45 @@ class OpencodeClientWrapper extends EventEmitter {
     sessionId: string,
     permissionId: string,
     allow: boolean,
-    remember?: boolean
+    remember: boolean = false,
+    options?: PermissionResponseOptions
   ): Promise<boolean> {
-    try {
-      const responseType = allow ? (remember ? 'always' : 'once') : 'reject';
-      const response = await fetch(
-        `${opencodeConfig.baseUrl}/session/${sessionId}/permissions/${permissionId}`,
-        {
-          method: 'POST',
-          headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            response: responseType,
-          }),
+    const responseType = allow ? (remember ? 'always' : 'once') : 'reject';
+    const directoryCandidates = this.buildPermissionDirectoryCandidates(options);
+
+    for (const directory of directoryCandidates) {
+      try {
+        const query = directory ? `?directory=${encodeURIComponent(directory)}` : '';
+        const response = await fetch(
+          `${opencodeConfig.baseUrl}/session/${sessionId}/permissions/${permissionId}${query}`,
+          {
+            method: 'POST',
+            headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({
+              response: responseType,
+            }),
+          }
+        );
+
+        if (response.ok) {
+          return true;
         }
-      );
-      if (!response.ok) {
+
         const detail = await response.text().catch(() => '');
         const suffix = detail ? `: ${detail.slice(0, 300)}` : '';
         const message = appendAuthHint(
           `权限响应失败（HTTP ${response.status} ${response.statusText}）${suffix}`,
           response.status
         );
-        console.error(`[OpenCode] ${message}`);
+        const directoryLabel = directory ? `directory=${directory}` : 'directory=<default>';
+        console.error(`[OpenCode] ${message} (${directoryLabel})`);
+      } catch (error) {
+        const directoryLabel = directory ? `directory=${directory}` : 'directory=<default>';
+        console.error(`[OpenCode] 响应权限失败 (${directoryLabel}):`, error);
       }
-      return response.ok;
-    } catch (error) {
-      console.error('[OpenCode] 响应权限失败:', error);
-      return false;
     }
+
+    return false;
   }
 
   // 获取工作区列表

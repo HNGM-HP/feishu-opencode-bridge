@@ -230,7 +230,14 @@ export class RootRouter {
     const action = typeof actionValue.action === 'string' ? actionValue.action : '';
 
     // 私聊建群 - 委托给 p2pHandler
-    if (action === 'create_chat' || action === 'create_chat_select' || action === 'create_chat_submit') {
+    if (
+      action === 'create_chat'
+      || action === 'create_chat_select'
+      || action === 'create_chat_project_select'
+      || action === 'create_chat_directory_input'
+      || action === 'create_chat_name_input'
+      || action === 'create_chat_submit'
+    ) {
       return await p2pHandler.handleCardAction(event);
     }
 

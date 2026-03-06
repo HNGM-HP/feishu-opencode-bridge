@@ -21,6 +21,7 @@ interface ChatSessionData {
   resolvedDirectory?: string;
   projectName?: string;
   defaultDirectory?: string;
+  reminderSent?: boolean;
   interactionHistory: InteractionRecord[];
 }
 
@@ -665,6 +666,14 @@ class ChatSessionStore {
     this.data.delete(key);
     this.save();
     console.log(`[Store] 移除绑定 (platform): ${platform}:${conversationId}`);
+  }
+
+  markReminderSent(platform: string, conversationId: string): void {
+    const session = this.getSessionByConversation(platform, conversationId);
+    if (!session) return;
+
+    session.reminderSent = true;
+    this.save();
   }
 
   getChatsByCreator(userId: string): ChatSessionData[] {

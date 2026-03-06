@@ -1,6 +1,6 @@
 {
   "name": "feishu-opencode-bridge",
-  "version": "2.8.2",
+  "version": "2.8.3-beta",
   "type": "module",
   "description": "飞书机器人 × OpenCode 桥接服务，通过飞书聊天控制OpenCode",
   "main": "dist/index.js",

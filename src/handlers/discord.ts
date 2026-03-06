@@ -296,6 +296,39 @@ class DiscordHandler {
     return `discord:${event.conversationId}`;
   }
 
+  private resolvePermissionDirectoryOptions(
+    sessionId: string,
+    conversationId: string
+  ): { directory?: string; fallbackDirectories?: string[] } {
+    const currentSession = chatSessionStore.getSessionByConversation('discord', conversationId);
+    const conversation = chatSessionStore.getConversationBySessionId(sessionId);
+    const boundSession = conversation
+      ? chatSessionStore.getSessionByConversation(conversation.platform, conversation.conversationId)
+      : undefined;
+
+    const directory = boundSession?.resolvedDirectory
+      || currentSession?.resolvedDirectory
+      || boundSession?.defaultDirectory
+      || currentSession?.defaultDirectory;
+
+    const fallbackDirectories = Array.from(
+      new Set(
+        [
+          boundSession?.resolvedDirectory,
+          boundSession?.defaultDirectory,
+          currentSession?.resolvedDirectory,
+          currentSession?.defaultDirectory,
+          ...chatSessionStore.getKnownDirectories(),
+        ].filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+      )
+    );
+
+    return {
+      ...(directory ? { directory } : {}),
+      ...(fallbackDirectories.length > 0 ? { fallbackDirectories } : {}),
+    };
+  }
+
   private shouldSkipMessage(event: PlatformMessageEvent, text: string): boolean {
     if (event.senderType === 'bot') {
       return true;
@@ -444,14 +477,17 @@ class DiscordHandler {
       }
     );
 
-    // 新创建会话，发送 ///help 命令和提醒消息
-    await this.safeReply(
-      event,
-      `///help
+    // 新创建会话，发送帮助和提醒消息
+    await this.safeReply(event, this.getDiscordHelpText());
+    await this.safeReply(event, '当前会话未与opencode绑定，已新建会话并绑定如需切换请按照help提示操作');
 
-⚠️ 当前会话未与 OpenCode 绑定，已新建会话并绑定。
-如需切换请按照 help 提示操作。`
-    );
+    // 标记提醒已发送（失败不阻断主流程）
+    try {
+      chatSessionStore.markReminderSent('discord', event.conversationId);
+    } catch {
+      // 忽略元数据写入失败
+    }
+
     return session.id;
   }
 
@@ -1669,7 +1705,8 @@ ${pending.risk ? `- 风险：${pending.risk}` : ''}
       pending.sessionId,
       pending.permissionId,
       decision.allow,
-      decision.remember
+      decision.remember,
+      this.resolvePermissionDirectoryOptions(pending.sessionId, event.conversationId)
     );
 
     if (!responded) {

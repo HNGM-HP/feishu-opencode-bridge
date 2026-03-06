@@ -74,7 +74,7 @@ describe('DiscordHandler permission text flow', () => {
 
     await handler.handleMessage(makeEvent('允许'));
 
-    expect(respondSpy).toHaveBeenCalledWith('session-2', 'perm-allow', true, false);
+    expect(respondSpy).toHaveBeenCalledWith('session-2', 'perm-allow', true, false, expect.any(Object));
     expect(permissionHandler.peekForChat('discord:conv-1')).toBeUndefined();
     expect(sender.sendText).toHaveBeenCalledTimes(1);
   });

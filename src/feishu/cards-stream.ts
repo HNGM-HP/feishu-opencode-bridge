@@ -1,3 +1,5 @@
+import { outputConfig } from '../config.js';
+
 export * from './cards.js';
 
 export type StreamToolState = {
@@ -174,7 +176,6 @@ function normalizeElementPage(elements: object[]): object[] {
 
 function paginateElementsByComponentBudget(elements: object[], componentBudget: number): object[][] {
   const safeBudget = Math.max(componentBudget, MIN_STREAM_CARD_COMPONENT_BUDGET);
-  // 预留 1 个组件给 header.title（plain_text）
   const budgetForBody = Math.max(1, safeBudget - 1);
   const pages: object[][] = [];
   let currentPage: object[] = [];
@@ -208,7 +209,10 @@ function paginateElementsByComponentBudget(elements: object[], componentBudget: 
   return pages;
 }
 
-function buildTimelineElements(segments: StreamCardSegment[]): object[] {
+function buildTimelineElements(
+  segments: StreamCardSegment[],
+  options?: { showThinking?: boolean; showTools?: boolean }
+): object[] {
   const elements: object[] = [];
   const visibleSegments = segments.slice(-MAX_TIMELINE_SEGMENTS);
 
@@ -216,6 +220,9 @@ function buildTimelineElements(segments: StreamCardSegment[]): object[] {
     let nextElement: object | null = null;
 
     if (segment.type === 'reasoning') {
+      if (options?.showThinking === false) {
+        continue;
+      }
       const text = segment.text.trim();
       if (!text) {
         continue;
@@ -239,6 +246,9 @@ function buildTimelineElements(segments: StreamCardSegment[]): object[] {
         ],
       };
     } else if (segment.type === 'tool') {
+      if (options?.showTools === false) {
+        continue;
+      }
       const statusInfo = getToolStatusLabel(segment.status);
       const toolKindLabel = segment.kind === 'subtask' ? '子任务' : '工具';
       const output = segment.output?.trim() ? truncateMiddleText(segment.output.trim(), MAX_TOOL_OUTPUT_LENGTH) : '';
@@ -385,7 +395,7 @@ function buildPendingQuestionElements(question: StreamCardPendingQuestion): obje
       },
       {
         tag: 'markdown',
-        content: '输入“跳过”可跳过本题。',
+        content: '输入"跳过"可跳过本题。',
       },
     ],
   });
@@ -393,21 +403,27 @@ function buildPendingQuestionElements(question: StreamCardPendingQuestion): obje
   return blocks;
 }
 
-function buildStreamCardElements(data: StreamCardData): object[] {
+function buildStreamCardElements(
+  data: StreamCardData,
+  options?: { showThinking?: boolean; showTools?: boolean }
+): object[] {
   const elements: object[] = [];
   const thinkingText = data.thinking.trim();
 
   const timelineElements = Array.isArray(data.segments) && data.segments.length > 0
-    ? buildTimelineElements(data.segments)
+    ? buildTimelineElements(data.segments, { showThinking: options?.showThinking, showTools: options?.showTools })
     : [];
 
   if (timelineElements.length > 0) {
     elements.push(...timelineElements);
   }
 
+  const showThinking = options?.showThinking ?? true;
+  const showTools = options?.showTools ?? true;
+
   if (timelineElements.length === 0) {
     // 1. 思考过程（原生折叠面板）
-    if (thinkingText) {
+    if (thinkingText && showThinking) {
       const renderedThinking = truncateMiddleText(thinkingText, MAX_THINKING_PANEL_LENGTH);
       elements.push({
         tag: 'collapsible_panel',
@@ -428,7 +444,7 @@ function buildStreamCardElements(data: StreamCardData): object[] {
     }
 
     // 2. 工具调用列表
-    if (data.tools.length > 0) {
+    if (data.tools.length > 0 && showTools) {
       if (elements.length > 0) {
         elements.push({ tag: 'hr' });
       }
@@ -527,8 +543,16 @@ function buildStreamCardPayload(
   };
 }
 
+function getFeishuVisibilityOptions(): { showThinking: boolean; showTools: boolean } {
+  return {
+    showThinking: outputConfig.feishu.showThinkingChain,
+    showTools: outputConfig.feishu.showToolChain,
+  };
+}
+
 export function buildStreamCards(data: StreamCardData, options?: StreamCardBuildOptions): object[] {
-  const allElements = buildStreamCardElements(data);
+  const visibilityOptions = getFeishuVisibilityOptions();
+  const allElements = buildStreamCardElements(data, visibilityOptions);
   const statusColor: 'blue' | 'green' | 'red' = data.status === 'processing'
     ? 'blue'
     : data.status === 'completed'

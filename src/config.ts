@@ -1,11 +1,43 @@
 import 'dotenv/config';
 
 function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
-  if (!value) return fallback;
-  const normalized = value.trim().toLowerCase();
+  const normalized = normalizeBooleanToken(value);
+  if (!normalized) return fallback;
   if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
   if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
   return fallback;
+}
+
+function parseOptionalBooleanEnv(value: string | undefined): boolean | undefined {
+  const normalized = normalizeBooleanToken(value);
+  if (!normalized) return undefined;
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  return undefined;
+}
+
+function normalizeBooleanToken(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  let normalized = value.trim();
+  if (!normalized) return undefined;
+
+  // 兼容行内注释写法：SHOW_X=false # note / SHOW_X=false // note
+  normalized = normalized
+    .replace(/\s+#.*$/, '')
+    .replace(/\s+\/\/.*$/, '')
+    .trim();
+
+  if (!normalized) return undefined;
+
+  // 去掉包裹引号
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"'))
+    || (normalized.startsWith("'") && normalized.endsWith("'"))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+
+  return normalized ? normalized.toLowerCase() : undefined;
 }
 
 function parseNonNegativeIntEnv(value: string | undefined, fallback: number): number {
@@ -146,14 +178,34 @@ export const permissionConfig = {
 };
 
 // 输出配置
+const showThinkingChain = parseBooleanEnv(process.env.SHOW_THINKING_CHAIN, true);
+const showToolChain = parseBooleanEnv(process.env.SHOW_TOOL_CHAIN, true);
+
 export const outputConfig = {
   // 输出更新间隔（毫秒）
   updateInterval: parseInt(process.env.OUTPUT_UPDATE_INTERVAL || '3000', 10),
   
   // 单条消息最大长度（飞书限制）
   maxMessageLength: 4000,
+  
+  // 思维链可见性控制（默认为 true，保持向后兼容）
+  showThinkingChain,
+  
+  // 工具链可见性控制（默认为 true，保持向后兼容）
+  showToolChain,
+  
+  // 飞书平台特定可见性控制
+  feishu: {
+    showThinkingChain: parseOptionalBooleanEnv(process.env.FEISHU_SHOW_THINKING_CHAIN) ?? showThinkingChain,
+    showToolChain: parseOptionalBooleanEnv(process.env.FEISHU_SHOW_TOOL_CHAIN) ?? showToolChain,
+  },
+  
+  // Discord 平台特定可见性控制
+  discord: {
+    showThinkingChain: parseOptionalBooleanEnv(process.env.DISCORD_SHOW_THINKING_CHAIN) ?? showThinkingChain,
+    showToolChain: parseOptionalBooleanEnv(process.env.DISCORD_SHOW_TOOL_CHAIN) ?? showToolChain,
+  },
 };
-
 // 附件配置
 export const attachmentConfig = {
   maxSize: parseInt(process.env.ATTACHMENT_MAX_SIZE || String(50 * 1024 * 1024), 10),
