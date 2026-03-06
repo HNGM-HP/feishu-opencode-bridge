@@ -8,6 +8,7 @@
 
 这不是“换个文案”的小版本，而是一次架构换代。`v2.8.3-beta` 将桥接核心从“单文件堆逻辑”重构为“平台适配层 + 根路由器 + OpenCode 事件中枢 + 领域处理器”的分层体系，重点解决跨平台扩展、权限闭环稳定性、目录实例一致性和线上可维护性。
 
+<a id="先看痛点"></a>
 ## 🎯 先看痛点
 
 - 权限和提问链路一旦断路，任务会卡住：`permission.asked` / `question.asked` 必须形成严格闭环。
@@ -18,6 +19,7 @@
 
 这个项目解决的不是“能不能回复消息”，而是“跨平台 AI 任务能否长期稳定闭环”。
 
+<a id="与-openclaw-和同类桥接对比"></a>
 ## 🥊 与 OpenClaw 和同类桥接对比
 
 > 结论：如果目标只是“在聊天里接一个 AI”，很多桥接都能满足；如果你要的是“权限/提问/会话/目录/回滚/运维”一体化工程链路，这个项目更适合生产化长期使用。
@@ -231,7 +233,7 @@ flowchart TB
 | 消息接入（群/私聊） | ✅ | ✅ | 两端都支持 |
 | 会话自动创建/绑定 | ✅ | ✅ | 统一走 `ChatSessionStore` |
 | 群聊仅 @ 才响应 | ✅（`GROUP_REQUIRE_MENTION`） | ✅（同开关） | 降低噪声，兼容默认行为 |
-| 流式卡片更新 | ✅ | ⚠️（当前用文本回复） | Discord 先保证稳定，不硬迁卡片范式 |
+| 流式更新 | ✅ | ✅ | 飞书卡片消息回复，Discord 文本回复 |
 | 权限卡片闭环 | ✅ | ✅（Button/Select + 文本兜底） | Discord 原生组件交互，文本回复支持 allow/reject/always |
 | question 卡片闭环 | ✅ | ✅（Select + 文本兜底） | 保持平台特性，不做硬复制 |
 | 消息编辑/删除 | ✅ | ✅ | Discord Sender 已支持 |
@@ -448,17 +450,6 @@ node scripts/deploy.mjs status
 - `ENABLED_PLATFORMS=feishu,discord`（显式控制启用平台）
 - `GROUP_REQUIRE_MENTION=true`（降低群聊噪声，只在明确 @ 机器人时响应）
 
-| 能力 | Feishu | Discord | 设计取舍 |
-|---|---|---|---|
-| 消息接入（群/私聊） | ✅ | ✅ | 两端都支持 |
-| 会话自动创建/绑定 | ✅ | ✅ | 统一走 `ChatSessionStore` |
-| 群聊仅 @ 才响应 | ✅（`GROUP_REQUIRE_MENTION`） | ✅（同开关） | 降低噪声，兼容默认行为 |
-| 流式卡片更新 | ✅ | ⚠️（当前用文本回复） | Discord 先保证稳定，不硬迁卡片范式 |
-| 权限卡片闭环 | ✅ | ✅（Button/Select + 文本兜底） | Discord 原生组件交互，文本回复支持 allow/reject/always |
-| question 卡片闭环 | ✅ | ✅（Select + 文本兜底） | 保持平台特性，不做硬复制 |
-| 消息编辑/删除 | ✅ | ✅ | Discord Sender 已支持 |
-| 生命周期清理 | ✅ | ✅（会话侧） | 平台事件差异下保留安全兜底 |
-
 当前 Discord 侧的可用能力：
 
 - 频道/私聊消息接入与自动会话绑定
@@ -570,25 +561,25 @@ node scripts/deploy.mjs status
 
 Discord 侧推荐命令（优先 `///` 前缀，避免与原生 Slash 冲突）：
 
-- `///session`：查看当前频道绑定的 OpenCode 会话
-- `///new [可选名称] [--dir 路径|别名]`：新建并绑定会话
-- `///new-channel [可选名称] [--dir 路径|别名]`：新建会话频道并绑定
-- `///bind <sessionId>`：绑定已有会话
-- `///unbind`：仅解绑当前频道会话
-- `///rename <新名称>`：重命名当前会话
-- `///sessions`：查看最近可绑定会话
-- `///effort`：查看当前强度
-- `///effort <档位>`：设置会话默认强度（按当前模型能力校验）
-- `///effort default`：清除会话强度
-- `///workdir [路径|别名|clear]`：设置/查看默认工作目录
-- `///undo`：回撤上一轮
-- `///compact` / `///compat`：压缩上下文
-- `///send <绝对路径>`：发送白名单文件到当前频道
-- `发送文件 <绝对路径>`：中文自然语言触发发送白名单文件
-- `///clear`：删除并解绑当前频道会话
-- `///create_chat`：打开下拉会话控制面板（查看状态/新建/绑定/模型/角色/回撤/压缩）
-- `///create_chat model <页码>`：打开模型分页面板（总容量最多 500，单页 24）
-- `///create_chat session|agent|effort`：打开分类面板
+| `///session`| 查看当前频道绑定的 OpenCode 会话 |
+| `///new [可选名称] [--dir 路径|别名]`| 新建并绑定会话 |
+| `///new-channel [可选名称] [--dir 路径|别名]`| 新建会话频道并绑定 |
+| `///bind <sessionId>`| 绑定已有会话 |
+| `///unbind`| 仅解绑当前频道会话 |
+| `///rename <新名称>`| 重命名当前会话 |
+| `///sessions`| 查看最近可绑定会话 |
+| `///effort`| 查看当前强度 |
+| `///effort <档位>`| 设置会话默认强度（按当前模型能力校验） |
+| `///effort default`| 清除会话强度 |
+| `///workdir [路径|别名|clear]`| 设置/查看默认工作目录 |
+| `///undo`| 回撤上一轮 |
+| `///compact` / `///compat`| 压缩上下文 |
+| `///send <绝对路径>`| 发送白名单文件到当前频道 |
+| `发送文件 <绝对路径>`| `中文自然语言触发发送白名单文件 |
+| `///clear`| `删除并解绑当前频道会话 |
+| `///create_chat`| `打开下拉会话控制面板（查看状态/新建/绑定/模型/角色/回撤/压缩） |
+| `///create_chat model <页码>`| `打开模型分页面板（总容量最多 500，单页 24） |
+| `///create_chat session|agent|effort`| `打开分类面板 |
 
 说明：
 
@@ -885,6 +876,7 @@ tail -n 100 logs/service.err | grep -i error
 | `/send <路径>` 报"文件不存在" | 确认路径正确且为绝对路径；Windows 路径用 `\` 或 `/` 均可 |
 | `/send` 报"拒绝发送敏感文件" | 内置安全黑名单拦截了 .env、密钥等敏感文件 |
 | 文件发送失败提示大小超限 | 飞书图片上限 10MB、文件上限 30MB；压缩后重试 |
+| OpenCode 大于 `v1.2.15 `版本 通过飞书发消息无不响应 | 检查`~/.config/opencode/opencode.json（linux/mac为config.json）`是否有 ` "default_agent": "companion"`有请删除 |
 <a id="许可证"></a>
 ## 📝 许可证
 
