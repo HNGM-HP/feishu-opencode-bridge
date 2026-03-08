@@ -116,50 +116,65 @@ export class RootRouter {
    */
   async onMessage(event: FeishuMessageEvent | PlatformMessageEvent): Promise<void> {
     const feishuEvent = event as FeishuMessageEvent;
+    try {
+      if (feishuEvent.chatType === 'group' && this.permissionCallbacks) {
+        const handled = await this.permissionCallbacks.tryHandlePendingPermissionByText(feishuEvent);
+        if (handled) {
+          if (routerConfig.mode === 'dual') {
+            const sessionId = chatSessionStore.getSessionId(feishuEvent.chatId) ?? 'none';
+            const conversationKey = `feishu:${feishuEvent.chatId}`;
+            console.log(JSON.stringify({
+              type: '[Router][dual]',
+              event: 'onMessage',
+              platform: 'feishu',
+              conversationKey,
+              sessionId,
+              routeDecision: 'permission_text',
+              chatType: feishuEvent.chatType,
+              chatId: feishuEvent.chatId,
+            }));
+          }
+          return;
+        }
+      }
 
-    if (this.shouldSkipGroupMessage(feishuEvent)) {
+      if (this.shouldSkipGroupMessage(feishuEvent)) {
+        if (routerConfig.mode === 'dual') {
+          const sessionId = chatSessionStore.getSessionId(feishuEvent.chatId) ?? 'none';
+          const conversationKey = `feishu:${feishuEvent.chatId}`;
+          console.log(JSON.stringify({
+            type: '[Router][dual]',
+            event: 'onMessage',
+            platform: 'feishu',
+            conversationKey,
+            sessionId,
+            routeDecision: 'group_skip_no_mention',
+            chatType: feishuEvent.chatType,
+            chatId: feishuEvent.chatId,
+          }));
+        }
+        return;
+      }
+
       if (routerConfig.mode === 'dual') {
         const sessionId = chatSessionStore.getSessionId(feishuEvent.chatId) ?? 'none';
         const conversationKey = `feishu:${feishuEvent.chatId}`;
+        const routeDecision = feishuEvent.chatType === 'p2p' ? 'p2p' : 'group';
         console.log(JSON.stringify({
           type: '[Router][dual]',
           event: 'onMessage',
           platform: 'feishu',
           conversationKey,
           sessionId,
-          routeDecision: 'group_skip_no_mention',
+          routeDecision,
           chatType: feishuEvent.chatType,
-          chatId: feishuEvent.chatId,
+          chatId: feishuEvent.chatId
         }));
       }
-      return;
-    }
 
-    if (routerConfig.mode === 'dual') {
-      const sessionId = chatSessionStore.getSessionId(feishuEvent.chatId) ?? 'none';
-      const conversationKey = `feishu:${feishuEvent.chatId}`;
-      const routeDecision = feishuEvent.chatType === 'p2p' ? 'p2p' : 'group';
-      console.log(JSON.stringify({
-        type: '[Router][dual]',
-        event: 'onMessage',
-        platform: 'feishu',
-        conversationKey,
-        sessionId,
-        routeDecision,
-        chatType: feishuEvent.chatType,
-        chatId: feishuEvent.chatId
-      }));
-    }
-
-    try {
       if (feishuEvent.chatType === 'p2p') {
         await p2pHandler.handleMessage(feishuEvent);
       } else if (feishuEvent.chatType === 'group') {
-        // 权限文本处理委托给回调
-        if (this.permissionCallbacks) {
-          const handled = await this.permissionCallbacks.tryHandlePendingPermissionByText(feishuEvent);
-          if (handled) return;
-        }
         await groupHandler.handleMessage(feishuEvent);
       }
     } catch (error) {

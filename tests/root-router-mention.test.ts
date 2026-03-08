@@ -93,4 +93,22 @@ describe('RootRouter mention gate', () => {
     await rootRouter.onMessage({ ...baseEvent, mentions: undefined });
     expect(spy).toHaveBeenCalledTimes(1);
   });
+
+  it('GROUP_REQUIRE_MENTION=true 时应优先处理权限文本回调', async () => {
+    backupEnv();
+    process.env.GROUP_REQUIRE_MENTION = 'true';
+
+    const { rootRouter, groupHandler } = await loadRouterAndGroup();
+    const groupSpy = vi.spyOn(groupHandler, 'handleMessage').mockResolvedValue(undefined);
+    const permissionSpy = vi.fn().mockResolvedValue(true);
+
+    rootRouter.setPermissionCallbacks({
+      handlePermissionAction: async () => ({ msg: 'ok' }),
+      tryHandlePendingPermissionByText: permissionSpy,
+    });
+
+    await rootRouter.onMessage({ ...baseEvent, mentions: undefined, content: '允许' });
+    expect(permissionSpy).toHaveBeenCalledTimes(1);
+    expect(groupSpy).not.toHaveBeenCalled();
+  });
 });

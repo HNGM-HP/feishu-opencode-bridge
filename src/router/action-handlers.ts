@@ -187,6 +187,10 @@ export function createPermissionActionCallbacks(
       };
     }
 
+    console.log(
+      `[权限] 卡片响应成功: session=${sessionId}, permission=${permissionId}, allow=${allow}, remember=${remember}`
+    );
+
     const permissionChatId = chatSessionStore.getChatId(sessionId);
     if (permissionChatId) {
       const bufferKey = `chat:${permissionChatId}`;
@@ -245,6 +249,10 @@ export function createPermissionActionCallbacks(
       await feishuClient.reply(event.messageId, '权限响应失败，请重试');
       return true;
     }
+
+    console.log(
+      `[权限] 文本响应成功: chat=${event.chatId}, session=${pending.sessionId}, permission=${pending.permissionId}, allow=${decision.allow}, remember=${decision.remember}`
+    );
 
     const removed = permissionHandler.resolveForChat(event.chatId, pending.permissionId);
     const bufferKey = `chat:${event.chatId}`;
