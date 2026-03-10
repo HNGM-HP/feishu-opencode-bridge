@@ -254,6 +254,51 @@ export const directoryConfig = {
   },
 };
 
+// 可靠性配置
+export const reliabilityConfig = {
+  // 心跳间隔 (毫秒)，默认 30 分钟
+  heartbeatIntervalMs: (() => {
+    const parsed = parseNonNegativeIntEnv(process.env.RELIABILITY_HEARTBEAT_INTERVAL_MS, -1);
+    return parsed > 0 ? parsed : 1800000;
+  })(),
+
+  // 失败阈值，默认 3
+  failureThreshold: (() => {
+    const parsed = parseNonNegativeIntEnv(process.env.RELIABILITY_FAILURE_THRESHOLD, -1);
+    return parsed > 0 ? parsed : 3;
+  })(),
+
+  // 窗口大小 (毫秒)，默认 90 秒
+  windowMs: (() => {
+    const parsed = parseNonNegativeIntEnv(process.env.RELIABILITY_WINDOW_MS, -1);
+    return parsed > 0 ? parsed : 90000;
+  })(),
+
+  // 冷却窗口 (毫秒)，默认 5 分钟
+  cooldownMs: (() => {
+    const parsed = parseNonNegativeIntEnv(process.env.RELIABILITY_COOLDOWN_MS, -1);
+    return parsed > 0 ? parsed : 300000;
+  })(),
+
+  // 修复预算，默认 3
+  repairBudget: (() => {
+    const parsed = parseNonNegativeIntEnv(process.env.RELIABILITY_REPAIR_BUDGET, -1);
+    return parsed > 0 ? parsed : 3;
+  })(),
+
+  // 模式：observe | shadow | active，默认 observe
+  mode: (() => {
+    const value = process.env.RELIABILITY_MODE?.trim().toLowerCase();
+    if (value === 'observe' || value === 'shadow' || value === 'active') {
+      return value as 'observe' | 'shadow' | 'active';
+    }
+    return 'observe';
+  })(),
+
+  // 仅本地自动救援，默认 true
+  loopbackOnly: parseBooleanEnv(process.env.RELIABILITY_LOOPBACK_ONLY, true),
+};
+
 // 验证配置
 export function validateConfig(): void {
   const errors: string[] = [];

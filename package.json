@@ -27,7 +27,8 @@
     "@larksuiteoapi/node-sdk": "^1.36.3",
     "@opencode-ai/sdk": "latest",
     "discord.js": "^14.25.1",
-    "dotenv": "^16.4.5"
+    "dotenv": "^16.4.5",
+    "node-cron": "^4.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
