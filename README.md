@@ -40,7 +40,41 @@
 
 新时代了，让 AI 代理自动部署吧：请在 OpenCode 执行如下指令：
 ```bash
-请阅读 https://github.com/HNGM-HP/feishu-opencode-bridge/blob/main/AI_Deployment_Guide.md 文档并安装程序
+请阅读 https://github.com/HNGM-HP/opencode-bridge/blob/main/AI_Deployment_Guide.md 文档并安装程序
+```
+
+也可以作为 npm CLI 安装（更适合本地常驻运行场景）：
+
+```bash
+npm install -g opencode-bridge
+opencode-bridge
+```
+
+说明：
+
+- npm 包主要提供 CLI 分发与版本管理便利，不替代 OpenCode 本地服务与飞书/Discord 配置。
+- 运行前仍需准备 `.env`、本地 `opencode serve`，以及对应平台的机器人凭据。
+- CLI 默认优先读取当前工作目录下的 `.env`；若当前目录没有 `.env`，会自动回退读取 `~/.config/opencode-bridge/.env`。
+- 你也可以显式指定配置目录：`opencode-bridge --config-dir /path/to/config`。
+- 若你偏好源码部署，继续使用仓库里的 `scripts/deploy.*` / `scripts/start.*` 也完全没问题。
+
+推荐的 npm CLI 配置方式：
+
+```bash
+mkdir -p ~/.config/opencode-bridge
+cp .env.example ~/.config/opencode-bridge/.env
+
+# 直接使用默认配置目录启动
+opencode-bridge
+
+# 或者在当前目录放独立 .env
+mkdir -p ~/opencode-bridge-prod
+cp .env.example ~/opencode-bridge-prod/.env
+cd ~/opencode-bridge-prod
+opencode-bridge
+
+# 也可以显式指定配置目录
+opencode-bridge --config-dir ~/.config/opencode-bridge
 ```
 
 ## 📋 目录
@@ -497,6 +531,24 @@ node scripts/deploy.mjs status
 - `POST /cron/remove`：删除任务
 
 任务持久化到 `RELIABILITY_CRON_JOBS_FILE`（默认 `~/cron/jobs.json`），服务重启后自动恢复。若当前聊天没有绑定 OpenCode 会话，则 `/cron add ...` 会拒绝创建，避免后续退化成新开匿名会话执行。
+
+`/cron list` 现在会额外展示目标窗口、孤儿状态和候选回退目标，例如：
+
+```text
+🕒 运行时 Cron 任务列表
+（状态基于本地绑定表；fallback 为候选目标）
+- [启用] 7c0d... | 国际新闻简报 | 0 0 18 * * *
+  text: 给我推送今天的国际新闻
+  target: feishu:oc_xxx（本地绑定有效） | session: ses_xxx
+  orphan: 否
+  fallback: 候选 feishu:oc_private_xxx（创建者私聊）
+
+- [启用] a19f... | 昨日总结 | 0 0 9 * * 1-5
+  text: 当我们每天第一次沟通，记得给我发昨日总结
+  target: feishu:oc_group_yyy（原会话已迁移到 feishu:oc_group_zzz） | session: ses_yyy
+  orphan: 是（原会话已迁移到其他窗口）
+  fallback: 候选 feishu:oc_private_xxx（创建者私聊）；原会话已迁移，运行时不会直接回退
+```
 
 ```bash
 # 列出任务
