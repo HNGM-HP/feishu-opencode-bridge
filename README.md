@@ -62,7 +62,12 @@ opencode-bridge
 
 ```bash
 mkdir -p ~/.config/opencode-bridge
-cp .env.example ~/.config/opencode-bridge/.env
+
+# 若你是通过 npm 全局安装：
+cp "$(npm root -g)/opencode-bridge/.env.example" ~/.config/opencode-bridge/.env
+
+# 若你是源码仓库内运行：
+# cp .env.example ~/.config/opencode-bridge/.env
 
 # 直接使用默认配置目录启动
 opencode-bridge
