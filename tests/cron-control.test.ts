@@ -97,6 +97,8 @@ describe('cron-control', () => {
       manager,
       intent: parseCronSlashIntent('add --name demo --expr "0 */10 * * * *" --text "执行巡检" --session current'),
       currentSessionId: 'session-1',
+      currentConversationId: 'oc_test_chat',
+      creatorId: 'user-1',
       platform: 'feishu',
     });
     expect(addText).toContain('创建成功');
@@ -104,6 +106,12 @@ describe('cron-control', () => {
     const jobs = manager.listJobs();
     expect(jobs.length).toBe(1);
     const jobId = jobs[0].id;
+    expect(jobs[0].payload.sessionId).toBe('session-1');
+    expect(jobs[0].payload.delivery).toEqual({
+      platform: 'feishu',
+      conversationId: 'oc_test_chat',
+      creatorId: 'user-1',
+    });
 
     const listText = executeCronIntent({
       manager,
@@ -125,5 +133,27 @@ describe('cron-control', () => {
       platform: 'feishu',
     });
     expect(removeText).toContain('已删除任务');
+  });
+
+  it('当前聊天无会话时应拒绝创建 cron 任务', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-control-no-session-'));
+    const jobsFile = path.join(root, 'jobs.json');
+    const scheduler = new CronScheduler();
+    const manager = new RuntimeCronManager({
+      scheduler,
+      filePath: jobsFile,
+    });
+
+    const { executeCronIntent, parseCronSlashIntent } = await loadCronControl();
+    const text = executeCronIntent({
+      manager,
+      intent: parseCronSlashIntent('add --name demo --expr "0 */10 * * * *" --text "执行巡检"'),
+      currentConversationId: 'oc_test_chat',
+      creatorId: 'user-1',
+      platform: 'feishu',
+    });
+
+    expect(text).toContain('尚未绑定 OpenCode 会话');
+    expect(manager.listJobs()).toHaveLength(0);
   });
 });

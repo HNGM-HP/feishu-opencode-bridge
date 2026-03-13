@@ -27,6 +27,8 @@ export interface ExecuteCronIntentOptions {
   intent: CronIntent;
   currentSessionId?: string;
   currentDirectory?: string;
+  currentConversationId?: string;
+  creatorId?: string;
   platform: 'feishu' | 'discord';
 }
 
@@ -133,8 +135,8 @@ export function buildCronHelpText(platform: 'feishu' | 'discord'): string {
     '',
     '【结构化命令（高级）】',
     `- \`${slashPrefix} list\``,
-    `- \`${slashPrefix} add --name <名称> --expr "<cron表达式>" --text "<执行内容>" [--session current|<id>] [--dir current|<路径>] [--agent <名称>]\``,
-    `- \`${slashPrefix} update --id <jobId> [--name <名称>] [--expr "<cron表达式>"] [--text "<执行内容>"] [--enabled true|false]\``,
+    `- \`${slashPrefix} add --name <名称> --expr "<cron表达式>" --text "<执行内容>" [--session current|<id>] [--chat current|<会话ID>] [--dir current|<路径>] [--agent <名称>]\``,
+    `- \`${slashPrefix} update --id <jobId> [--name <名称>] [--expr "<cron表达式>"] [--text "<执行内容>"] [--chat current|<会话ID>] [--enabled true|false]\``,
     `- \`${slashPrefix} remove --id <jobId>\``,
     `- \`${slashPrefix} pause --id <jobId>\``,
     `- \`${slashPrefix} resume --id <jobId>\``,
@@ -145,7 +147,7 @@ export function buildCronHelpText(platform: 'feishu' | 'discord'): string {
 }
 
 export function executeCronIntent(options: ExecuteCronIntentOptions): string {
-  const { manager, intent, currentSessionId, currentDirectory, platform } = options;
+  const { manager, intent, currentSessionId, currentDirectory, currentConversationId, creatorId, platform } = options;
 
   if (!manager) {
     return [
@@ -173,8 +175,12 @@ export function executeCronIntent(options: ExecuteCronIntentOptions): string {
     for (const job of jobs) {
       const status = job.enabled ? '启用' : '暂停';
       const briefText = brief(job.payload.text, 60);
+      const deliveryLabel = job.payload.delivery
+        ? `${job.payload.delivery.platform}:${job.payload.delivery.conversationId}`
+        : '未绑定窗口';
       lines.push(`- [${status}] ${job.id} | ${job.name} | ${job.schedule.expr}`);
       lines.push(`  text: ${briefText}`);
+      lines.push(`  target: ${deliveryLabel} | session: ${job.payload.sessionId || '未绑定'}`);
     }
     return lines.join('\n');
   }
@@ -217,8 +223,22 @@ export function executeCronIntent(options: ExecuteCronIntentOptions): string {
       return '❌ 新增任务缺少参数：需要 expr 与 text。用法：add --name <名称> --expr "*/5 * * * * *" --text "执行内容"';
     }
 
+    if (!currentSessionId && !parsedArgs.options.session) {
+      return '❌ 当前聊天尚未绑定 OpenCode 会话；请先在当前窗口建立/绑定会话，或显式使用 --session <id>。';
+    }
+
+    if (!currentConversationId) {
+      return '❌ 当前聊天上下文缺失，无法为 Cron 任务绑定回推窗口。';
+    }
+
     const name = resolveName(intent, parsedArgs, text);
-    const payload = buildPayload(intent, parsedArgs, text, currentSessionId, currentDirectory);
+    const payload = buildPayload(intent, parsedArgs, text, {
+      currentSessionId,
+      currentDirectory,
+      currentConversationId,
+      creatorId,
+      platform,
+    });
     const enabled = resolveEnabled(parsedArgs, true);
     try {
       const created = manager.addJob({
@@ -255,8 +275,15 @@ export function executeCronIntent(options: ExecuteCronIntentOptions): string {
     const nextText = resolveText(intent, parsedArgs);
     const nextName = resolveName(intent, parsedArgs, existing.payload.text, true);
     const nextEnabled = resolveEnabled(parsedArgs, existing.enabled);
-    const hasPayloadChange = Boolean(nextText || parsedArgs.options.session || parsedArgs.options.dir || parsedArgs.options.agent);
+    const hasPayloadChange = Boolean(
+      nextText
+      || parsedArgs.options.session
+      || parsedArgs.options.dir
+      || parsedArgs.options.agent
+      || parsedArgs.options.chat
+    );
 
+    const nextConversationId = resolveOptionalValue(parsedArgs.options.chat, currentConversationId);
     const updatePayload: Partial<RuntimeCronPayload> = {
       ...(nextText ? { text: nextText } : {}),
       ...(resolveOptionalValue(parsedArgs.options.session, currentSessionId) !== undefined
@@ -289,6 +316,20 @@ export function executeCronIntent(options: ExecuteCronIntentOptions): string {
                 ...(updatePayload.agent !== undefined
                   ? (updatePayload.agent ? { agent: updatePayload.agent } : {})
                   : (existing.payload.agent ? { agent: existing.payload.agent } : {})),
+                ...(nextConversationId !== undefined
+                  ? {
+                      delivery: {
+                        platform,
+                        conversationId: nextConversationId || currentConversationId || existing.payload.delivery?.conversationId || '',
+                        ...(creatorId || existing.payload.delivery?.creatorId
+                          ? { creatorId: creatorId || existing.payload.delivery?.creatorId }
+                          : {}),
+                        ...(existing.payload.delivery?.fallbackConversationId
+                          ? { fallbackConversationId: existing.payload.delivery.fallbackConversationId }
+                          : {}),
+                      },
+                    }
+                  : (existing.payload.delivery ? { delivery: existing.payload.delivery } : {})),
               },
             }
           : {}),
@@ -852,12 +893,20 @@ function buildPayload(
   intent: CronIntent,
   args: ParsedOptionArgs,
   text: string,
-  currentSessionId?: string,
-  currentDirectory?: string
+  context: {
+    currentSessionId?: string;
+    currentDirectory?: string;
+    currentConversationId?: string;
+    creatorId?: string;
+    platform: 'feishu' | 'discord';
+  }
 ): RuntimeCronPayload {
-  const optionSession = resolveOptionalValue(args.options.session, currentSessionId);
-  const optionDirectory = resolveOptionalValue(args.options.dir, currentDirectory);
+  const optionSession = resolveOptionalValue(args.options.session, context.currentSessionId);
+  const optionDirectory = resolveOptionalValue(args.options.dir, context.currentDirectory);
   const optionAgent = resolveOptionalValue(args.options.agent, undefined);
+  const optionConversationId = args.options.chat !== undefined
+    ? resolveOptionalValue(args.options.chat, context.currentConversationId)
+    : (context.currentConversationId || '');
   const presetSession = intent.preset?.id;
 
   const sessionId = optionSession !== undefined ? optionSession : presetSession;
@@ -868,6 +917,15 @@ function buildPayload(
     ...(sessionId ? { sessionId } : {}),
     ...(optionDirectory ? { directory: optionDirectory } : {}),
     ...(optionAgent ? { agent: optionAgent } : {}),
+    ...(optionConversationId
+      ? {
+          delivery: {
+            platform: context.platform,
+            conversationId: optionConversationId,
+            ...(context.creatorId ? { creatorId: context.creatorId } : {}),
+          },
+        }
+      : {}),
   };
 }
 

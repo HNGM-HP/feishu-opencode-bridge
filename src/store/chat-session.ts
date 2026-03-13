@@ -4,7 +4,7 @@ import type { EffortLevel } from '../commands/effort.js';
 
 export type ChatSessionType = 'p2p' | 'group';
 
-interface ChatSessionData {
+export interface ChatSessionData {
   chatId: string;
   sessionId: string;
   sessionDirectory?: string;
@@ -47,6 +47,12 @@ export interface SessionBindingOptions {
   projectName?: string;
 }
 
+export interface ConversationBindingRecord {
+  platform: string;
+  conversationId: string;
+  session: ChatSessionData;
+}
+
 const STORE_FILE = path.join(process.cwd(), '.chat-sessions.json');
 const SESSION_ALIAS_TTL_MS = 10 * 60 * 1000;
 const NAMESPACE_SEPARATOR = ':';
@@ -64,9 +70,15 @@ class ChatSessionStore {
     try {
       if (fs.existsSync(STORE_FILE)) {
         const content = fs.readFileSync(STORE_FILE, 'utf-8');
-        const parsed = JSON.parse(content);
-        this.data = new Map(Object.entries(parsed));
+        const parsed = JSON.parse(content) as Record<string, ChatSessionData>;
+        const migratedEntries: Array<[string, ChatSessionData]> = [];
+        for (const [key, value] of Object.entries(parsed)) {
+          const normalizedKey = this.isNamespacedKey(key) ? key : this.legacyToNamespacedKey(key);
+          migratedEntries.push([normalizedKey, value]);
+        }
+        this.data = new Map(migratedEntries);
         console.log(`[Store] 已加载 ${this.data.size} 个群组会话`);
+        this.save();
       }
     } catch (error) {
       console.error('[Store] 加载数据失败:', error);
@@ -244,6 +256,22 @@ class ChatSessionStore {
     }
   }
 
+  private removeExistingBindingsForSession(sessionId: string, exceptKey: string): void {
+    for (const [key, existing] of this.data.entries()) {
+      if (key === exceptKey || existing.sessionId !== sessionId) {
+        continue;
+      }
+
+      this.data.delete(key);
+      const parsed = this.parseConversationKey(key);
+      if (parsed) {
+        console.log(`[Store] 会话 ${sessionId} 已改绑，移除旧绑定: ${parsed.platform}:${parsed.chatId}`);
+      } else {
+        console.log(`[Store] 会话 ${sessionId} 已改绑，移除旧绑定: ${key}`);
+      }
+    }
+  }
+
   /**
    * 设置会话（平台感知版本）
    * @param platform 平台标识
@@ -299,6 +327,7 @@ class ChatSessionStore {
       interactionHistory: [],
     };
 
+    this.removeExistingBindingsForSession(sessionId, key);
     this.data.set(key, data);
     this.save();
     console.log(`[Store] 绑定成功: platform=${platform}, conversation=${conversationId} -> session=${sessionId}`);
@@ -353,6 +382,7 @@ class ChatSessionStore {
       interactionHistory: [],
     };
 
+    this.removeExistingBindingsForSession(sessionId, namespacedKey);
     this.data.set(namespacedKey, data);
     this.save();
     console.log(`[Store] 绑定成功: chat=${chatId} (namespaced: ${namespacedKey}) -> session=${sessionId}`);
@@ -684,6 +714,43 @@ class ChatSessionStore {
       }
     }
     return result;
+  }
+
+  getConversationBindings(): ConversationBindingRecord[] {
+    const result: ConversationBindingRecord[] = [];
+    for (const [key, session] of this.data.entries()) {
+      const parsed = this.parseConversationKey(key);
+      if (!parsed) {
+        result.push({
+          platform: 'feishu',
+          conversationId: key,
+          session,
+        });
+        continue;
+      }
+
+      result.push({
+        platform: parsed.platform,
+        conversationId: parsed.chatId,
+        session,
+      });
+    }
+    return result;
+  }
+
+  findPrivateConversationByCreator(userId: string, preferredPlatform?: string): ConversationBindingRecord | null {
+    const bindings = this.getConversationBindings().filter(item => item.session.creatorId === userId);
+    if (bindings.length === 0) {
+      return null;
+    }
+
+    const samePlatform = preferredPlatform
+      ? bindings.filter(item => item.platform === preferredPlatform)
+      : bindings;
+    const candidates = samePlatform.length > 0 ? samePlatform : bindings;
+    const privateBinding = candidates.find(item => item.session.chatType === 'p2p')
+      || candidates.find(item => this.isPrivateChatSession(item.conversationId));
+    return privateBinding || null;
   }
 
   getAllChatIds(): string[] {

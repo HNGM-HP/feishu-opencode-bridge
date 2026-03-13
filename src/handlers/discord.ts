@@ -1586,6 +1586,8 @@ class DiscordHandler {
       intent: resolvedIntent,
       currentSessionId: session?.sessionId,
       currentDirectory: session?.resolvedDirectory || session?.defaultDirectory,
+      currentConversationId: event.conversationId,
+      creatorId: event.senderId,
       platform: 'discord',
     });
     await this.safeReply(event, resultText);
