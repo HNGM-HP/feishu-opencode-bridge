@@ -240,6 +240,11 @@ export function executeCronIntent(options: ExecuteCronIntentOptions): string {
       creatorId,
       platform,
     });
+
+    if (!payload.sessionId) {
+      return '❌ 当前聊天尚未绑定 OpenCode 会话；请先在当前窗口建立/绑定会话，或显式使用 --session <id>。';
+    }
+
     const enabled = resolveEnabled(parsedArgs, true);
     try {
       const created = manager.addJob({
@@ -910,7 +915,9 @@ function buildPayload(
     : (context.currentConversationId || '');
   const presetSession = intent.preset?.id;
 
-  const sessionId = optionSession !== undefined ? optionSession : presetSession;
+  const sessionId = optionSession !== undefined
+    ? optionSession
+    : (context.currentSessionId || presetSession || '');
 
   return {
     kind: 'systemEvent',

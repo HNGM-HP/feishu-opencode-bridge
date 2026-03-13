@@ -135,6 +135,51 @@ describe('cron-control', () => {
     expect(removeText).toContain('已删除任务');
   });
 
+  it('未显式传 --session 时也应绑定当前 sessionId', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-control-bind-current-'));
+    const jobsFile = path.join(root, 'jobs.json');
+    const scheduler = new CronScheduler();
+    const manager = new RuntimeCronManager({
+      scheduler,
+      filePath: jobsFile,
+    });
+
+    const { executeCronIntent, parseCronSlashIntent } = await loadCronControl();
+    const addText = executeCronIntent({
+      manager,
+      intent: parseCronSlashIntent('add --name greet --expr "0 50 14 * * *" --text "对我说下午好"'),
+      currentSessionId: 'session-current',
+      currentConversationId: 'oc_test_chat',
+      creatorId: 'user-1',
+      platform: 'feishu',
+    });
+
+    expect(addText).toContain('创建成功');
+    expect(manager.listJobs()[0]?.payload.sessionId).toBe('session-current');
+  });
+
+  it('语义解析产出 --session current 但当前无会话时应拒绝创建', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-control-current-empty-'));
+    const jobsFile = path.join(root, 'jobs.json');
+    const scheduler = new CronScheduler();
+    const manager = new RuntimeCronManager({
+      scheduler,
+      filePath: jobsFile,
+    });
+
+    const { executeCronIntent, parseCronSlashIntent } = await loadCronControl();
+    const addText = executeCronIntent({
+      manager,
+      intent: parseCronSlashIntent('add --name greet --expr "0 50 14 * * *" --text "对我说下午好" --session current'),
+      currentConversationId: 'oc_test_chat',
+      creatorId: 'user-1',
+      platform: 'feishu',
+    });
+
+    expect(addText).toContain('尚未绑定 OpenCode 会话');
+    expect(manager.listJobs()).toHaveLength(0);
+  });
+
   it('当前聊天无会话时应拒绝创建 cron 任务', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cron-control-no-session-'));
     const jobsFile = path.join(root, 'jobs.json');
