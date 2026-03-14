@@ -1,6 +1,6 @@
 {
   "name": "opencode-bridge",
-  "version": "2.9.0-beta",
+  "version": "2.9.0",
   "type": "module",
   "description": "Feishu / Discord × OpenCode bridge service with runtime cron and reliability tooling",
   "main": "dist/index.js",

@@ -1,4 +1,4 @@
-# OpenCode SDK 集成说明（桥接侧，v2.9.0-beta）
+# OpenCode SDK 集成说明（桥接侧，v2.9.0）
 
 本文档不是官方 SDK 全量手册，而是本项目在 `src/opencode/client.ts` 中的实际封装与调用约定。
 
