@@ -21,6 +21,7 @@ const envExamplePath = path.join(rootDir, '.env.example');
 const bridgeAgentTemplateDir = path.join(rootDir, 'assets', 'opencode-agents');
 const bridgeAgentManifestName = '.bridge-agents.manifest.json';
 const bridgeAgentFilePrefix = 'bridge-';
+const packageTarballPattern = /^(?:feishu-opencode-bridge|opencode-bridge)-.+\.tgz$/u;
 
 const serviceName = 'feishu-opencode-bridge';
 const serviceFilePath = `/etc/systemd/system/${serviceName}.service`;
@@ -883,11 +884,16 @@ function unsyncBridgeAgents() {
   console.log(`[deploy] 已清理 ${removedCount} 个桥接内置 Agent 模板`);
 }
 
-async function deployProject() {
+async function deployProject(options = {}) {
+  const { skipCleanInstall = false, contextLabel = '部署时' } = options;
   console.log('[deploy] 开始部署');
   await ensureRuntimeReady();
   ensureEnvFile();
   ensureLogDir();
+
+  if (!skipCleanInstall) {
+    cleanupForCleanInstall(contextLabel);
+  }
 
   console.log('\n[deploy] OpenCode 环境预检（仅提示，不阻断部署）');
   await checkOpencodeEnvironment({ warnOnly: true });
@@ -919,16 +925,55 @@ function uninstallBackgroundProcess() {
   console.log('[deploy] 已清理后台进程相关文件');
 }
 
-function cleanupForUpgrade() {
-  uninstallBackgroundProcess();
+function cleanupPackageTarballs() {
+  const entries = fs.readdirSync(rootDir, { withFileTypes: true });
+  let removedCount = 0;
 
+  for (const entry of entries) {
+    if (!entry.isFile() || !packageTarballPattern.test(entry.name)) {
+      continue;
+    }
+
+    fs.rmSync(path.join(rootDir, entry.name), { force: true });
+    removedCount += 1;
+  }
+
+  return removedCount;
+}
+
+function cleanupForCleanInstall(contextLabel) {
   const distDir = path.join(rootDir, 'dist');
   const nodeModulesDir = path.join(rootDir, 'node_modules');
+  const removedTargets = [];
 
-  fs.rmSync(distDir, { recursive: true, force: true });
-  fs.rmSync(nodeModulesDir, { recursive: true, force: true });
+  if (fs.existsSync(distDir)) {
+    fs.rmSync(distDir, { recursive: true, force: true });
+    removedTargets.push('dist');
+  }
 
-  console.log('[deploy] 已清理 dist 与 node_modules（保留 scripts/ 升级脚本）');
+  if (fs.existsSync(nodeModulesDir)) {
+    fs.rmSync(nodeModulesDir, { recursive: true, force: true });
+    removedTargets.push('node_modules');
+  }
+
+  const removedTarballs = cleanupPackageTarballs();
+  if (removedTarballs > 0) {
+    removedTargets.push(`npm 打包产物(${removedTarballs})`);
+  }
+
+  if (fs.existsSync(pidFile)) {
+    fs.rmSync(pidFile, { force: true });
+    removedTargets.push('logs/bridge.pid');
+  }
+
+  const preservedTargets = ['.env', '.env.example', 'cron/', '.chat-sessions.json', '.user-sessions.json', 'logs/', 'scripts/'];
+  console.log(`[deploy] ${contextLabel}默认采用清洁安装：已清理 ${removedTargets.join('、') || '无旧产物可清理'}`);
+  console.log(`[deploy] 已保留用户文件: ${preservedTargets.join('、')}`);
+}
+
+function cleanupForUpgrade() {
+  uninstallBackgroundProcess();
+  cleanupForCleanInstall('更新升级时');
 }
 
 function pullLatestCode() {
@@ -967,7 +1012,7 @@ async function upgradeProject() {
   await ensureRuntimeReady();
   cleanupForUpgrade();
   pullLatestCode();
-  await deployProject();
+  await deployProject({ skipCleanInstall: true });
   console.log('\n[deploy] 更新升级完成');
 }
 
@@ -1110,25 +1155,25 @@ async function showMenu() {
     while (true) {
       console.log('\n========== Feishu OpenCode Bridge ==========');
       if (isLinux()) {
-        console.log('1) 一键部署（安装依赖+编译）');
+        console.log('1) 一键部署（默认清洁安装，保留 .env/cron 等用户数据）');
         console.log('2) 启动后台进程（通用）');
         console.log('3) 停止后台进程（通用）');
         console.log('4) 安装并启动 systemd 服务（常驻）');
         console.log('5) 停止并禁用 systemd 服务');
         console.log('6) 卸载 systemd 服务');
         console.log('7) 查看运行状态');
-        console.log('8) 一键更新升级（先拆卸清理再更新）');
+        console.log('8) 一键更新升级（默认清洁升级，保留 .env/cron 等用户数据）');
         console.log('9) 安装/升级 OpenCode（npm i -g opencode-ai）');
         console.log('10) 检查 OpenCode 环境（安装与端口）');
         console.log('11) 启动 OpenCode CLI（自动写入 server 配置）');
         console.log('12) 首次引导（推荐）');
         console.log('0) 退出');
       } else {
-        console.log('1) 一键部署（安装依赖+编译）');
+        console.log('1) 一键部署（默认清洁安装，保留 .env/cron 等用户数据）');
         console.log('2) 启动后台进程');
         console.log('3) 停止后台进程');
         console.log('4) 卸载后台进程（停止并清理日志/PID）');
-        console.log('5) 一键更新升级（先拆卸清理再更新）');
+        console.log('5) 一键更新升级（默认清洁升级，保留 .env/cron 等用户数据）');
         console.log('6) 安装/升级 OpenCode（npm i -g opencode-ai）');
         console.log('7) 检查 OpenCode 环境（安装与端口）');
         console.log('8) 启动 OpenCode CLI（自动写入 server 配置）');
@@ -1231,8 +1276,8 @@ async function showMenu() {
 function printUsage() {
   console.log('用法: node scripts/deploy.mjs [action]');
   console.log('可选 action:');
-  console.log('  deploy                一键部署（安装依赖+编译）');
-  console.log('  upgrade               一键更新升级（先拆卸清理再更新）');
+  console.log('  deploy                一键部署（默认清洁安装，保留 .env/cron 等用户数据）');
+  console.log('  upgrade               一键更新升级（默认清洁升级，保留 .env/cron 等用户数据）');
   console.log('  opencode-install      安装/升级 OpenCode（npm i -g opencode-ai）');
   console.log('  opencode-check        检查 OpenCode 安装与端口状态');
   console.log('  opencode-start        启动 OpenCode CLI（自动写入 server 配置）');
