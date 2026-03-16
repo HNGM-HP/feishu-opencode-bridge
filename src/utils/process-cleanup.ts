@@ -54,10 +54,10 @@ export function findOpenCodeProcesses(): number[] {
 }
 
 /**
- * 清理 Bridge 进程
+ * 清理 Bridge 进程（排除当前进程）
  */
 export async function cleanupStaleProcesses(): Promise<void> {
-  const result = runProcessManager(['kill-bridge']);
+  const result = runProcessManager(['kill-bridge', '--exclude-self']);
   if (result.stdout) {
     console.log(result.stdout.trim());
   }

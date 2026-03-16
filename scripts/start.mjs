@@ -128,9 +128,9 @@ function startBridge() {
 function main() {
   ensureLogDir();
 
-  // 调用进程管理工具清理旧进程
+  // 调用进程管理工具清理旧进程（排除当前进程树）
   console.log('[start] 清理旧进程...');
-  spawnSync(process.execPath, [processManagerPath, 'kill-bridge'], {
+  spawnSync(process.execPath, [processManagerPath, 'kill-bridge', '--exclude-self'], {
     stdio: 'inherit',
   });
 

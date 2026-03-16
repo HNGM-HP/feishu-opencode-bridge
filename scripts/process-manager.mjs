@@ -27,10 +27,12 @@ function isUnix() {
 
 /**
  * 扫描 Bridge 进程
+ * @param {boolean} excludeSelf - 是否排除当前进程
  * @returns {number[]} 进程 PID 列表
  */
-function findBridgeProcesses() {
+function findBridgeProcesses(excludeSelf = false) {
   const pids = [];
+  const currentPid = process.pid;
 
   if (isWindows()) {
     // Windows: 使用 tasklist
@@ -45,6 +47,9 @@ function findBridgeProcesses() {
         const match = line.match(/"node\.exe","(\d+)"/);
         if (match) {
           const pid = parseInt(match[1], 10);
+          if (excludeSelf && pid === currentPid) {
+            continue; // 排除当前进程
+          }
           // 进一步检查命令行参数
           if (isBridgeProcessByCommand(pid)) {
             pids.push(pid);
@@ -65,7 +70,7 @@ function findBridgeProcesses() {
         if (parts.length < 11) continue;
 
         const pid = parseInt(parts[1], 10);
-        if (isNaN(pid) || pid === process.pid || pid === 1) continue;
+        if (isNaN(pid) || pid === currentPid || pid === 1) continue;
 
         const command = parts.slice(10).join(' ');
 
@@ -82,10 +87,12 @@ function findBridgeProcesses() {
 
 /**
  * 扫描 OpenCode 进程
+ * @param {boolean} excludeSelf - 是否排除当前进程
  * @returns {number[]} 进程 PID 列表
  */
-function findOpenCodeProcesses() {
+function findOpenCodeProcesses(excludeSelf = false) {
   const pids = [];
+  const currentPid = process.pid;
 
   if (isWindows()) {
     const result = spawnSync('tasklist', ['/FO', 'CSV', '/NH'], {
@@ -98,6 +105,9 @@ function findOpenCodeProcesses() {
         const match = line.match(/"node\.exe","(\d+)"/);
         if (match) {
           const pid = parseInt(match[1], 10);
+          if (excludeSelf && pid === currentPid) {
+            continue;
+          }
           if (isOpenCodeProcessByCommand(pid)) {
             pids.push(pid);
           }
@@ -116,7 +126,7 @@ function findOpenCodeProcesses() {
         if (parts.length < 11) continue;
 
         const pid = parseInt(parts[1], 10);
-        if (isNaN(pid) || pid === process.pid || pid === 1) continue;
+        if (isNaN(pid) || pid === currentPid || pid === 1) continue;
 
         const command = parts.slice(10).join(' ');
 
@@ -288,10 +298,11 @@ function printUsage() {
 function main() {
   const args = process.argv.slice(2);
   const command = args[0];
+  const excludeSelf = args.includes('--exclude-self');
 
   switch (command) {
     case 'kill-bridge': {
-      const pids = findBridgeProcesses();
+      const pids = findBridgeProcesses(excludeSelf);
       if (pids.length === 0) {
         console.log('[process-manager] 未检测到 Bridge 进程');
         return;
@@ -306,8 +317,8 @@ function main() {
       }
 
       // 等待进程退出
-      if (!waitForExit(findBridgeProcesses, 10000)) {
-        const stillRemaining = findBridgeProcesses();
+      if (!waitForExit(() => findBridgeProcesses(excludeSelf), 10000)) {
+        const stillRemaining = findBridgeProcesses(excludeSelf);
         if (stillRemaining.length > 0) {
           console.log(`[process-manager] 警告：${stillRemaining.length} 个进程未响应 SIGTERM，尝试强制终止...`);
           const forceResult = stopProcesses(stillRemaining, true);
@@ -322,7 +333,7 @@ function main() {
     }
 
     case 'kill-opencode': {
-      const pids = findOpenCodeProcesses();
+      const pids = findOpenCodeProcesses(excludeSelf);
       if (pids.length === 0) {
         console.log('[process-manager] 未检测到 OpenCode 进程');
         return;
@@ -336,8 +347,8 @@ function main() {
         console.log(`[process-manager] 已终止 PID=${pid}`);
       }
 
-      if (!waitForExit(findOpenCodeProcesses, 10000)) {
-        const stillRemaining = findOpenCodeProcesses();
+      if (!waitForExit(() => findOpenCodeProcesses(excludeSelf), 10000)) {
+        const stillRemaining = findOpenCodeProcesses(excludeSelf);
         if (stillRemaining.length > 0) {
           console.log(`[process-manager] 警告：${stillRemaining.length} 个进程未响应 SIGTERM，尝试强制终止...`);
           const forceResult = stopProcesses(stillRemaining, true);
