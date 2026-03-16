@@ -87,13 +87,112 @@ function readPid() {
   return Number.isNaN(pid) ? null : pid;
 }
 
-function isProcessAlive(pid) {
+function findBridgeProcesses() {
+  const pids = [];
+
   try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+    const result = spawnSync('ps', ['aux'], {
+      encoding: 'utf-8',
+    });
+
+    if (result.error || result.status !== 0) {
+      return pids;
+    }
+
+    const lines = result.stdout.split('\n');
+    const absEntryFile = path.resolve(entryFile);
+
+    for (const line of lines) {
+      if (!line.trim()) continue;
+
+      const parts = line.split(/\s+/);
+      if (parts.length < 11) continue;
+
+      const pid = Number.parseInt(parts[1], 10);
+      if (Number.isNaN(pid)) continue;
+
+      // 跳过当前进程和 init 进程
+      if (pid === process.pid || pid === 1) continue;
+
+      const command = parts.slice(10).join(' ');
+
+      // 匹配 dist/index.js 或 opencode-bridge 相关进程
+      if (command.includes('dist/index.js')
+          || command.includes('opencode-bridge')
+          || command.includes(absEntryFile)) {
+        pids.push(pid);
+      }
+    }
+  } catch (error) {
+    console.warn(`[start] 扫描进程失败：${error.message}`);
   }
+
+  return pids;
+}
+
+function stopExistingProcesses() {
+  const pidFromFile = readPid();
+  const pidsFromScan = findBridgeProcesses();
+
+  // 合并 PID 列表并去重
+  const allPids = new Set([...(pidFromFile ? [pidFromFile] : []), ...pidsFromScan]);
+
+  if (allPids.size === 0) {
+    return;
+  }
+
+  console.log(`[start] 检测到 ${allPids.size} 个旧进程正在运行：${Array.from(allPids).join(', ')}`);
+  console.log('[start] 自动终止旧进程...');
+
+  for (const pid of allPids) {
+    try {
+      process.kill(pid, 'SIGTERM');
+      console.log(`[start] 已发送 SIGTERM 信号，PID=${pid}`);
+    } catch {
+      console.log(`[start] 进程 ${pid} 可能已退出`);
+    }
+  }
+
+  // 等待进程退出
+  let waitCount = 0;
+  while (waitCount < 15) {
+    const remaining = findBridgeProcesses();
+    if (remaining.length === 0) {
+      console.log('[start] 旧进程已全部退出');
+      return;
+    }
+
+    waitCount++;
+    const ms = Math.min(200 * Math.pow(1.5, waitCount), 3000);
+
+    // 如果还有残留，等待更长时间
+    if (waitCount <= 5) {
+      process.stdout.write(`[start] 等待进程退出... (${waitCount * 200}ms)\n`);
+    }
+
+    require('node:timers').sleep(ms);
+  }
+
+  // 如果还有残留进程，尝试 SIGKILL
+  const stillRemaining = findBridgeProcesses();
+  if (stillRemaining.length > 0) {
+    console.log(`[start] 警告：${stillRemaining.length} 个进程未响应 SIGTERM，尝试 SIGKILL...`);
+
+    for (const pid of stillRemaining) {
+      try {
+        process.kill(pid, 'SIGKILL');
+        console.log(`[start] 已发送 SIGKILL 信号，PID=${pid}`);
+      } catch {
+        console.log(`[start] 无法终止进程 ${pid}`);
+      }
+    }
+
+    // 再等待一下
+    require('node:timers').sleep(500);
+  }
+
+  // 清理 PID 文件
+  fs.rmSync(pidFile, { force: true });
 }
 
 function ensureBuildIfMissing() {
@@ -131,22 +230,14 @@ function startBridge() {
 
   fs.writeFileSync(pidFile, String(child.pid), 'utf-8');
   console.log(`[start] 启动成功，PID=${child.pid}`);
-  console.log(`[start] 日志文件: ${outLog}`);
+  console.log(`[start] 日志文件：${outLog}`);
 }
 
 function main() {
   ensureLogDir();
 
-  const existingPid = readPid();
-  if (existingPid && isProcessAlive(existingPid)) {
-    console.log(`[start] 服务已在运行，PID=${existingPid}`);
-    console.log(`[start] 如需重启，请先执行: node scripts/stop.mjs`);
-    process.exit(0);
-  }
-
-  if (existingPid && !isProcessAlive(existingPid)) {
-    fs.rmSync(pidFile, { force: true });
-  }
+  // 启动前自动扫描并杀死旧进程
+  stopExistingProcesses();
 
   ensureBuildIfMissing();
   startBridge();
