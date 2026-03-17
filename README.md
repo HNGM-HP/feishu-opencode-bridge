@@ -5,6 +5,9 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
+**[中文](README.md)** | **[English](README-en.md)**
+
+---
 
 这是一个跨平台桥接层，不只服务飞书，也服务 Discord。`v2.9.1-beta` 将核心从"单文件堆逻辑"重构为"平台适配层 + 根路由器 + OpenCode 事件中枢 + 领域处理器"，重点解决跨平台扩展、权限闭环稳定性、目录实例一致性和线上可维护性。
 
@@ -23,7 +26,7 @@
 - [可靠性能力](#可靠性能力)
 - [飞书后台配置](#飞书后台配置)
 - [命令速查](#命令速查)
-- [Agent 使用](#agent 使用)
+- [Agent 使用](#agent使用)
 - [详细文档](#详细文档)
 
 <a id="先看痛点"></a>
@@ -353,7 +356,7 @@ RELIABILITY_LOOPBACK_ONLY=true
 | `///undo` | 回撤上一轮 |
 | `///compact` | 压缩上下文 |
 
-<a id="agent 使用"></a>
+<a id="agent使用"></a>
 ## 🤖 Agent（角色）使用
 
 详见 [Agent 使用文档](assets/docs/agent.md)。
@@ -395,8 +398,6 @@ RELIABILITY_LOOPBACK_ONLY=true
 <a id="详细文档"></a>
 ## 📚 详细文档
 
-### 中文文档
-
 | 文档 | 说明 |
 |---|---|
 | [架构文档](assets/docs/architecture.md) | 项目分层设计与平台能力矩阵 |
@@ -411,23 +412,6 @@ RELIABILITY_LOOPBACK_ONLY=true
 | [灰度部署](assets/docs/rollout.md) | 路由器模式灰度与回滚 SOP |
 | [SDK API](assets/docs/sdk-api.md) | OpenCode SDK 集成指南 |
 | [工作目录指南](assets/docs/workspace-guide.md) | 工作目录策略与项目配置 |
-
-### English Documentation
-
-| Document | Description |
-|---|---|
-| [Architecture](assets/docs/architecture-en.md) | Project layering and platform capabilities |
-| [Environment Variables](assets/docs/environment-en.md) | Complete environment configuration |
-| [Reliability](assets/docs/reliability-en.md) | Heartbeat, Cron, and crash rescue |
-| [Feishu Config](assets/docs/feishu-config-en.md) | Event subscriptions and permissions |
-| [Commands](assets/docs/commands-en.md) | Complete command reference |
-| [Implementation](assets/docs/implementation-en.md) | Key implementation details |
-| [Troubleshooting](assets/docs/troubleshooting-en.md) | Common issues and solutions |
-| [Deployment](assets/docs/deployment-en.md) | Deployment and systemd setup |
-| [Agent Guide](assets/docs/agent-en.md) | Role configuration and custom agents |
-| [Gray Deploy](assets/docs/rollout-en.md) | Gray deployment and rollback SOP |
-| [SDK API](assets/docs/sdk-api-en.md) | OpenCode SDK integration guide |
-| [Workspace Guide](assets/docs/workspace-guide-en.md) | Working directory strategy and project configuration |
 
 <a id="许可证"></a>
 ## 📝 许可证
