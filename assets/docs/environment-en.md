@@ -13,6 +13,8 @@ Based on actual reading from `src/config.ts` and `src/index.ts`:
 | `GROUP_REQUIRE_MENTION` | No | `false` | When `true`, group chats only respond when explicitly @mentioning the bot |
 | `OPENCODE_HOST` | No | `localhost` | OpenCode host address |
 | `OPENCODE_PORT` | No | `4096` | OpenCode port |
+| `OPENCODE_AUTO_START` | No | `false` | When `true`, Bridge automatically starts OpenCode background process on startup |
+| `OPENCODE_AUTO_START_CMD` | No | `opencode serve` | Custom OpenCode startup command (default is headless background mode) |
 
 ## Discord Configuration
 
@@ -71,7 +73,7 @@ Based on actual reading from `src/config.ts` and `src/index.ts`:
 | `RELIABILITY_CRON_API_PORT` | No | `4097` | Cron API listen port |
 | `RELIABILITY_CRON_API_TOKEN` | No | - | Cron API Bearer Token (Authorization header required when enabled) |
 | `RELIABILITY_CRON_JOBS_FILE` | No | `~/cron/jobs.json` | Runtime Cron task persistence file |
-| `RELIABILITY_CRON_ORPHAN_AUTO_CLEANUP` | No | `false` | Auto cleanup orphan Cron (startup scan / group dismiss or channel delete联动 / stale cleanup) |
+| `RELIABILITY_CRON_ORPHAN_AUTO_CLEANUP` | No | `false` | Auto cleanup orphan Cron (startup scan / group dismiss or channel delete linkage / stale cleanup) |
 | `RELIABILITY_CRON_FORWARD_TO_PRIVATE` | No | `false` | Allow forward to private/backup window when original chat window is invalid |
 | `RELIABILITY_CRON_FALLBACK_FEISHU_CHAT_ID` | No | - | Feishu backup receiver chat_id |
 | `RELIABILITY_CRON_FALLBACK_DISCORD_CONVERSATION_ID` | No | - | Discord backup receiver conversationId |
