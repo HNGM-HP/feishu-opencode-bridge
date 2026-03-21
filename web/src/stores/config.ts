@@ -61,10 +61,11 @@ export const useConfigStore = defineStore('config', () => {
 
   async function fetchSessions() {
     const data = await configApi.getSessions()
-    // 将 feishu 和 discord 会话合并，并添加 platform 字段
+    // 将各平台会话合并，并添加 platform 字段
     const feishuSessions = (data.feishu || []).map(s => ({ ...s, platform: 'feishu' as const }))
     const discordSessions = (data.discord || []).map(s => ({ ...s, platform: 'discord' as const }))
-    sessions.value = [...feishuSessions, ...discordSessions]
+    const wecomSessions = (data.wecom || []).map(s => ({ ...s, platform: 'wecom' as const }))
+    sessions.value = [...feishuSessions, ...discordSessions, ...wecomSessions]
   }
 
   async function fetchModels() {

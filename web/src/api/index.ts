@@ -21,6 +21,9 @@ export interface BridgeSettings {
   DISCORD_BOT_TOKEN?: string
   DISCORD_CLIENT_ID?: string
   DISCORD_ALLOWED_BOT_IDS?: string
+  WECOM_ENABLED?: string
+  WECOM_BOT_ID?: string
+  WECOM_SECRET?: string
   OPENCODE_HOST?: string
   OPENCODE_PORT?: string
   OPENCODE_AUTO_START?: string
@@ -126,7 +129,7 @@ export interface OpenCodeUpdateCheck {
 export interface CreateCronJobInput {
   name?: string
   cronExpression: string
-  platform: 'feishu' | 'discord'
+  platform: 'feishu' | 'discord' | 'wecom'
   conversationId: string
   prompt?: string
 }
@@ -141,7 +144,7 @@ export interface SessionInfo {
   conversationId?: string
   title: string
   userId?: string
-  platform?: 'feishu' | 'discord'
+  platform?: 'feishu' | 'discord' | 'wecom'
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
@@ -216,8 +219,8 @@ export const configApi = {
     return { providers, raw: res.data.raw }
   },
 
-  async getSessions(): Promise<{ feishu: SessionInfo[]; discord: SessionInfo[] }> {
-    const res = await http.get<{ feishu: SessionInfo[]; discord: SessionInfo[] }>('/sessions')
+  async getSessions(): Promise<{ feishu: SessionInfo[]; discord: SessionInfo[]; wecom: SessionInfo[] }> {
+    const res = await http.get<{ feishu: SessionInfo[]; discord: SessionInfo[]; wecom: SessionInfo[] }>('/sessions')
     return res.data
   },
 
@@ -250,6 +253,7 @@ export const configApi = {
       opencode: { status: string; message: string }
       feishu: { status: string; message: string }
       discord: { status: string; message: string }
+      wecom: { status: string; message: string }
     }
   }> {
     const res = await http.get('/admin/health')

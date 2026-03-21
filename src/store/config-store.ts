@@ -36,6 +36,11 @@ export interface BridgeSettings {
   DISCORD_CLIENT_ID?: string;
   DISCORD_ALLOWED_BOT_IDS?: string;
 
+  // 企业微信
+  WECOM_ENABLED?: string;
+  WECOM_BOT_ID?: string;
+  WECOM_SECRET?: string;
+
   // OpenCode 连接
   OPENCODE_HOST?: string;
   OPENCODE_PORT?: string;

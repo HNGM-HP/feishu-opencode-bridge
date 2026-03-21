@@ -5,6 +5,7 @@ import { createAdminServer } from './admin/admin-server.js';
 import { feishuClient, type FeishuMessageEvent } from './feishu/client.js';
 import { feishuAdapter } from './platform/adapters/feishu-adapter.js';
 import { discordAdapter } from './platform/adapters/discord-adapter.js';
+import { wecomAdapter } from './platform/adapters/wecom-adapter.js';
 import { opencodeClient, type PermissionRequestEvent } from './opencode/client.js';
 import { outputBuffer } from './opencode/output-buffer.js';
 import { delayedResponseHandler } from './opencode/delayed-handler.js';
@@ -15,6 +16,7 @@ import { p2pHandler } from './handlers/p2p.js';
 import { groupHandler } from './handlers/group.js';
 import { lifecycleHandler } from './handlers/lifecycle.js';
 import { createDiscordHandler } from './handlers/discord.js';
+import { wecomHandler } from './handlers/wecom.js';
 import { commandHandler } from './handlers/command.js';
 import { cardActionHandler } from './handlers/card-action.js';
 import { validateConfig, routerConfig, outputConfig, reliabilityConfig, opencodeConfig, isPlatformConfigured } from './config.js';
@@ -1687,6 +1689,12 @@ async function main() {
     await discordHandler.handleInteraction(interaction);
   });
 
+  // 企业微信消息监听
+  wecomAdapter.onMessage(async (event) => {
+    const sender = wecomAdapter.getSender();
+    await wecomHandler.handleMessage(event, sender);
+  });
+
 
   // 6. OpenCode 事件监听已移至 openCodeEventHub（单一入口）
 
@@ -1800,6 +1808,15 @@ async function main() {
     console.error('[Discord] 启动失败:', e);
     // Discord 启动失败不影响 Feishu 流程
   }
+
+  // 7.6. 启动企业微信适配器（如果启用）
+  try {
+    await wecomAdapter.start();
+  } catch (e) {
+    console.error('[WeCom] 启动失败:', e);
+    // WeCom 启动失败不影响其他平台流程
+  }
+
   // 8. 启动飞书客户端
   if (isPlatformConfigured('feishu')) {
     feishuClient.setCardActionHandler(async (event) => {
@@ -1863,6 +1880,13 @@ async function main() {
       discordAdapter.stop();
     } catch (e) {
       console.error('停止 Discord 适配器失败:', e);
+    }
+
+    // 3.5. 停止企业微信适配器
+    try {
+      wecomAdapter.stop();
+    } catch (e) {
+      console.error('停止企业微信适配器失败:', e);
     }
 
     // 4. 停止飞书连接

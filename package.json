@@ -59,6 +59,7 @@
   "dependencies": {
     "@larksuiteoapi/node-sdk": "^1.36.3",
     "@opencode-ai/sdk": "latest",
+    "@wecom/aibot-node-sdk": "^1.0.4",
     "better-sqlite3": "^12.8.0",
     "discord.js": "^14.25.1",
     "dotenv": "^16.4.5",

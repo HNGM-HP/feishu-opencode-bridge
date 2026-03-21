@@ -43,6 +43,9 @@ const RESTART_REQUIRED_KEYS: (keyof BridgeSettings)[] = [
   'DISCORD_TOKEN',
   'DISCORD_BOT_TOKEN',
   'DISCORD_CLIENT_ID',
+  'WECOM_ENABLED',
+  'WECOM_BOT_ID',
+  'WECOM_SECRET',
   'OPENCODE_HOST',
   'OPENCODE_PORT',
   'OPENCODE_SERVER_USERNAME',
@@ -146,6 +149,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       'FEISHU_APP_SECRET',
       'DISCORD_TOKEN',
       'DISCORD_BOT_TOKEN',
+      'WECOM_SECRET',
       'OPENCODE_SERVER_PASSWORD',
       'RELIABILITY_CRON_API_TOKEN',
     ];
@@ -168,6 +172,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       'FEISHU_APP_SECRET',
       'DISCORD_TOKEN',
       'DISCORD_BOT_TOKEN',
+      'WECOM_SECRET',
       'OPENCODE_SERVER_PASSWORD',
       'RELIABILITY_CRON_API_TOKEN',
     ];
@@ -595,6 +600,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
         opencode: { status: 'unknown', message: '' },
         feishu: { status: 'unknown', message: '' },
         discord: { status: 'unknown', message: '' },
+        wecom: { status: 'unknown', message: '' },
       },
     };
 
@@ -656,6 +662,20 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       }
     } catch (e: any) {
       health.checks.discord = { status: 'error', message: e.message };
+    }
+
+    // 检测企业微信配置
+    try {
+      const settings = configStore.get();
+      if (settings.WECOM_ENABLED === 'true' && settings.WECOM_BOT_ID && settings.WECOM_SECRET) {
+        health.checks.wecom = { status: 'ok', message: '企业微信凭据已配置' };
+      } else if (settings.WECOM_ENABLED === 'true') {
+        health.checks.wecom = { status: 'warning', message: '企业微信已启用但凭据未配置' };
+      } else {
+        health.checks.wecom = { status: 'ok', message: '企业微信未启用' };
+      }
+    } catch (e: any) {
+      health.checks.wecom = { status: 'error', message: e.message };
     }
 
     res.json(health);
@@ -742,14 +762,26 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
         };
       });
 
+      // 获取企业微信会话
+      const wecomChatIds = chatSessionStore.getChatIdsByPlatform?.('wecom') || [];
+      const wecomSessions = wecomChatIds.map((chatId: string) => {
+        const session = chatSessionStore.getSession?.(chatId);
+        return {
+          conversationId: chatId,
+          title: session?.title || '未命名会话',
+          userId: session?.creatorId,
+        };
+      });
+
       res.json({
         feishu: feishuSessions,
         discord: discordSessions,
+        wecom: wecomSessions,
       });
     } catch (error: any) {
       console.error('[Admin] 获取会话列表失败:', error.message);
       // 如果获取失败，返回空列表
-      res.json({ feishu: [], discord: [] });
+      res.json({ feishu: [], discord: [], wecom: [] });
     }
   });
 

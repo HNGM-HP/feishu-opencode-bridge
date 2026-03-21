@@ -2,7 +2,7 @@
   <div class="page">
     <div class="page-header">
       <h2>平台接入配置</h2>
-      <p class="desc">配置飞书与 Discord 机器人的核心凭证和接入参数</p>
+      <p class="desc">配置飞书、Discord 与企业微信机器人的核心凭证和接入参数</p>
     </div>
 
     <el-form :model="form" label-position="top" @submit.prevent>
@@ -105,6 +105,38 @@
         </el-row>
       </el-card>
 
+      <!-- 企业微信配置 -->
+      <el-card class="config-card">
+        <template #header>
+          <div class="card-header-row">
+            <span class="card-title">💼 企业微信（WeCom）配置 <el-tag size="small" type="info">可选</el-tag></span>
+            <div class="inline-switch">
+              <span>启用企业微信</span>
+              <el-switch v-model="wecomEnabled"
+                active-text="开启" inactive-text="关闭"
+                @change="form.WECOM_ENABLED = wecomEnabled ? 'true' : 'false'" />
+            </div>
+          </div>
+        </template>
+
+        <el-row :gutter="24">
+          <el-col :span="12">
+            <el-form-item label="Bot ID">
+              <el-input v-model="form.WECOM_BOT_ID" placeholder="your-wecom-bot-id"
+                prefix-icon="Key" clearable :disabled="!wecomEnabled" />
+              <div class="field-tip">企业微信管理后台 → 应用管理 → AgentId</div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="Secret">
+              <el-input v-model="form.WECOM_SECRET" placeholder="your-wecom-secret"
+                type="password" show-password prefix-icon="Lock" :disabled="!wecomEnabled" />
+              <div class="field-tip">企业微信管理后台 → 应用管理 → Secret</div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-card>
+
       <!-- 通用访问控制 -->
       <el-card class="config-card">
         <template #header>
@@ -118,6 +150,7 @@
                 style="width:100%" @change="onPlatformsChange">
                 <el-option label="飞书 (feishu)" value="feishu" />
                 <el-option label="Discord (discord)" value="discord" />
+                <el-option label="企业微信 (wecom)" value="wecom" />
               </el-select>
               <div class="field-tip">指定启用哪些平台，留空时所有平台均可用</div>
             </el-form-item>
@@ -165,6 +198,7 @@ const store = useConfigStore()
 const saving = ref(false)
 const feishuEnabled = ref(false)
 const discordEnabled = ref(false)
+const wecomEnabled = ref(false)
 const groupRequireMention = ref(false)
 const enabledPlatforms = ref<string[]>([])
 const allowedUsers = ref<string[]>([])
@@ -175,6 +209,7 @@ const sessions = computed(() => {
   return {
     feishu: list.filter(s => s.platform === 'feishu'),
     discord: list.filter(s => s.platform === 'discord'),
+    wecom: list.filter(s => s.platform === 'wecom'),
   }
 })
 
@@ -198,6 +233,15 @@ const sessionGroups = computed(() => {
       })),
     })
   }
+  if (sessions.value.wecom.length > 0) {
+    groups.push({
+      label: '企业微信会话',
+      options: sessions.value.wecom.map(s => ({
+        label: `${s.title} (${s.conversationId || s.chatId})`,
+        value: s.conversationId || s.chatId || '',
+      })),
+    })
+  }
   return groups
 })
 
@@ -212,6 +256,9 @@ const form = reactive({
   DISCORD_BOT_TOKEN: '',
   DISCORD_CLIENT_ID: '',
   DISCORD_ALLOWED_BOT_IDS: '',
+  WECOM_ENABLED: 'false',
+  WECOM_BOT_ID: '',
+  WECOM_SECRET: '',
   ENABLED_PLATFORMS: '',
   ALLOWED_USERS: '',
   GROUP_REQUIRE_MENTION: 'false',
@@ -234,12 +281,16 @@ function syncFromStore() {
     DISCORD_BOT_TOKEN: s.DISCORD_BOT_TOKEN || '',
     DISCORD_CLIENT_ID: s.DISCORD_CLIENT_ID || '',
     DISCORD_ALLOWED_BOT_IDS: s.DISCORD_ALLOWED_BOT_IDS || '',
+    WECOM_ENABLED: s.WECOM_ENABLED || 'false',
+    WECOM_BOT_ID: s.WECOM_BOT_ID || '',
+    WECOM_SECRET: s.WECOM_SECRET || '',
     ENABLED_PLATFORMS: s.ENABLED_PLATFORMS || '',
     ALLOWED_USERS: s.ALLOWED_USERS || '',
     GROUP_REQUIRE_MENTION: s.GROUP_REQUIRE_MENTION || 'false',
   })
   feishuEnabled.value = form.FEISHU_ENABLED === 'true'
   discordEnabled.value = form.DISCORD_ENABLED === 'true'
+  wecomEnabled.value = form.WECOM_ENABLED === 'true'
   groupRequireMention.value = form.GROUP_REQUIRE_MENTION === 'true'
   enabledPlatforms.value = form.ENABLED_PLATFORMS
     ? form.ENABLED_PLATFORMS.split(',').map(s => s.trim()).filter(Boolean)
@@ -261,9 +312,10 @@ async function handleSave() {
   // 检查是否至少配置了一个平台
   const hasFeishu = feishuEnabled.value && form.FEISHU_APP_ID && form.FEISHU_APP_SECRET
   const hasDiscord = discordEnabled.value && (form.DISCORD_TOKEN || form.DISCORD_BOT_TOKEN)
+  const hasWecom = wecomEnabled.value && form.WECOM_BOT_ID && form.WECOM_SECRET
 
-  if (!hasFeishu && !hasDiscord) {
-    ElMessage.warning('建议至少启用并配置一个平台（飞书或 Discord）')
+  if (!hasFeishu && !hasDiscord && !hasWecom) {
+    ElMessage.warning('建议至少启用并配置一个平台（飞书、Discord 或企业微信）')
   }
 
   saving.value = true

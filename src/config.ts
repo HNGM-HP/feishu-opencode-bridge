@@ -62,6 +62,7 @@ if (!configStore.isMigrated() && resolvedEnvFile) {
     'FEISHU_ENABLED', 'FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_ENCRYPT_KEY', 'FEISHU_VERIFICATION_TOKEN',
     'ALLOWED_USERS', 'ENABLED_PLATFORMS',
     'DISCORD_ENABLED', 'DISCORD_TOKEN', 'DISCORD_BOT_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_ALLOWED_BOT_IDS',
+    'WECOM_ENABLED', 'WECOM_BOT_ID', 'WECOM_SECRET',
     'OPENCODE_HOST', 'OPENCODE_PORT', 'OPENCODE_AUTO_START', 'OPENCODE_AUTO_START_CMD',
     'OPENCODE_SERVER_USERNAME', 'OPENCODE_SERVER_PASSWORD', 'OPENCODE_CONFIG_FILE',
     'RELIABILITY_CRON_ENABLED', 'RELIABILITY_CRON_API_ENABLED', 'RELIABILITY_CRON_API_HOST',
@@ -219,6 +220,13 @@ export const discordConfig = {
         return true;
       });
   })(),
+};
+
+// 企业微信配置
+export const wecomConfig = {
+  enabled: parseBooleanEnv(process.env.WECOM_ENABLED, false),
+  botId: process.env.WECOM_BOT_ID?.trim() || '',
+  secret: process.env.WECOM_SECRET?.trim() || '',
 };
 
 // 群聊消息触发策略
@@ -393,6 +401,7 @@ export function validateConfig(): void {
   const platformStatus = {
     feishu: !!(feishuConfig.enabled && feishuConfig.appId && feishuConfig.appSecret),
     discord: !!(discordConfig.enabled && discordConfig.token),
+    wecom: !!(wecomConfig.enabled && wecomConfig.botId && wecomConfig.secret),
   };
 
   // 至少一个平台配置完成即可
@@ -410,6 +419,13 @@ export function validateConfig(): void {
     if (!platformStatus.discord) {
       errors.push('  - Discord: 需设置 DISCORD_ENABLED=true 并配置 DISCORD_TOKEN');
     }
+    if (!platformStatus.wecom) {
+      if (!wecomConfig.enabled) {
+        errors.push('  - 企业微信：已禁用 (WECOM_ENABLED=false)');
+      } else {
+        errors.push('  - 企业微信：缺少 WECOM_BOT_ID 或 WECOM_SECRET');
+      }
+    }
   }
 
   if (errors.length > 0) {
@@ -418,12 +434,15 @@ export function validateConfig(): void {
 }
 
 // 检查平台是否已配置（用于启动判断）
-export function isPlatformConfigured(platform: 'feishu' | 'discord'): boolean {
+export function isPlatformConfigured(platform: 'feishu' | 'discord' | 'wecom'): boolean {
   if (platform === 'feishu') {
     return !!(feishuConfig.enabled && feishuConfig.appId && feishuConfig.appSecret);
   }
   if (platform === 'discord') {
     return !!(discordConfig.enabled && discordConfig.token);
+  }
+  if (platform === 'wecom') {
+    return !!(wecomConfig.enabled && wecomConfig.botId && wecomConfig.secret);
   }
   return false;
 }
