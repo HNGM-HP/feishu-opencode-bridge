@@ -42,6 +42,7 @@
 | `/send <绝对路径>` | 发送指定路径的文件到当前群聊 |
 | `/restart opencode` | 重启本地 OpenCode 进程（仅 loopback） |
 | `/status` | 查看当前群绑定状态 |
+| `/cron ...` | 管理运行时 Cron 任务 |
 
 ## Discord 命令
 
@@ -69,6 +70,19 @@
 | `///create_chat` | 打开下拉会话控制面板（查看状态/新建/绑定/模型/角色/回撤/压缩） |
 | `///create_chat model <页码>` | 打开模型分页面板（总容量最多 500，单页 24） |
 | `///create_chat session` / `agent` / `effort` | 打开分类面板 |
+| `///cron ...` | 管理运行时 Cron 任务 |
+
+## 企业微信命令
+
+| 命令 | 说明 |
+|---|---|
+| `/help` | 查看帮助 |
+| `/panel` | 打开控制面板 |
+| `/model <provider:model>` | 切换模型 |
+| `/agent <name>` | 切换 Agent |
+| `/session new` | 开启新话题 |
+| `/undo` | 撤回上一轮交互 |
+| `/compact` | 压缩上下文 |
 
 ## 说明
 
@@ -79,6 +93,11 @@
 - `///create_chat` 使用 Discord 下拉菜单与弹窗（Modal），用于补齐会话控制体验。
 - `///clear` 在会话频道（topic 带 `oc-session:`）中会尝试直接删除频道；若权限不足则只解绑。
 - `!` 透传仅支持白名单命令；`vi`/`vim`/`nano` 等交互式编辑器不会透传。
+
+### 企业微信特性
+- 企业微信不支持富文本卡片，使用纯文本交互
+- 文件发送功能受限于企业微信 API 限制
+- 建议在测试群组中先验证配置
 
 ### 强度覆盖
 - 单条临时覆盖可在消息开头使用 `#low` / `#high` / `#max` / `#xhigh`（仅当前条生效）。

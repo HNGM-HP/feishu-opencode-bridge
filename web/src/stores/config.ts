@@ -65,7 +65,10 @@ export const useConfigStore = defineStore('config', () => {
     const feishuSessions = (data.feishu || []).map(s => ({ ...s, platform: 'feishu' as const }))
     const discordSessions = (data.discord || []).map(s => ({ ...s, platform: 'discord' as const }))
     const wecomSessions = (data.wecom || []).map(s => ({ ...s, platform: 'wecom' as const }))
-    sessions.value = [...feishuSessions, ...discordSessions, ...wecomSessions]
+    const telegramSessions = (data.telegram || []).map(s => ({ ...s, platform: 'telegram' as const }))
+    const qqSessions = (data.qq || []).map(s => ({ ...s, platform: 'qq' as const }))
+    const whatsappSessions = (data.whatsapp || []).map(s => ({ ...s, platform: 'whatsapp' as const }))
+    sessions.value = [...feishuSessions, ...discordSessions, ...wecomSessions, ...telegramSessions, ...qqSessions, ...whatsappSessions]
   }
 
   async function fetchModels() {

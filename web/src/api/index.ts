@@ -16,14 +16,33 @@ export interface BridgeSettings {
   FEISHU_VERIFICATION_TOKEN?: string
   ALLOWED_USERS?: string
   ENABLED_PLATFORMS?: string
+  // Discord
   DISCORD_ENABLED?: string
   DISCORD_TOKEN?: string
   DISCORD_BOT_TOKEN?: string
   DISCORD_CLIENT_ID?: string
   DISCORD_ALLOWED_BOT_IDS?: string
+  // WeCom
   WECOM_ENABLED?: string
   WECOM_BOT_ID?: string
   WECOM_SECRET?: string
+  // Telegram
+  TELEGRAM_ENABLED?: string
+  TELEGRAM_BOT_TOKEN?: string
+  // QQ
+  QQ_ENABLED?: string
+  QQ_PROTOCOL?: string
+  QQ_ONEBOT_WS_URL?: string
+  QQ_APP_ID?: string
+  QQ_SECRET?: string
+  QQ_CALLBACK_URL?: string
+  QQ_ENCRYPT_KEY?: string
+  // WhatsApp
+  WHATSAPP_ENABLED?: string
+  WHATSAPP_MODE?: string
+  WHATSAPP_SESSION_PATH?: string
+  WHATSAPP_BUSINESS_PHONE_ID?: string
+  WHATSAPP_BUSINESS_ACCESS_TOKEN?: string
   OPENCODE_HOST?: string
   OPENCODE_PORT?: string
   OPENCODE_AUTO_START?: string
@@ -129,7 +148,7 @@ export interface OpenCodeUpdateCheck {
 export interface CreateCronJobInput {
   name?: string
   cronExpression: string
-  platform: 'feishu' | 'discord' | 'wecom'
+  platform: 'feishu' | 'discord' | 'wecom' | 'telegram' | 'qq' | 'whatsapp'
   conversationId: string
   prompt?: string
 }
@@ -144,7 +163,7 @@ export interface SessionInfo {
   conversationId?: string
   title: string
   userId?: string
-  platform?: 'feishu' | 'discord' | 'wecom'
+  platform?: 'feishu' | 'discord' | 'wecom' | 'telegram' | 'qq' | 'whatsapp'
 }
 
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error'
@@ -219,8 +238,22 @@ export const configApi = {
     return { providers, raw: res.data.raw }
   },
 
-  async getSessions(): Promise<{ feishu: SessionInfo[]; discord: SessionInfo[]; wecom: SessionInfo[] }> {
-    const res = await http.get<{ feishu: SessionInfo[]; discord: SessionInfo[]; wecom: SessionInfo[] }>('/sessions')
+  async getSessions(): Promise<{
+    feishu: SessionInfo[]
+    discord: SessionInfo[]
+    wecom: SessionInfo[]
+    telegram: SessionInfo[]
+    qq: SessionInfo[]
+    whatsapp: SessionInfo[]
+  }> {
+    const res = await http.get<{
+      feishu: SessionInfo[]
+      discord: SessionInfo[]
+      wecom: SessionInfo[]
+      telegram: SessionInfo[]
+      qq: SessionInfo[]
+      whatsapp: SessionInfo[]
+    }>('/sessions')
     return res.data
   },
 
@@ -254,6 +287,9 @@ export const configApi = {
       feishu: { status: string; message: string }
       discord: { status: string; message: string }
       wecom: { status: string; message: string }
+      telegram: { status: string; message: string }
+      qq: { status: string; message: string }
+      whatsapp: { status: string; message: string }
     }
   }> {
     const res = await http.get('/admin/health')

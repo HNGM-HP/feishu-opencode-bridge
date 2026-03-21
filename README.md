@@ -1,4 +1,4 @@
-# Feishu / Discord × OpenCode 桥接服务 v2.9.3-beta
+# OpenCode Bridge v2.9.3-beta
 
 [![v2.9.3-beta](https://img.shields.io/badge/v2.9.3--beta-3178C6)]()
 [![Node.js >= 18](https://img.shields.io/badge/Node.js-%3E%3D18-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
@@ -9,13 +9,12 @@
 
 ---
 
-不只服务飞书，也服务 Discord。通过"平台适配层 + 根路由器 + OpenCode 事件中枢 + 领域处理器"，重点解决跨平台扩展、权限闭环稳定性、目录实例一致性和线上可维护性。
+**飞书 / Discord / 企业微信 × OpenCode 多平台桥接服务**
+
+通过"平台适配层 + 根路由器 + OpenCode 事件中枢 + 领域处理器"，重点解决跨平台扩展、权限闭环稳定性、目录实例一致性和线上可维护性。
 
 **v2.9.3-beta 新增 Web 可视化配置中心**：配置参数由 `.env` 迁移至 SQLite 数据库，支持通过浏览器实时修改配置、管理 Cron 任务、查看服务状态，无需手动编辑配置文件。
 
-随着运行时 Cron（API + `/cron` + `///cron` + 自然语言语义解析）与本地可靠性治理落地，本项目和 OpenClaw 在"自动化调度 + 运维可用性"上的能力差距进一步缩小，同时保留本项目在多平台路由与权限闭环上的工程优势。
-
-这个项目解决的不是"能不能回复消息"，而是"跨平台 AI 任务能否长期稳定闭环"。
 ## 📋 目录
 
 - [为什么用它](#为什么用它)
@@ -26,7 +25,7 @@
 - [部署与运维](#部署与运维)
 - [配置中心](#配置中心)
 - [可靠性能力](#可靠性能力)
-- [飞书后台配置](#飞书后台配置)
+- [平台配置](#平台配置)
 - [命令速查](#命令速查)
 - [Agent 使用](#agent使用)
 - [详细文档](#详细文档)
@@ -34,36 +33,40 @@
 <a id="为什么用它"></a>
 ## 💡为什么用它
 
-- 对使用者友好：权限确认、question 作答、会话操作都在飞书里完成，不强依赖本地终端。
-- 对协作友好：支持绑定已有会话与迁移绑定，跨设备、跨群接力时上下文不断裂。
-- 对稳定性友好：会话映射持久化 + 双端撤回 + 同规则清理，避免"表面正常、状态错位"。
-- 对运维友好：内置部署、升级、状态检查与后台管理流程，适合持续托管运行。
-- 对监控友好：内置cron定时任务与主动心跳，可以做到像OpenClaw类似的能力。
-- 对未来版本友好：已兼容 OpenCode Server Basic Auth，服务端启用密码后仍可直接接入。
+- **多平台支持**：一套服务同时支持飞书、Discord 和企业微信，统一路由和权限管理
+- **对使用者友好**：权限确认、question 作答、会话操作都在聊天平台内完成，不强依赖本地终端
+- **对协作友好**：支持绑定已有会话与迁移绑定，跨设备、跨群接力时上下文不断裂
+- **对稳定性友好**：会话映射持久化 + 双端撤回 + 同规则清理，避免"表面正常、状态错位"
+- **对运维友好**：内置部署、升级、状态检查与后台管理流程，适合持续托管运行
+- **对监控友好**：内置 Cron 定时任务与主动心跳，提供完整的可靠性保障
+- **对配置友好**：Web 可视化配置中心，实时修改配置，无需重启服务（部分敏感配置除外）
+- **对未来版本友好**：已兼容 OpenCode Server Basic Auth，服务端启用密码后仍可直接接入
 
 <a id="能力总览"></a>
 ## 📸 能力总览
 
 | 能力 | 你能得到什么 | 相关命令/配置 |
 |---|---|---|
-| 群聊/私聊统一路由 | 同一套入口支持私聊和群聊，按映射路由到正确会话 | 群聊 @ 机器人；私聊直接发消息 |
-| 私聊建群会话选择 | 建群时可选"新建会话/绑定已有会话"，提交时按选择生效 | `/create_chat`、`/建群` |
-| 手动会话绑定 | 不中断旧上下文，直接把指定 session 接入当前群 | `/session <sessionId>`、`路由模式与会话ENABLE_MANUAL_SESSION_BIND` |
-| 迁移绑定与删除保护 | 绑定已有会话时自动迁移旧群映射，并保护会话不被误删 | 自动生效（手动绑定场景） |
-| 生命周期清理兜底 | 启动清理与手动清理共用同一规则，降低误清理概率 | `/clear free session` |
-| 权限卡片闭环 | OpenCode 权限请求在飞书内完成确认并回传结果 | `permission.asked` |
-| question 卡片闭环 | OpenCode question 在飞书内回答/跳过并继续任务 | `question.asked` |
-| 流式多卡防溢出 | 超过组件预算自动分页拆卡，旧页持续更新 | 流式卡片分页（预算 180） |
-| 双端撤回一致性 | 撤回时同时回滚飞书消息与 OpenCode 会话状态 | `/undo` |
-| 模型/角色/强度可视化控制 | 按会话切换模型、角色与推理强度，支持面板查看与命令操作 | `/panel`、`/model`、`/agent`、`/effort` |
-| 上下文压缩 | 在飞书直接触发会话 summarize，释放上下文窗口 | `/compact` |
-| Shell 命令透传 | 白名单 `!` 命令通过 OpenCode shell 执行并回显输出 | `!ls`、`!pwd`、`!git status` |
-| 服务端鉴权兼容 | 支持 OpenCode Server Basic Auth，不怕后续默认强制密码 | `WEB-OpenCode 对接配置-Basic Auth 认证` |
-| 文件发送到飞书 | AI 可将电脑上的文件/截图直接发送到当前飞书群聊 | `/send`、`发送文件` |
-| 工作目录/项目管理 | 创建会话时指定工作目录，支持项目别名、群默认项目、9 阶段安全校验 | `/project list`、`/session new <别名>`、`ALLOWED_DIRECTORIES` |
-| OpenCode 本地可靠性治理 | 运行时 Cron（API/命令/自然语言）+ 本地宕机自动救援（含配置备份/两级回退）+ 可选主动心跳 | `HEARTBEAT.md`、`RELIABILITY_*`、`logs/reliability-audit.jsonl` |
-| 部署运维闭环 | 提供部署/升级/检查/后台/systemd 的一体化入口 | `scripts/deploy.*`、`scripts/start.*` |
-| Web 可视化配置中心 | 浏览器访问配置面板，实时修改参数、管理 Cron 任务、查看服务状态，配置存储于 SQLite | `ADMIN_PORT`、`ADMIN_PASSWORD`、访问 `http://host:4098` |
+| **多平台统一路由** | 飞书、Discord、企业微信统一入口，按映射路由到正确会话 | 各平台机器人消息 |
+| **群聊/私聊统一路由** | 同一套入口支持私聊和群聊，按映射路由到正确会话 | 群聊 @ 机器人；私聊直接发消息 |
+| **私聊建群会话选择** | 建群时可选"新建会话/绑定已有会话"，提交时按选择生效 | `/create_chat`、`/建群` |
+| **手动会话绑定** | 不中断旧上下文，直接把指定 session 接入当前群 | `/session <sessionId>`、`ENABLE_MANUAL_SESSION_BIND` |
+| **迁移绑定与删除保护** | 绑定已有会话时自动迁移旧群映射，并保护会话不被误删 | 自动生效（手动绑定场景） |
+| **生命周期清理兜底** | 启动清理与手动清理共用同一规则，降低误清理概率 | `/clear free session` |
+| **权限卡片闭环** | OpenCode 权限请求在聊天平台内完成确认并回传结果 | `permission.asked` |
+| **question 卡片闭环** | OpenCode question 在聊天平台内回答/跳过并继续任务 | `question.asked` |
+| **流式多卡防溢出** | 超过组件预算自动分页拆卡，旧页持续更新 | 流式卡片分页（预算 180） |
+| **双端撤回一致性** | 撤回时同时回滚平台消息与 OpenCode 会话状态 | `/undo` |
+| **模型/角色/强度可视化控制** | 按会话切换模型、角色与推理强度，支持面板查看与命令操作 | `/panel`、`/model`、`/agent`、`/effort` |
+| **上下文压缩** | 在聊天平台直接触发会话 summarize，释放上下文窗口 | `/compact` |
+| **Shell 命令透传** | 白名单 `!` 命令通过 OpenCode shell 执行并回显输出 | `!ls`、`!pwd`、`!git status` |
+| **服务端鉴权兼容** | 支持 OpenCode Server Basic Auth，不怕后续默认强制密码 | `OPENCODE_SERVER_USERNAME`、`OPENCODE_SERVER_PASSWORD` |
+| **文件发送到聊天平台** | AI 可将电脑上的文件/截图直接发送到当前群聊 | `/send`、`发送文件` |
+| **工作目录/项目管理** | 创建会话时指定工作目录，支持项目别名、群默认项目、9 阶段安全校验 | `/project list`、`/session new <别名>`、`ALLOWED_DIRECTORIES` |
+| **运行时 Cron 管理** | 运行时 Cron（API/命令/自然语言）管理定时任务 | HTTP API、`/cron`、`///cron` |
+| **自动救援系统** | 本地宕机自动救援（含配置备份/两级回退）+ 可选主动心跳 | `RELIABILITY_*` 配置 |
+| **Web 可视化配置中心** | 浏览器访问配置面板，实时修改参数、管理 Cron 任务、查看服务状态 | `ADMIN_PORT`、`ADMIN_PASSWORD`、访问 `http://host:4098` |
+| **部署运维闭环** | 提供部署/升级/检查/后台/systemd 的一体化入口 | `scripts/deploy.*`、`scripts/start.*` |
 
 <a id="效果演示"></a>
 ## 🖼️ 效果演示
@@ -157,10 +160,12 @@
 详见 [项目架构文档](assets/docs/architecture.md)。
 
 核心分层：
-- **平台接入层**：Feishu Adapter / Discord Adapter
-- **入口与路由层**：RootRouter / DiscordHandler
+- **平台接入层**：Feishu Adapter / Discord Adapter / Wecom Adapter
+- **入口与路由层**：RootRouter / Platform Handlers
 - **领域服务层**：PermissionHandler / QuestionHandler / OutputBuffer / ChatSessionStore
 - **OpenCode 集成层**：OpencodeClientWrapper / OpenCodeEventHub
+- **可靠性层**：CronScheduler / RuntimeCronManager / RescueOrchestrator
+- **管理层**：AdminServer / BridgeManager
 
 <a id="快速开始"></a>
 ## 🚀 快速开始
@@ -194,7 +199,7 @@ cd opencode-bridge
 **提醒**：
 - 不添加 `guide` 后缀执行命令为菜单。
 - 这一条命令可以完成"部署与环境准备"。
-- 启动服务后，通过浏览器访问 `http://localhost:4098` 进入可视化配置面板填写飞书配置。
+- 启动服务后，通过浏览器访问 `http://localhost:4098` 进入可视化配置面板填写平台配置。
 
 ### 2) Web 配置面板
 
@@ -205,14 +210,14 @@ http://localhost:4098
 
 在 Web 配置面板中完成：
 - 飞书应用配置（`FEISHU_APP_ID`、`FEISHU_APP_SECRET`）
+- Discord 适配器配置（`DISCORD_TOKEN`）
+- 企业微信适配器配置（`WECOM_BOT_ID`、`WECOM_SECRET`）
 - OpenCode 连接配置
-- Discord 适配器配置
 - 可靠性参数配置
 - Cron 任务管理
 - 服务状态查看
 
 **首次访问**：密码在 `.env` 文件的 `ADMIN_PASSWORD` 字段，首次启动时会自动生成随机密码。
-
 
 ### 3) 启动 OpenCode（保留 CLI 界面）
 
@@ -264,7 +269,6 @@ opencode-bridge
 | 首次引导 | `node scripts/deploy.mjs guide` | 安装/部署/引导启动的一体化流程 |
 | 管理菜单 | `npm run manage:bridge` | 交互式菜单（默认入口） |
 
-
 详细部署说明见 [部署与运维文档](assets/docs/deployment.md)。
 
 <a id="配置中心"></a>
@@ -278,6 +282,7 @@ opencode-bridge
 - **Cron 管理**：创建、启用/禁用、删除定时任务
 - **服务状态**：查看运行时长、版本、数据库路径等
 - **模型列表**：获取 OpenCode 可用的模型列表
+- **平台管理**：查看各平台连接状态
 
 ### .env 文件（仅启动参数）
 
@@ -296,10 +301,13 @@ opencode-bridge
 
 | 变量 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
-| `飞书应用 App ID` | 是 | - | WEB-平台接入-飞书（Lark）配置 |
-| `飞书应用 App Secret` | 是 | - | WEB-平台接入-飞书（Lark）配置 |
+| `飞书应用 App ID` | 否 | - | WEB-平台接入-飞书（Lark）配置 |
+| `飞书应用 App Secret` | 否 | - | WEB-平台接入-飞书（Lark）配置 |
 | `是否启用 Discord 适配器` | 否 | `false` | WEB-平台接入-Discord 配置 |
 | `Discord Bot Token` | 否 | - | WEB-平台接入-Discord 配置 |
+| `是否启用企业微信适配器` | 否 | `false` | WEB-平台接入-企业微信配置 |
+| `企业微信 Bot ID` | 否 | - | WEB-平台接入-企业微信配置 |
+| `企业微信 Secret` | 否 | - | WEB-平台接入-企业微信配置 |
 
 完整配置详见 [配置中心文档](assets/docs/environment.md)。
 
@@ -310,6 +318,7 @@ opencode-bridge
 **敏感配置重启**：以下配置修改后需要重启服务才能生效：
 - 飞书配置（`FEISHU_APP_ID`、`FEISHU_APP_SECRET`）
 - Discord 配置（`DISCORD_ENABLED`、`DISCORD_TOKEN`）
+- 企业微信配置（`WECOM_ENABLED`、`WECOM_BOT_ID`、`WECOM_SECRET`）
 - OpenCode 连接配置（`OPENCODE_HOST`、`OPENCODE_PORT`）
 - 可靠性开关（`RELIABILITY_CRON_ENABLED` 等）
 
@@ -321,17 +330,19 @@ opencode-bridge
 ### 快速概览
 
 - **内置 Cron 任务**：`watchdog-probe`（30 秒）、`process-consistency-check`（60 秒）、`budget-reset`（每天 0 点）
-- **三种管理入口**：HTTP API（`/cron/*`）、Feishu（`/cron ...`）、Discord（`///cron ...`）
+- **三种管理入口**：HTTP API（`/cron/*`）、飞书（`/cron ...`）、Discord（`///cron ...`）
 - **主动心跳**：可配置定时器向 Agent Session 发送检查提示
 - **自动救援**：连续失败达到阈值后自动修复本地 OpenCode（仅 loopback）
+- **运行时 Cron**：支持通过 API、命令或自然语言动态创建和管理定时任务
 
+<a id="平台配置"></a>
+## ⚙️ 平台配置
 
-<a id="飞书后台配置"></a>
-## ⚙️ 飞书后台配置
+### 飞书后台配置
 
 详见 [飞书后台配置文档](assets/docs/feishu-config.md)。
 
-### 事件订阅
+#### 事件订阅
 
 | 事件 | 必需 | 用途 |
 |---|---|---|
@@ -341,7 +352,7 @@ opencode-bridge
 | `im.chat.disbanded_v1` | 是 | 群解散后清理本地会话映射 |
 | `card.action.trigger` | 是 | 处理控制面板、权限确认、提问卡片回调 |
 
-### 应用权限
+#### 应用权限
 
 批量导入权限配置（保存至 `acc.json` 后在开发者后台导入）：
 
@@ -365,6 +376,14 @@ opencode-bridge
 }
 ```
 
+### Discord 配置
+
+详见 [Discord 配置文档](assets/docs/discord-config.md)。
+
+### 企业微信配置
+
+详见 [企业微信配置文档](assets/docs/wecom-config.md)。
+
 <a id="命令速查"></a>
 ## 📖 命令速查
 
@@ -384,6 +403,7 @@ opencode-bridge
 | `!<shell 命令>` | 透传 shell 命令 |
 | `/commands` | 生成并发送最新命令清单文件 |
 | `//<命令名>` | 透传命名空间 slash 命令（如 `//superpowers:brainstorming`） |
+| `/cron ...` | 管理运行时 Cron 任务 |
 
 ### Discord 命令
 
@@ -394,6 +414,19 @@ opencode-bridge
 | `///bind <sessionId>` | 绑定已有会话 |
 | `///undo` | 回撤上一轮 |
 | `///compact` | 压缩上下文 |
+| `///cron ...` | 管理运行时 Cron 任务 |
+
+### 企业微信命令
+
+| 命令 | 说明 |
+|---|---|
+| `/help` | 查看帮助 |
+| `/panel` | 打开控制面板 |
+| `/model <provider:model>` | 切换模型 |
+| `/agent <name>` | 切换 Agent |
+| `/session new` | 开启新话题 |
+| `/undo` | 撤回上一轮交互 |
+| `/compact` | 压缩上下文 |
 
 <a id="agent使用"></a>
 ## 🤖 Agent（角色）使用
@@ -420,7 +453,8 @@ opencode-bridge
 - 权限请求回传：`response` 为 `once | always | reject`
 - question 工具交互：答案通过用户文字回复解析
 - 流式与思考卡片：文本与思考分流写入输出缓冲
-- `/undo` 一致性：同时删除飞书侧消息并对 OpenCode 执行 `revert`
+- `/undo` 一致性：同时删除平台侧消息并对 OpenCode 执行 `revert`
+- 多平台适配：统一的适配器接口，支持消息收发、卡片交互、撤回等操作
 
 <a id="故障排查"></a>
 ## 🛠️ 故障排查
@@ -429,10 +463,11 @@ opencode-bridge
 
 | 现象 | 优先检查 |
 |---|---|
-| 飞书发送消息后 OpenCode 无反应 | 检查飞书权限配置 |
+| 平台发送消息后 OpenCode 无反应 | 检查平台权限配置 |
 | 点权限卡片后 OpenCode 无反应 | 确认回传值是 `once/always/reject` |
 | `/compact` 失败 | 检查 OpenCode 可用模型 |
 | 后台模式无法停止 | `logs/bridge.pid` 是否残留 |
+| Web 配置面板无法访问 | 检查 `ADMIN_PORT` 和防火墙设置 |
 
 <a id="详细文档"></a>
 ## 📚 详细文档
@@ -442,7 +477,9 @@ opencode-bridge
 | [架构文档](assets/docs/architecture.md) | 项目分层设计与平台能力矩阵 |
 | [配置中心](assets/docs/environment.md) | 完整业务配置说明（含 Web 面板配置） |
 | [可靠性指南](assets/docs/reliability.md) | 心跳、Cron 与宕机救援配置 |
-| [飞书后台配置](assets/docs/feishu-config.md) | 事件订阅与权限配置 |
+| [飞书后台配置](assets/docs/feishu-config.md) | 飞书事件订阅与权限配置 |
+| [Discord 配置](assets/docs/discord-config.md) | Discord 机器人配置指南 |
+| [企业微信配置](assets/docs/wecom-config.md) | 企业微信机器人配置指南 |
 | [命令速查](assets/docs/commands.md) | 完整命令列表与使用说明 |
 | [实现细节](assets/docs/implementation.md) | 关键功能实现说明 |
 | [故障排查](assets/docs/troubleshooting.md) | 常见问题与解决方案 |

@@ -63,6 +63,11 @@ if (!configStore.isMigrated() && resolvedEnvFile) {
     'ALLOWED_USERS', 'ENABLED_PLATFORMS',
     'DISCORD_ENABLED', 'DISCORD_TOKEN', 'DISCORD_BOT_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_ALLOWED_BOT_IDS',
     'WECOM_ENABLED', 'WECOM_BOT_ID', 'WECOM_SECRET',
+    'TELEGRAM_ENABLED', 'TELEGRAM_BOT_TOKEN',
+    'QQ_ENABLED', 'QQ_PROTOCOL', 'QQ_ONEBOT_HTTP_URL', 'QQ_ONEBOT_WS_URL',
+    'QQ_APP_ID', 'QQ_SECRET', 'QQ_CALLBACK_URL', 'QQ_ENCRYPT_KEY',
+    'WHATSAPP_ENABLED', 'WHATSAPP_MODE', 'WHATSAPP_SESSION_PATH',
+    'WHATSAPP_BUSINESS_PHONE_ID', 'WHATSAPP_BUSINESS_ACCESS_TOKEN', 'WHATSAPP_BUSINESS_WEBHOOK_VERIFY_TOKEN',
     'OPENCODE_HOST', 'OPENCODE_PORT', 'OPENCODE_AUTO_START', 'OPENCODE_AUTO_START_CMD',
     'OPENCODE_SERVER_USERNAME', 'OPENCODE_SERVER_PASSWORD', 'OPENCODE_CONFIG_FILE',
     'RELIABILITY_CRON_ENABLED', 'RELIABILITY_CRON_API_ENABLED', 'RELIABILITY_CRON_API_HOST',
@@ -227,6 +232,38 @@ export const wecomConfig = {
   enabled: parseBooleanEnv(process.env.WECOM_ENABLED, false),
   botId: process.env.WECOM_BOT_ID?.trim() || '',
   secret: process.env.WECOM_SECRET?.trim() || '',
+};
+
+// Telegram 配置
+export const telegramConfig = {
+  enabled: parseBooleanEnv(process.env.TELEGRAM_ENABLED, false),
+  botToken: process.env.TELEGRAM_BOT_TOKEN?.trim() || '',
+};
+
+// QQ 配置 (支持官方 API 和 OneBot 双协议)
+export const qqConfig = {
+  enabled: parseBooleanEnv(process.env.QQ_ENABLED, false),
+  // 协议类型: 'official' (QQ官方频道机器人) 或 'onebot' (NapCat/go-cqhttp)
+  protocol: (process.env.QQ_PROTOCOL?.trim().toLowerCase() || 'onebot') as 'official' | 'onebot',
+  // OneBot 协议配置
+  onebotWsUrl: process.env.QQ_ONEBOT_WS_URL?.trim() || undefined,
+  onebotHttpUrl: process.env.QQ_ONEBOT_HTTP_URL?.trim() || undefined,
+  // QQ 官方 API 配置
+  appId: process.env.QQ_APP_ID?.trim() || undefined,
+  secret: process.env.QQ_SECRET?.trim() || undefined,
+  callbackUrl: process.env.QQ_CALLBACK_URL?.trim() || undefined,
+  encryptKey: process.env.QQ_ENCRYPT_KEY?.trim() || undefined,
+};
+
+// WhatsApp 配置
+export const whatsappConfig = {
+  enabled: parseBooleanEnv(process.env.WHATSAPP_ENABLED, false),
+  mode: (process.env.WHATSAPP_MODE?.trim().toLowerCase() || 'personal') as 'personal' | 'business',
+  sessionPath: process.env.WHATSAPP_SESSION_PATH?.trim() || undefined,
+  // Business API 配置
+  businessPhoneId: process.env.WHATSAPP_BUSINESS_PHONE_ID?.trim() || undefined,
+  businessAccessToken: process.env.WHATSAPP_BUSINESS_ACCESS_TOKEN?.trim() || undefined,
+  businessWebhookVerifyToken: process.env.WHATSAPP_BUSINESS_WEBHOOK_VERIFY_TOKEN?.trim() || undefined,
 };
 
 // 群聊消息触发策略
@@ -402,6 +439,15 @@ export function validateConfig(): void {
     feishu: !!(feishuConfig.enabled && feishuConfig.appId && feishuConfig.appSecret),
     discord: !!(discordConfig.enabled && discordConfig.token),
     wecom: !!(wecomConfig.enabled && wecomConfig.botId && wecomConfig.secret),
+    telegram: !!(telegramConfig.enabled && telegramConfig.botToken),
+    qq: !!(qqConfig.enabled && (
+      (qqConfig.protocol === 'onebot' && (qqConfig.onebotWsUrl || qqConfig.onebotHttpUrl)) ||
+      (qqConfig.protocol === 'official' && qqConfig.appId && qqConfig.secret)
+    )),
+    whatsapp: !!(whatsappConfig.enabled && (
+      (whatsappConfig.mode === 'personal') ||
+      (whatsappConfig.mode === 'business' && whatsappConfig.businessPhoneId && whatsappConfig.businessAccessToken)
+    )),
   };
 
   // 至少一个平台配置完成即可
@@ -426,6 +472,31 @@ export function validateConfig(): void {
         errors.push('  - 企业微信：缺少 WECOM_BOT_ID 或 WECOM_SECRET');
       }
     }
+    if (!platformStatus.telegram) {
+      if (!telegramConfig.enabled) {
+        errors.push('  - Telegram: 已禁用 (TELEGRAM_ENABLED=false)');
+      } else {
+        errors.push('  - Telegram: 缺少 TELEGRAM_BOT_TOKEN');
+      }
+    }
+    if (!platformStatus.qq) {
+      if (!qqConfig.enabled) {
+        errors.push('  - QQ: 已禁用 (QQ_ENABLED=false)');
+      } else if (qqConfig.protocol === 'official') {
+        errors.push('  - QQ官方API: 缺少 QQ_APP_ID 或 QQ_SECRET');
+      } else {
+        errors.push('  - QQ OneBot: 缺少 QQ_ONEBOT_WS_URL 或 QQ_ONEBOT_HTTP_URL');
+      }
+    }
+    if (!platformStatus.whatsapp) {
+      if (!whatsappConfig.enabled) {
+        errors.push('  - WhatsApp: 已禁用 (WHATSAPP_ENABLED=false)');
+      } else if (whatsappConfig.mode === 'business') {
+        errors.push('  - WhatsApp Business: 缺少 WHATSAPP_BUSINESS_PHONE_ID 或 WHATSAPP_BUSINESS_ACCESS_TOKEN');
+      } else {
+        errors.push('  - WhatsApp: 配置不完整');
+      }
+    }
   }
 
   if (errors.length > 0) {
@@ -434,7 +505,7 @@ export function validateConfig(): void {
 }
 
 // 检查平台是否已配置（用于启动判断）
-export function isPlatformConfigured(platform: 'feishu' | 'discord' | 'wecom'): boolean {
+export function isPlatformConfigured(platform: 'feishu' | 'discord' | 'wecom' | 'telegram' | 'qq' | 'whatsapp'): boolean {
   if (platform === 'feishu') {
     return !!(feishuConfig.enabled && feishuConfig.appId && feishuConfig.appSecret);
   }
@@ -443,6 +514,21 @@ export function isPlatformConfigured(platform: 'feishu' | 'discord' | 'wecom'): 
   }
   if (platform === 'wecom') {
     return !!(wecomConfig.enabled && wecomConfig.botId && wecomConfig.secret);
+  }
+  if (platform === 'telegram') {
+    return !!(telegramConfig.enabled && telegramConfig.botToken);
+  }
+  if (platform === 'qq') {
+    if (!qqConfig.enabled) return false;
+    if (qqConfig.protocol === 'official') {
+      return !!(qqConfig.appId && qqConfig.secret);
+    }
+    return !!(qqConfig.onebotWsUrl || qqConfig.onebotHttpUrl);
+  }
+  if (platform === 'whatsapp') {
+    if (!whatsappConfig.enabled) return false;
+    if (whatsappConfig.mode === 'personal') return true;
+    return !!(whatsappConfig.businessPhoneId && whatsappConfig.businessAccessToken);
   }
   return false;
 }

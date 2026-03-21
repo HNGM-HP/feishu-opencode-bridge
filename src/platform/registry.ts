@@ -102,3 +102,15 @@ export function isEnabled(platformId: string): boolean {
   }
   return isPlatformEnabled(platformId);
 }
+
+// ──────────────────────────────────────────────
+// 平台适配器注册
+// ──────────────────────────────────────────────
+
+import { qqAdapter } from './adapters/qq-adapter.js';
+import { whatsappAdapter } from './adapters/whatsapp-adapter.js';
+import { telegramAdapter } from './adapters/telegram-adapter.js';
+
+register(qqAdapter);
+register(whatsappAdapter);
+register(telegramAdapter);

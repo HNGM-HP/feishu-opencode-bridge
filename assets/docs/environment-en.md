@@ -1,6 +1,6 @@
 # Configuration Center
 
-> **v2.9.2-beta Architecture Change**: Business configuration parameters have been migrated to SQLite database storage, managed through Web visual panel. The `.env` file is only used for storing Admin panel startup parameters, no longer used as business configuration file.
+> **v2.9.3-beta Architecture Change**: Business configuration parameters have been migrated to SQLite database storage, managed through Web visual panel. The `.env` file is only used for storing Admin panel startup parameters, no longer used as business configuration file.
 
 ## Configuration Management Methods
 
@@ -12,6 +12,7 @@ After service startup, visit `http://localhost:4098` to access the configuration
 - Manage Cron scheduled tasks
 - View service running status
 - Sensitive fields automatically masked
+- Platform connection status viewing
 
 ### Method 2: SQLite Database
 
@@ -38,10 +39,13 @@ Based on actual reading from `src/config.ts` and `src/index.ts`:
 
 | Variable | Required | Default | Description |
 |---|---|---|---|
-| `FEISHU_APP_ID` | Yes | - | Feishu App ID |
-| `FEISHU_APP_SECRET` | Yes | - | Feishu App Secret |
+| `FEISHU_ENABLED` | No | `false` | Enable Feishu adapter |
+| `FEISHU_APP_ID` | No | - | Feishu App ID |
+| `FEISHU_APP_SECRET` | No | - | Feishu App Secret |
+| `FEISHU_ENCRYPT_KEY` | No | - | Feishu Encrypt Key |
+| `FEISHU_VERIFICATION_TOKEN` | No | - | Feishu Verification Token |
 | `ROUTER_MODE` | No | `legacy` | Router mode: `legacy`/`dual`/`router` |
-| `ENABLED_PLATFORMS` | No | - | Platform whitelist, comma-separated (e.g., `feishu,discord`) |
+| `ENABLED_PLATFORMS` | No | - | Platform whitelist, comma-separated (e.g., `feishu,discord,wecom`) |
 | `GROUP_REQUIRE_MENTION` | No | `false` | When `true`, group chats only respond when explicitly @mentioning the bot |
 | `OPENCODE_HOST` | No | `localhost` | OpenCode host address |
 | `OPENCODE_PORT` | No | `4096` | OpenCode port |
@@ -56,6 +60,14 @@ Based on actual reading from `src/config.ts` and `src/index.ts`:
 | `DISCORD_TOKEN` | No | - | Discord Bot Token (preferred) |
 | `DISCORD_BOT_TOKEN` | No | - | Discord Bot Token (compatible alias) |
 | `DISCORD_CLIENT_ID` | No | - | Discord Application Client ID |
+
+## WeCom Configuration
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `WECOM_ENABLED` | No | `false` | Enable WeCom adapter |
+| `WECOM_BOT_ID` | No | - | WeCom Bot ID |
+| `WECOM_SECRET` | No | - | WeCom Secret |
 
 ## Authentication & Permissions
 
@@ -94,6 +106,8 @@ Based on actual reading from `src/config.ts` and `src/index.ts`:
 | `FEISHU_SHOW_TOOL_CHAIN` | No | - | Feishu specific: override global `SHOW_TOOL_CHAIN`, inherits global if unset |
 | `DISCORD_SHOW_THINKING_CHAIN` | No | - | Discord specific: override global `SHOW_THINKING_CHAIN`, inherits global if unset |
 | `DISCORD_SHOW_TOOL_CHAIN` | No | - | Discord specific: override global `SHOW_TOOL_CHAIN`, inherits global if unset |
+| `WECOM_SHOW_THINKING_CHAIN` | No | - | WeCom specific: override global `SHOW_THINKING_CHAIN`, inherits global if unset |
+| `WECOM_SHOW_TOOL_CHAIN` | No | - | WeCom specific: override global `SHOW_TOOL_CHAIN`, inherits global if unset |
 
 ## Reliability Cron
 
@@ -109,6 +123,7 @@ Based on actual reading from `src/config.ts` and `src/index.ts`:
 | `RELIABILITY_CRON_FORWARD_TO_PRIVATE` | No | `false` | Allow forward to private/backup window when original chat window is invalid |
 | `RELIABILITY_CRON_FALLBACK_FEISHU_CHAT_ID` | No | - | Feishu backup receiver chat_id |
 | `RELIABILITY_CRON_FALLBACK_DISCORD_CONVERSATION_ID` | No | - | Discord backup receiver conversationId |
+| `RELIABILITY_CRON_FALLBACK_WECOM_CONVERSATION_ID` | No | - | WeCom backup receiver conversationId |
 
 ## Heartbeat Configuration
 
@@ -166,7 +181,7 @@ Based on actual reading from `src/config.ts` and `src/index.ts`:
 
 ### First Startup Migration
 
-On first startup of v2.9.2-beta, the system automatically executes:
+On first startup of v2.9.3-beta, the system automatically executes:
 
 1. Detects business configuration in `.env` file
 2. Writes configuration to SQLite database (`data/config.db`)
@@ -181,6 +196,7 @@ On first startup of v2.9.2-beta, the system automatically executes:
 | Whitelist (ALLOWED_*) | Immediate effect |
 | Feishu config (FEISHU_*) | Requires service restart |
 | Discord config (DISCORD_*) | Requires service restart |
+| WeCom config (WECOM_*) | Requires service restart |
 | OpenCode connection (OPENCODE_HOST/PORT) | Requires service restart |
 | Reliability switches (RELIABILITY_*) | Requires service restart |
 
@@ -199,3 +215,6 @@ The configuration panel provides the following API endpoints:
 | `/api/admin/status` | GET | Get service status |
 | `/api/admin/restart` | POST | Restart service |
 | `/api/opencode/models` | GET | Get OpenCode available models |
+| `/api/opencode/status` | GET | Get OpenCode status |
+| `/api/opencode/install` | POST | Install/upgrade OpenCode |
+| `/api/opencode/start` | POST | Start OpenCode CLI |

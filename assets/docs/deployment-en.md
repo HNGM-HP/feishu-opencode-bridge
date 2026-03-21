@@ -28,11 +28,12 @@ http://localhost:4098
 
 ### Panel Features
 
-- **Configuration Management**: Real-time modification of Feishu, Discord, OpenCode, reliability and other configuration parameters
+- **Configuration Management**: Real-time modification of Feishu, Discord, WeCom, OpenCode, reliability and other configuration parameters
 - **Cron Tasks**: Create, enable/disable, delete scheduled tasks
 - **Service Status**: View uptime, version, database path
 - **Model List**: Get OpenCode available models
 - **Service Control**: Remote restart service
+- **Platform Status**: View platform connection status
 
 ### Access Password
 
@@ -69,7 +70,7 @@ opencode-bridge
 ```
 
 **Notes**:
-- npm package mainly provides CLI distribution and version management convenience, does not replace OpenCode local service and Feishu/Discord configuration.
+- npm package mainly provides CLI distribution and version management convenience, does not replace OpenCode local service and Feishu/Discord/WeCom configuration.
 - After running, complete business configuration through Web configuration panel (`http://localhost:4098`).
 - CLI defaults to reading `.env` from current working directory; if no `.env` in current directory, automatically falls back to `~/.config/opencode-bridge/.env`.
 - You can also explicitly specify config directory: `opencode-bridge --config-dir /path/to/config`.
@@ -105,7 +106,7 @@ opencode-bridge --config-dir ~/.config/opencode-bridge
 
 ### .env File (Startup Parameters)
 
-After v2.9.2-beta, `.env` file only stores Admin panel startup parameters:
+After v2.9.3-beta, `.env` file only stores Admin panel startup parameters:
 
 ```dotenv
 # Admin panel port (default 4098)
@@ -130,3 +131,34 @@ All business configurations are stored in SQLite database:
 | Web Panel | Visit `http://localhost:4098` for visual modification |
 | SQLite Tool | Directly edit `data/config.db` database |
 | Config File | Configure in `.env` before first startup (will auto-migrate) |
+
+## Platform Configuration
+
+### Feishu Configuration
+
+See [Feishu Configuration Document](feishu-config-en.md).
+
+### Discord Configuration
+
+See [Discord Configuration Document](discord-config-en.md).
+
+### WeCom Configuration
+
+See [WeCom Configuration Document](wecom-config-en.md).
+
+## Reliability Configuration
+
+See [Reliability Guide](reliability-en.md).
+
+## Troubleshooting
+
+See [Troubleshooting Document](troubleshooting-en.md).
+
+### Common Issues
+
+| Issue | Solution |
+|---|---|
+| Service cannot start | Check port occupation, view `logs/service.err` |
+| Web panel inaccessible | Check firewall settings, confirm `ADMIN_PORT` configuration |
+| Platform not responding | Check platform configuration, view service logs |
+| OpenCode connection failed | Check `OPENCODE_HOST` and `OPENCODE_PORT` configuration |

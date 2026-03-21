@@ -41,6 +41,30 @@ export interface BridgeSettings {
   WECOM_BOT_ID?: string;
   WECOM_SECRET?: string;
 
+  // Telegram
+  TELEGRAM_ENABLED?: string;
+  TELEGRAM_BOT_TOKEN?: string;
+
+  // QQ (支持官方 API 和 OneBot 双协议)
+  QQ_ENABLED?: string;
+  QQ_PROTOCOL?: string; // 'official' | 'onebot'
+  // OneBot 协议
+  QQ_ONEBOT_HTTP_URL?: string;
+  QQ_ONEBOT_WS_URL?: string;
+  // QQ 官方 API
+  QQ_APP_ID?: string;
+  QQ_SECRET?: string;
+  QQ_CALLBACK_URL?: string;
+  QQ_ENCRYPT_KEY?: string;
+
+  // WhatsApp
+  WHATSAPP_ENABLED?: string;
+  WHATSAPP_MODE?: string; // 'personal' | 'business'
+  WHATSAPP_SESSION_PATH?: string;
+  WHATSAPP_BUSINESS_PHONE_ID?: string;
+  WHATSAPP_BUSINESS_ACCESS_TOKEN?: string;
+  WHATSAPP_BUSINESS_WEBHOOK_VERIFY_TOKEN?: string;
+
   // OpenCode 连接
   OPENCODE_HOST?: string;
   OPENCODE_PORT?: string;

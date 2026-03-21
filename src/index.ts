@@ -6,6 +6,9 @@ import { feishuClient, type FeishuMessageEvent } from './feishu/client.js';
 import { feishuAdapter } from './platform/adapters/feishu-adapter.js';
 import { discordAdapter } from './platform/adapters/discord-adapter.js';
 import { wecomAdapter } from './platform/adapters/wecom-adapter.js';
+import { telegramAdapter } from './platform/adapters/telegram-adapter.js';
+import { qqAdapter } from './platform/adapters/qq-adapter.js';
+import { whatsappAdapter } from './platform/adapters/whatsapp-adapter.js';
 import { opencodeClient, type PermissionRequestEvent } from './opencode/client.js';
 import { outputBuffer } from './opencode/output-buffer.js';
 import { delayedResponseHandler } from './opencode/delayed-handler.js';
@@ -17,6 +20,9 @@ import { groupHandler } from './handlers/group.js';
 import { lifecycleHandler } from './handlers/lifecycle.js';
 import { createDiscordHandler } from './handlers/discord.js';
 import { wecomHandler } from './handlers/wecom.js';
+import { telegramHandler } from './handlers/telegram.js';
+import { qqHandler } from './handlers/qq.js';
+import { whatsappHandler } from './handlers/whatsapp.js';
 import { commandHandler } from './handlers/command.js';
 import { cardActionHandler } from './handlers/card-action.js';
 import { validateConfig, routerConfig, outputConfig, reliabilityConfig, opencodeConfig, isPlatformConfigured } from './config.js';
@@ -1695,6 +1701,42 @@ async function main() {
     await wecomHandler.handleMessage(event, sender);
   });
 
+  // Telegram 消息监听
+  telegramAdapter.onMessage(async (event) => {
+    const sender = telegramAdapter.getSender();
+    await telegramHandler.handleMessage(event, sender);
+  });
+
+  // Telegram 回调查询监听
+  telegramAdapter.onAction(async (event) => {
+    const sender = telegramAdapter.getSender();
+    await telegramHandler.handleAction(event, sender);
+  });
+
+  // QQ 消息监听
+  qqAdapter.onMessage(async (event) => {
+    const sender = qqAdapter.getSender();
+    await qqHandler.handleMessage(event, sender);
+  });
+
+  // QQ 动作监听
+  qqAdapter.onAction(async (event) => {
+    const sender = qqAdapter.getSender();
+    await qqHandler.handleAction(event, sender);
+  });
+
+  // WhatsApp 消息监听
+  whatsappAdapter.onMessage(async (event) => {
+    const sender = whatsappAdapter.getSender();
+    await whatsappHandler.handleMessage(event, sender);
+  });
+
+  // WhatsApp 动作监听
+  whatsappAdapter.onAction(async (event) => {
+    const sender = whatsappAdapter.getSender();
+    await whatsappHandler.handleAction(event, sender);
+  });
+
 
   // 6. OpenCode 事件监听已移至 openCodeEventHub（单一入口）
 
@@ -1817,6 +1859,30 @@ async function main() {
     // WeCom 启动失败不影响其他平台流程
   }
 
+  // 7.7. 启动 Telegram 适配器（如果启用）
+  try {
+    await telegramAdapter.start();
+  } catch (e) {
+    console.error('[Telegram] 启动失败:', e);
+    // Telegram 启动失败不影响其他平台流程
+  }
+
+  // 7.8. 启动 QQ 适配器（如果启用）
+  try {
+    await qqAdapter.start();
+  } catch (e) {
+    console.error('[QQ] 启动失败:', e);
+    // QQ 启动失败不影响其他平台流程
+  }
+
+  // 7.9. 启动 WhatsApp 适配器（如果启用）
+  try {
+    await whatsappAdapter.start();
+  } catch (e) {
+    console.error('[WhatsApp] 启动失败:', e);
+    // WhatsApp 启动失败不影响其他平台流程
+  }
+
   // 8. 启动飞书客户端
   if (isPlatformConfigured('feishu')) {
     feishuClient.setCardActionHandler(async (event) => {
@@ -1887,6 +1953,27 @@ async function main() {
       wecomAdapter.stop();
     } catch (e) {
       console.error('停止企业微信适配器失败:', e);
+    }
+
+    // 3.6. 停止 Telegram 适配器
+    try {
+      telegramAdapter.stop();
+    } catch (e) {
+      console.error('停止 Telegram 适配器失败:', e);
+    }
+
+    // 3.7. 停止 QQ 适配器
+    try {
+      qqAdapter.stop();
+    } catch (e) {
+      console.error('停止 QQ 适配器失败:', e);
+    }
+
+    // 3.8. 停止 WhatsApp 适配器
+    try {
+      whatsappAdapter.stop();
+    } catch (e) {
+      console.error('停止 WhatsApp 适配器失败:', e);
     }
 
     // 4. 停止飞书连接

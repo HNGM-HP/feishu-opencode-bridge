@@ -3,7 +3,7 @@
 ## 1) Default Behavior
 
 - Starting the bridge service automatically initializes the reliability lifecycle (heartbeat engine + Cron scheduling + rescue orchestration).
-- Proactive heartbeat is disabled by default (`RELIABILITY_PROACTIVE_HEARTBEAT_ENABLED=false`); when enabled, triggered by Bridge timer, independent of Feishu inbound messages.
+- Proactive heartbeat is disabled by default (`RELIABILITY_PROACTIVE_HEARTBEAT_ENABLED=false`); when enabled, triggered by Bridge timer, independent of platform inbound messages.
 - Built-in Cron tasks are enabled by default:
   - `watchdog-probe`: Every 30 seconds
   - `process-consistency-check`: Every 60 seconds
@@ -12,13 +12,14 @@
 
 ## 2) Runtime Cron Dynamic Management
 
-### Three Entry Points
+### Entry Points
 
-Currently provides three entry points, sharing the same `RuntimeCronManager` and persistence file:
+Currently provides multiple entry points, sharing the same `RuntimeCronManager` and persistence file:
 
 - **HTTP API**: `/cron/list|add|update|remove`
 - **Feishu**: `/cron ...`
 - **Discord**: `///cron ...`
+- **WeCom**: Managed through Web panel
 
 ### Default Behavior
 
@@ -125,6 +126,7 @@ RELIABILITY_CRON_API_PORT=4097
 # RELIABILITY_CRON_FORWARD_TO_PRIVATE=false
 # RELIABILITY_CRON_FALLBACK_FEISHU_CHAT_ID=oc_xxx
 # RELIABILITY_CRON_FALLBACK_DISCORD_CONVERSATION_ID=1234567890
+# RELIABILITY_CRON_FALLBACK_WECOM_CONVERSATION_ID=userid_or_groupid
 
 # Proactive heartbeat switches (disabled by default)
 RELIABILITY_PROACTIVE_HEARTBEAT_ENABLED=false
@@ -217,12 +219,12 @@ When triggered, executes: lock acquisition and single instance check → environ
 
 - `RELIABILITY_CRON_ORPHAN_AUTO_CLEANUP=false`:
   - Does not auto-scan Cron orphan tasks on startup.
-  - Does not auto-delete corresponding Cron on Feishu group dismiss / Discord channel delete.
+  - Does not auto-delete corresponding Cron on Feishu group dismiss / Discord channel delete / WeCom group dismiss.
   - Tasks skip and log when binding is invalid during execution.
 
 - `RELIABILITY_CRON_ORPHAN_AUTO_CLEANUP=true`:
   - Scans and deletes zombie Cron with missing original window binding or original session on startup.
-  - Feishu group dismiss, Discord channel delete联动 deletes Cron bound to that window.
+  - Feishu group dismiss, Discord channel delete, WeCom group dismiss联动 deletes Cron bound to that window.
   - `stale-cleanup` periodic task continues to scan zombie Cron.
 
 - `RELIABILITY_CRON_FORWARD_TO_PRIVATE=true`:
@@ -243,3 +245,24 @@ npm test -- tests/reliability-rescue.e2e.test.ts
 ```
 
 **Supplement**: `RELIABILITY_MODE` is currently a reserved policy field; current version still uses "threshold + budget + cooldown + loopback restriction" as actual trigger conditions.
+
+## 10) Platform-Specific Notes
+
+### Feishu
+
+- Supports full message card interaction
+- Supports permission confirmation, question answering, and other complex interactions
+- File sending supports images and documents
+
+### Discord
+
+- Uses text messages and component interaction
+- Supports Embeds and buttons
+- File sending limited by Discord API restrictions
+
+### WeCom
+
+- Uses plain text message interaction
+- Does not support rich text cards
+- File sending limited by WeCom API restrictions
+- Recommend testing configuration in a test group first

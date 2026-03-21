@@ -4,7 +4,7 @@
 /**
  * 平台标识符
  */
-export type PlatformId = 'feishu' | 'discord' | 'wecom' | string;
+export type PlatformId = 'feishu' | 'discord' | 'wecom' | 'telegram' | 'qq' | 'whatsapp' | string;
 
 /**
  * 聊天类型

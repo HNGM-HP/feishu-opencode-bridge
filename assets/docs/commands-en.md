@@ -42,6 +42,7 @@
 | `/send <absolute path>` | Send file from specified path to current group chat |
 | `/restart opencode` | Restart local OpenCode process (loopback only) |
 | `/status` | View current group binding status |
+| `/cron ...` | Manage runtime Cron tasks |
 
 ## Discord Commands
 
@@ -69,6 +70,19 @@ Recommended commands (prefer `///` prefix to avoid conflict with native Slash):
 | `///create_chat` | Open dropdown session control panel (view status/new/bind/model/role/undo/compact) |
 | `///create_chat model <page>` | Open model pagination panel (max 500 total, 24 per page) |
 | `///create_chat session` / `agent` / `effort` | Open category panel |
+| `///cron ...` | Manage runtime Cron tasks |
+
+## WeCom Commands
+
+| Command | Description |
+|---|---|
+| `/help` | View help |
+| `/panel` | Open control panel |
+| `/model <provider:model>` | Switch model |
+| `/agent <name>` | Switch Agent |
+| `/session new` | Start new topic |
+| `/undo` | Undo last interaction |
+| `/compact` | Compress context |
 
 ## Notes
 
@@ -79,6 +93,11 @@ The following compatible commands are retained: `/session`, `/new`, `/new-sessio
 - `///create_chat` uses Discord dropdown menus and modals to complement session control experience.
 - `///clear` in session channels (topic with `oc-session:`) will attempt to delete the channel directly; if permissions are insufficient, only unbind.
 - `!` passthrough only supports whitelisted commands; interactive editors like `vi`/`vim`/`nano` are not passed through.
+
+### WeCom Features
+- WeCom does not support rich text cards, uses plain text interaction
+- File sending functionality is limited by WeCom API restrictions
+- Recommend testing configuration in a test group first
 
 ### Effort Override
 - Single message temporary override can use `#low` / `#high` / `#max` / `#xhigh` at message start (effective for current message only).

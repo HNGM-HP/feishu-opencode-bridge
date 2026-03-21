@@ -2,7 +2,7 @@
   <div class="page">
     <div class="page-header">
       <h2>平台接入配置</h2>
-      <p class="desc">配置飞书、Discord 与企业微信机器人的核心凭证和接入参数</p>
+      <p class="desc">配置飞书、Discord、企业微信、Telegram、QQ 与 WhatsApp 机器人的核心凭证和接入参数</p>
     </div>
 
     <el-form :model="form" label-position="top" @submit.prevent>
@@ -137,6 +137,176 @@
         </el-row>
       </el-card>
 
+      <!-- Telegram 配置 -->
+      <el-card class="config-card">
+        <template #header>
+          <div class="card-header-row">
+            <span class="card-title">📱 Telegram 配置 <el-tag size="small" type="info">可选</el-tag></span>
+            <div class="inline-switch">
+              <span>启用 Telegram</span>
+              <el-switch v-model="telegramEnabled"
+                active-text="开启" inactive-text="关闭"
+                @change="form.TELEGRAM_ENABLED = telegramEnabled ? 'true' : 'false'" />
+            </div>
+          </div>
+        </template>
+
+        <el-row :gutter="24">
+          <el-col :span="12">
+            <el-form-item label="Bot Token">
+              <el-input v-model="form.TELEGRAM_BOT_TOKEN" placeholder="123456789:ABCdefGHI..."
+                type="password" show-password :disabled="!telegramEnabled" />
+              <div class="field-tip">从 @BotFather 获取，格式：123456789:ABCdefGHI...</div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="状态">
+              <el-tag :type="telegramStatusType">{{ telegramStatusText }}</el-tag>
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-card>
+
+      <!-- QQ 配置 -->
+      <el-card class="config-card">
+        <template #header>
+          <div class="card-header-row">
+            <span class="card-title">💬 QQ 配置 <el-tag size="small" type="info">可选</el-tag></span>
+            <div class="inline-switch">
+              <span>启用 QQ</span>
+              <el-switch v-model="qqEnabled"
+                active-text="开启" inactive-text="关闭"
+                @change="form.QQ_ENABLED = qqEnabled ? 'true' : 'false'" />
+            </div>
+          </div>
+        </template>
+
+        <el-row :gutter="24">
+          <el-col :span="8">
+            <el-form-item label="协议类型">
+              <el-select v-model="form.QQ_PROTOCOL" :disabled="!qqEnabled" style="width: 100%">
+                <el-option label="官方 API (推荐)" value="official" />
+                <el-option label="OneBot (NapCat)" value="onebot" />
+              </el-select>
+              <div class="field-tip">官方 API 更稳定，OneBot 支持传统 QQ 群</div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="16">
+            <el-form-item label="状态">
+              <el-tag :type="qqStatusType">{{ qqStatusText }}</el-tag>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <!-- 官方 API 配置 -->
+        <el-row :gutter="24" v-if="form.QQ_PROTOCOL === 'official'">
+          <el-col :span="12">
+            <el-form-item label="App ID">
+              <el-input v-model="form.QQ_APP_ID" :disabled="!qqEnabled" placeholder="QQ 开放平台应用 ID" />
+              <div class="field-tip">从 QQ 开放平台获取</div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="Secret">
+              <el-input v-model="form.QQ_SECRET" type="password" show-password :disabled="!qqEnabled" placeholder="QQ 开放平台应用密钥" />
+              <div class="field-tip">从 QQ 开放平台获取</div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+        <el-row :gutter="24" v-if="form.QQ_PROTOCOL === 'official'">
+          <el-col :span="12">
+            <el-form-item label="回调地址 (可选)">
+              <el-input v-model="form.QQ_CALLBACK_URL" :disabled="!qqEnabled" placeholder="https://your-domain.com/qq/webhook" />
+              <div class="field-tip">Webhook 回调地址，用于接收消息</div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="加密密钥 (可选)">
+              <el-input v-model="form.QQ_ENCRYPT_KEY" type="password" show-password :disabled="!qqEnabled" placeholder="消息加密密钥" />
+              <div class="field-tip">用于解密回调消息</div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <!-- OneBot 配置 -->
+        <el-row :gutter="24" v-if="form.QQ_PROTOCOL === 'onebot'">
+          <el-col :span="24">
+            <el-alert type="warning" :closable="false" style="margin-bottom: 16px">
+              OneBot 协议存在风控风险，建议仅用于个人测试。推荐使用 NapCat（NTQQ 官方协议）。
+            </el-alert>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="WebSocket 地址">
+              <el-input v-model="form.QQ_ONEBOT_WS_URL" :disabled="!qqEnabled" placeholder="ws://localhost:3001" />
+              <div class="field-tip">NapCat/go-cqhttp 的 WebSocket 地址</div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-card>
+
+      <!-- WhatsApp 配置 -->
+      <el-card class="config-card">
+        <template #header>
+          <div class="card-header-row">
+            <span class="card-title">🟢 WhatsApp 配置 <el-tag size="small" type="info">可选</el-tag></span>
+            <div class="inline-switch">
+              <span>启用 WhatsApp</span>
+              <el-switch v-model="whatsappEnabled"
+                active-text="开启" inactive-text="关闭"
+                @change="form.WHATSAPP_ENABLED = whatsappEnabled ? 'true' : 'false'" />
+            </div>
+          </div>
+        </template>
+
+        <el-row :gutter="24">
+          <el-col :span="8">
+            <el-form-item label="模式">
+              <el-select v-model="form.WHATSAPP_MODE" :disabled="!whatsappEnabled" style="width: 100%">
+                <el-option label="个人版 (扫码登录)" value="personal" />
+                <el-option label="Business API" value="business" />
+              </el-select>
+              <div class="field-tip">个人版免费但有风控风险</div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="16">
+            <el-form-item label="状态">
+              <el-tag :type="whatsappStatusType">{{ whatsappStatusText }}</el-tag>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <!-- 个人版配置 -->
+        <el-row :gutter="24" v-if="form.WHATSAPP_MODE === 'personal'">
+          <el-col :span="24">
+            <el-alert type="warning" :closable="false" style="margin-bottom: 16px">
+              WhatsApp Web 协议存在风控风险，可能导致号码被封。建议使用专用测试号码。
+            </el-alert>
+          </el-col>
+          <el-col :span="24">
+            <el-form-item label="Session 存储路径">
+              <el-input v-model="form.WHATSAPP_SESSION_PATH" :disabled="!whatsappEnabled" placeholder="~/.whatsapp-session" />
+              <div class="field-tip">WhatsApp 会话数据存储目录</div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+
+        <!-- Business API 配置 -->
+        <el-row :gutter="24" v-if="form.WHATSAPP_MODE === 'business'">
+          <el-col :span="12">
+            <el-form-item label="Phone ID">
+              <el-input v-model="form.WHATSAPP_BUSINESS_PHONE_ID" :disabled="!whatsappEnabled" placeholder="WhatsApp Business Phone ID" />
+              <div class="field-tip">从 Meta for Developers 获取</div>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="Access Token">
+              <el-input v-model="form.WHATSAPP_BUSINESS_ACCESS_TOKEN" type="password" show-password :disabled="!whatsappEnabled" placeholder="WhatsApp Business Access Token" />
+              <div class="field-tip">从 Meta for Developers 获取</div>
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-card>
+
       <!-- 通用访问控制 -->
       <el-card class="config-card">
         <template #header>
@@ -151,6 +321,9 @@
                 <el-option label="飞书 (feishu)" value="feishu" />
                 <el-option label="Discord (discord)" value="discord" />
                 <el-option label="企业微信 (wecom)" value="wecom" />
+                <el-option label="Telegram (telegram)" value="telegram" />
+                <el-option label="QQ (qq)" value="qq" />
+                <el-option label="WhatsApp (whatsapp)" value="whatsapp" />
               </el-select>
               <div class="field-tip">指定启用哪些平台，留空时所有平台均可用</div>
             </el-form-item>
@@ -199,6 +372,9 @@ const saving = ref(false)
 const feishuEnabled = ref(false)
 const discordEnabled = ref(false)
 const wecomEnabled = ref(false)
+const telegramEnabled = ref(false)
+const qqEnabled = ref(false)
+const whatsappEnabled = ref(false)
 const groupRequireMention = ref(false)
 const enabledPlatforms = ref<string[]>([])
 const allowedUsers = ref<string[]>([])
@@ -210,6 +386,9 @@ const sessions = computed(() => {
     feishu: list.filter(s => s.platform === 'feishu'),
     discord: list.filter(s => s.platform === 'discord'),
     wecom: list.filter(s => s.platform === 'wecom'),
+    telegram: list.filter(s => s.platform === 'telegram'),
+    qq: list.filter(s => s.platform === 'qq'),
+    whatsapp: list.filter(s => s.platform === 'whatsapp'),
   }
 })
 
@@ -242,7 +421,91 @@ const sessionGroups = computed(() => {
       })),
     })
   }
+  if (sessions.value.telegram.length > 0) {
+    groups.push({
+      label: 'Telegram 会话',
+      options: sessions.value.telegram.map(s => ({
+        label: `${s.title} (${s.chatId})`,
+        value: s.chatId || '',
+      })),
+    })
+  }
+  if (sessions.value.qq.length > 0) {
+    groups.push({
+      label: 'QQ 会话',
+      options: sessions.value.qq.map(s => ({
+        label: `${s.title} (${s.chatId})`,
+        value: s.chatId || '',
+      })),
+    })
+  }
+  if (sessions.value.whatsapp.length > 0) {
+    groups.push({
+      label: 'WhatsApp 会话',
+      options: sessions.value.whatsapp.map(s => ({
+        label: `${s.title} (${s.chatId})`,
+        value: s.chatId || '',
+      })),
+    })
+  }
   return groups
+})
+
+// Telegram 状态
+const telegramStatusType = computed(() => {
+  if (!telegramEnabled.value) return 'info'
+  if (form.TELEGRAM_BOT_TOKEN) return 'success'
+  return 'warning'
+})
+
+const telegramStatusText = computed(() => {
+  if (!telegramEnabled.value) return '未启用'
+  if (form.TELEGRAM_BOT_TOKEN) return '已配置'
+  return '待配置'
+})
+
+// QQ 状态
+const qqStatusType = computed(() => {
+  if (!qqEnabled.value) return 'info'
+  if (form.QQ_PROTOCOL === 'official') {
+    if (form.QQ_APP_ID && form.QQ_SECRET) return 'success'
+  } else {
+    if (form.QQ_ONEBOT_WS_URL) return 'success'
+  }
+  return 'warning'
+})
+
+const qqStatusText = computed(() => {
+  if (!qqEnabled.value) return '未启用'
+  if (form.QQ_PROTOCOL === 'official') {
+    if (form.QQ_APP_ID && form.QQ_SECRET) return '已配置 (官方 API)'
+    return '待配置 (官方 API)'
+  } else {
+    if (form.QQ_ONEBOT_WS_URL) return '已配置 (OneBot)'
+    return '待配置 (OneBot)'
+  }
+})
+
+// WhatsApp 状态
+const whatsappStatusType = computed(() => {
+  if (!whatsappEnabled.value) return 'info'
+  if (form.WHATSAPP_MODE === 'business') {
+    if (form.WHATSAPP_BUSINESS_PHONE_ID && form.WHATSAPP_BUSINESS_ACCESS_TOKEN) return 'success'
+  } else {
+    if (form.WHATSAPP_SESSION_PATH) return 'success'
+  }
+  return 'warning'
+})
+
+const whatsappStatusText = computed(() => {
+  if (!whatsappEnabled.value) return '未启用'
+  if (form.WHATSAPP_MODE === 'business') {
+    if (form.WHATSAPP_BUSINESS_PHONE_ID && form.WHATSAPP_BUSINESS_ACCESS_TOKEN) return '已配置 (Business API)'
+    return '待配置 (Business API)'
+  } else {
+    if (form.WHATSAPP_SESSION_PATH) return '已配置 (个人版)'
+    return '待配置 (个人版)'
+  }
 })
 
 const form = reactive({
@@ -259,6 +522,20 @@ const form = reactive({
   WECOM_ENABLED: 'false',
   WECOM_BOT_ID: '',
   WECOM_SECRET: '',
+  TELEGRAM_ENABLED: 'false',
+  TELEGRAM_BOT_TOKEN: '',
+  QQ_ENABLED: 'false',
+  QQ_PROTOCOL: 'onebot',
+  QQ_ONEBOT_WS_URL: '',
+  QQ_APP_ID: '',
+  QQ_SECRET: '',
+  QQ_CALLBACK_URL: '',
+  QQ_ENCRYPT_KEY: '',
+  WHATSAPP_ENABLED: 'false',
+  WHATSAPP_MODE: 'personal',
+  WHATSAPP_SESSION_PATH: '',
+  WHATSAPP_BUSINESS_PHONE_ID: '',
+  WHATSAPP_BUSINESS_ACCESS_TOKEN: '',
   ENABLED_PLATFORMS: '',
   ALLOWED_USERS: '',
   GROUP_REQUIRE_MENTION: 'false',
@@ -284,6 +561,20 @@ function syncFromStore() {
     WECOM_ENABLED: s.WECOM_ENABLED || 'false',
     WECOM_BOT_ID: s.WECOM_BOT_ID || '',
     WECOM_SECRET: s.WECOM_SECRET || '',
+    TELEGRAM_ENABLED: s.TELEGRAM_ENABLED || 'false',
+    TELEGRAM_BOT_TOKEN: s.TELEGRAM_BOT_TOKEN || '',
+    QQ_ENABLED: s.QQ_ENABLED || 'false',
+    QQ_PROTOCOL: s.QQ_PROTOCOL || 'onebot',
+    QQ_ONEBOT_WS_URL: s.QQ_ONEBOT_WS_URL || '',
+    QQ_APP_ID: s.QQ_APP_ID || '',
+    QQ_SECRET: s.QQ_SECRET || '',
+    QQ_CALLBACK_URL: s.QQ_CALLBACK_URL || '',
+    QQ_ENCRYPT_KEY: s.QQ_ENCRYPT_KEY || '',
+    WHATSAPP_ENABLED: s.WHATSAPP_ENABLED || 'false',
+    WHATSAPP_MODE: s.WHATSAPP_MODE || 'personal',
+    WHATSAPP_SESSION_PATH: s.WHATSAPP_SESSION_PATH || '',
+    WHATSAPP_BUSINESS_PHONE_ID: s.WHATSAPP_BUSINESS_PHONE_ID || '',
+    WHATSAPP_BUSINESS_ACCESS_TOKEN: s.WHATSAPP_BUSINESS_ACCESS_TOKEN || '',
     ENABLED_PLATFORMS: s.ENABLED_PLATFORMS || '',
     ALLOWED_USERS: s.ALLOWED_USERS || '',
     GROUP_REQUIRE_MENTION: s.GROUP_REQUIRE_MENTION || 'false',
@@ -291,6 +582,9 @@ function syncFromStore() {
   feishuEnabled.value = form.FEISHU_ENABLED === 'true'
   discordEnabled.value = form.DISCORD_ENABLED === 'true'
   wecomEnabled.value = form.WECOM_ENABLED === 'true'
+  telegramEnabled.value = form.TELEGRAM_ENABLED === 'true'
+  qqEnabled.value = form.QQ_ENABLED === 'true'
+  whatsappEnabled.value = form.WHATSAPP_ENABLED === 'true'
   groupRequireMention.value = form.GROUP_REQUIRE_MENTION === 'true'
   enabledPlatforms.value = form.ENABLED_PLATFORMS
     ? form.ENABLED_PLATFORMS.split(',').map(s => s.trim()).filter(Boolean)
@@ -313,9 +607,18 @@ async function handleSave() {
   const hasFeishu = feishuEnabled.value && form.FEISHU_APP_ID && form.FEISHU_APP_SECRET
   const hasDiscord = discordEnabled.value && (form.DISCORD_TOKEN || form.DISCORD_BOT_TOKEN)
   const hasWecom = wecomEnabled.value && form.WECOM_BOT_ID && form.WECOM_SECRET
+  const hasTelegram = telegramEnabled.value && form.TELEGRAM_BOT_TOKEN
+  const hasQQ = qqEnabled.value && (
+    (form.QQ_PROTOCOL === 'official' && form.QQ_APP_ID && form.QQ_SECRET) ||
+    (form.QQ_PROTOCOL === 'onebot' && form.QQ_ONEBOT_WS_URL)
+  )
+  const hasWhatsApp = whatsappEnabled.value && (
+    (form.WHATSAPP_MODE === 'business' && form.WHATSAPP_BUSINESS_PHONE_ID && form.WHATSAPP_BUSINESS_ACCESS_TOKEN) ||
+    (form.WHATSAPP_MODE === 'personal' && form.WHATSAPP_SESSION_PATH)
+  )
 
-  if (!hasFeishu && !hasDiscord && !hasWecom) {
-    ElMessage.warning('建议至少启用并配置一个平台（飞书、Discord 或企业微信）')
+  if (!hasFeishu && !hasDiscord && !hasWecom && !hasTelegram && !hasQQ && !hasWhatsApp) {
+    ElMessage.warning('建议至少启用并配置一个平台')
   }
 
   saving.value = true

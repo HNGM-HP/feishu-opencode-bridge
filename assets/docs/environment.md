@@ -1,6 +1,6 @@
 # 配置中心说明
 
-> **v2.9.2-beta 架构变更**：业务配置参数已迁移至 SQLite 数据库存储，通过 Web 可视化面板管理。`.env` 文件仅用于存储 Admin 面板的启动参数，不再作为业务配置文件使用。
+> **v2.9.3-beta 架构变更**：业务配置参数已迁移至 SQLite 数据库存储，通过 Web 可视化面板管理。`.env` 文件仅用于存储 Admin 面板的启动参数，不再作为业务配置文件使用。
 
 ## 配置管理方式
 
@@ -12,6 +12,7 @@
 - 管理 Cron 定时任务
 - 查看服务运行状态
 - 敏感字段自动脱敏显示
+- 平台连接状态查看
 
 ### 方式二：SQLite 数据库
 
@@ -38,10 +39,13 @@
 
 | 变量 | 必填 | 默认值 | 说明 |
 |---|---|---|---|
-| `FEISHU_APP_ID` | 是 | - | 飞书应用 App ID |
-| `FEISHU_APP_SECRET` | 是 | - | 飞书应用 App Secret |
+| `FEISHU_ENABLED` | 否 | `false` | 是否启用飞书适配器 |
+| `FEISHU_APP_ID` | 否 | - | 飞书应用 App ID |
+| `FEISHU_APP_SECRET` | 否 | - | 飞书应用 App Secret |
+| `FEISHU_ENCRYPT_KEY` | 否 | - | 飞书应用 Encrypt Key |
+| `FEISHU_VERIFICATION_TOKEN` | 否 | - | 飞书应用 Verification Token |
 | `ROUTER_MODE` | 否 | `legacy` | 路由模式：`legacy`/`dual`/`router` |
-| `ENABLED_PLATFORMS` | 否 | - | 平台白名单，逗号分隔（如 `feishu,discord`） |
+| `ENABLED_PLATFORMS` | 否 | - | 平台白名单，逗号分隔（如 `feishu,discord,wecom`） |
 | `GROUP_REQUIRE_MENTION` | 否 | `false` | 为 `true` 时，群聊仅在明确 @ 机器人时响应 |
 | `OPENCODE_HOST` | 否 | `localhost` | OpenCode 地址 |
 | `OPENCODE_PORT` | 否 | `4096` | OpenCode 端口 |
@@ -56,6 +60,14 @@
 | `DISCORD_TOKEN` | 否 | - | Discord Bot Token（优先） |
 | `DISCORD_BOT_TOKEN` | 否 | - | Discord Bot Token（兼容别名） |
 | `DISCORD_CLIENT_ID` | 否 | - | Discord 应用 Client ID |
+
+## 企业微信配置
+
+| 变量 | 必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `WECOM_ENABLED` | 否 | `false` | 是否启用企业微信适配器 |
+| `WECOM_BOT_ID` | 否 | - | 企业微信 Bot ID |
+| `WECOM_SECRET` | 否 | - | 企业微信 Secret |
 
 ## 认证与权限
 
@@ -94,6 +106,8 @@
 | `FEISHU_SHOW_TOOL_CHAIN` | 否 | - | 飞书专用：覆盖全局 `SHOW_TOOL_CHAIN`，未设置时继承全局值 |
 | `DISCORD_SHOW_THINKING_CHAIN` | 否 | - | Discord 专用：覆盖全局 `SHOW_THINKING_CHAIN`，未设置时继承全局值 |
 | `DISCORD_SHOW_TOOL_CHAIN` | 否 | - | Discord 专用：覆盖全局 `SHOW_TOOL_CHAIN`，未设置时继承全局值 |
+| `WECOM_SHOW_THINKING_CHAIN` | 否 | - | 企业微信专用：覆盖全局 `SHOW_THINKING_CHAIN`，未设置时继承全局值 |
+| `WECOM_SHOW_TOOL_CHAIN` | 否 | - | 企业微信专用：覆盖全局 `SHOW_TOOL_CHAIN`，未设置时继承全局值 |
 
 ## 可靠性 Cron
 
@@ -107,8 +121,9 @@
 | `RELIABILITY_CRON_JOBS_FILE` | 否 | `~/cron/jobs.json` | 运行时 Cron 任务持久化文件 |
 | `RELIABILITY_CRON_ORPHAN_AUTO_CLEANUP` | 否 | `false` | 是否自动清理僵尸 Cron（启动扫描 / 群解散或频道删除联动 / stale cleanup） |
 | `RELIABILITY_CRON_FORWARD_TO_PRIVATE` | 否 | `false` | 原聊天窗口失效时，是否允许转发到私聊或备用窗口 |
-| `RELIABILITY_CRON_FALLBACK_FEISHU_CHAT_ID` | 否 | - | Feishu 备用接收 chat_id |
+| `RELIABILITY_CRON_FALLBACK_FEISHU_CHAT_ID` | 否 | - | 飞书备用接收 chat_id |
 | `RELIABILITY_CRON_FALLBACK_DISCORD_CONVERSATION_ID` | 否 | - | Discord 备用接收频道/私聊 conversationId |
+| `RELIABILITY_CRON_FALLBACK_WECOM_CONVERSATION_ID` | 否 | - | 企业微信备用接收 conversationId |
 
 ## 心跳配置
 
@@ -166,7 +181,7 @@
 
 ### 首次启动迁移
 
-v2.9.2-beta 首次启动时，系统会自动执行：
+v2.9.3-beta 首次启动时，系统会自动执行：
 
 1. 检测 `.env` 文件中的业务配置
 2. 将配置写入 SQLite 数据库（`data/config.db`）
@@ -181,6 +196,7 @@ v2.9.2-beta 首次启动时，系统会自动执行：
 | 白名单（ALLOWED_*） | 立即生效 |
 | 飞书配置（FEISHU_*） | 需重启服务 |
 | Discord 配置（DISCORD_*） | 需重启服务 |
+| 企业微信配置（WECOM_*） | 需重启服务 |
 | OpenCode 连接（OPENCODE_HOST/PORT） | 需重启服务 |
 | 可靠性开关（RELIABILITY_*） | 需重启服务 |
 
@@ -199,3 +215,6 @@ v2.9.2-beta 首次启动时，系统会自动执行：
 | `/api/admin/status` | GET | 获取服务状态 |
 | `/api/admin/restart` | POST | 重启服务 |
 | `/api/opencode/models` | GET | 获取 OpenCode 可用模型 |
+| `/api/opencode/status` | GET | 获取 OpenCode 状态 |
+| `/api/opencode/install` | POST | 安装/升级 OpenCode |
+| `/api/opencode/start` | POST | 启动 OpenCode CLI |

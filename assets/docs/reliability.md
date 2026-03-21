@@ -3,7 +3,7 @@
 ## 1) 默认行为
 
 - 启动桥接服务后会自动初始化可靠性生命周期（心跳引擎 + Cron 调度 + 救援编排）。
-- 默认情况下主动心跳关闭（`RELIABILITY_PROACTIVE_HEARTBEAT_ENABLED=false`）；若开启后由 Bridge 定时器触发，不依赖飞书入站消息。
+- 默认情况下主动心跳关闭（`RELIABILITY_PROACTIVE_HEARTBEAT_ENABLED=false`）；若开启后由 Bridge 定时器触发，不依赖平台入站消息。
 - 内置 Cron 任务默认启用：
   - `watchdog-probe`: 每 30 秒
   - `process-consistency-check`: 每 60 秒
@@ -17,8 +17,9 @@
 当前提供三种入口，底层共用同一 `RuntimeCronManager` 与同一持久化文件：
 
 - **HTTP API**：`/cron/list|add|update|remove`
-- **Feishu**：`/cron ...`
+- **飞书**：`/cron ...`
 - **Discord**：`///cron ...`
+- **企业微信**：支持通过 Web 面板管理
 
 ### 默认行为
 
@@ -125,6 +126,7 @@ RELIABILITY_CRON_API_PORT=4097
 # RELIABILITY_CRON_FORWARD_TO_PRIVATE=false
 # RELIABILITY_CRON_FALLBACK_FEISHU_CHAT_ID=oc_xxx
 # RELIABILITY_CRON_FALLBACK_DISCORD_CONVERSATION_ID=1234567890
+# RELIABILITY_CRON_FALLBACK_WECOM_CONVERSATION_ID=userid_or_groupid
 
 # 主动心跳开关（默认关闭）
 RELIABILITY_PROACTIVE_HEARTBEAT_ENABLED=false
@@ -217,12 +219,12 @@ flowchart TD
 
 - `RELIABILITY_CRON_ORPHAN_AUTO_CLEANUP=false`：
   - 不在启动时自动扫描 Cron 孤儿任务。
-  - 不在飞书群解散 / Discord 频道删除时自动删除对应 Cron。
+  - 不在飞书群解散 / Discord 频道删除 / 企业微信群解散时自动删除对应 Cron。
   - 任务执行时若绑定失效，会直接跳过并记录日志。
 
 - `RELIABILITY_CRON_ORPHAN_AUTO_CLEANUP=true`：
   - 启动时扫描并删除缺少原窗口绑定或缺少原 session 的僵尸 Cron。
-  - 飞书群解散、Discord 频道删除时，联动删除绑定到该窗口的 Cron。
+  - 飞书群解散、Discord 频道删除、企业微信群解散时，联动删除绑定到该窗口的 Cron。
   - `stale-cleanup` 周期任务也会继续扫描僵尸 Cron。
 
 - `RELIABILITY_CRON_FORWARD_TO_PRIVATE=true`：
@@ -243,3 +245,24 @@ npm test -- tests/reliability-rescue.e2e.test.ts
 ```
 
 **补充**：`RELIABILITY_MODE` 目前是预留策略字段，当前版本仍以"阈值 + 预算 + 冷却 + loopback 限制"作为实际触发条件。
+
+## 10) 平台特定注意事项
+
+### 飞书
+
+- 支持完整的消息卡片交互
+- 支持权限确认、question 回答等复杂交互
+- 文件发送支持图片和文档
+
+### Discord
+
+- 使用文本消息和组件交互
+- 支持 Embed 和按钮等组件
+- 文件发送受限于 Discord API 限制
+
+### 企业微信
+
+- 使用纯文本消息交互
+- 不支持富文本卡片
+- 文件发送受限于企业微信 API 限制
+- 建议在测试群组中先验证配置

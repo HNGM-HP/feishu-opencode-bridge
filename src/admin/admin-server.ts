@@ -46,6 +46,20 @@ const RESTART_REQUIRED_KEYS: (keyof BridgeSettings)[] = [
   'WECOM_ENABLED',
   'WECOM_BOT_ID',
   'WECOM_SECRET',
+  'TELEGRAM_ENABLED',
+  'TELEGRAM_BOT_TOKEN',
+  'QQ_ENABLED',
+  'QQ_PROTOCOL',
+  'QQ_ONEBOT_HTTP_URL',
+  'QQ_ONEBOT_WS_URL',
+  'QQ_APP_ID',
+  'QQ_SECRET',
+  'QQ_CALLBACK_URL',
+  'QQ_ENCRYPT_KEY',
+  'WHATSAPP_ENABLED',
+  'WHATSAPP_MODE',
+  'WHATSAPP_BUSINESS_PHONE_ID',
+  'WHATSAPP_BUSINESS_ACCESS_TOKEN',
   'OPENCODE_HOST',
   'OPENCODE_PORT',
   'OPENCODE_SERVER_USERNAME',
@@ -150,6 +164,9 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       'DISCORD_TOKEN',
       'DISCORD_BOT_TOKEN',
       'WECOM_SECRET',
+      'TELEGRAM_BOT_TOKEN',
+      'QQ_SECRET',
+      'WHATSAPP_BUSINESS_ACCESS_TOKEN',
       'OPENCODE_SERVER_PASSWORD',
       'RELIABILITY_CRON_API_TOKEN',
     ];
@@ -173,6 +190,9 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       'DISCORD_TOKEN',
       'DISCORD_BOT_TOKEN',
       'WECOM_SECRET',
+      'TELEGRAM_BOT_TOKEN',
+      'QQ_SECRET',
+      'WHATSAPP_BUSINESS_ACCESS_TOKEN',
       'OPENCODE_SERVER_PASSWORD',
       'RELIABILITY_CRON_API_TOKEN',
     ];
@@ -601,6 +621,9 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
         feishu: { status: 'unknown', message: '' },
         discord: { status: 'unknown', message: '' },
         wecom: { status: 'unknown', message: '' },
+        telegram: { status: 'unknown', message: '' },
+        qq: { status: 'unknown', message: '' },
+        whatsapp: { status: 'unknown', message: '' },
       },
     };
 
@@ -676,6 +699,55 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       }
     } catch (e: any) {
       health.checks.wecom = { status: 'error', message: e.message };
+    }
+
+    // 检测 Telegram 配置
+    try {
+      const settings = configStore.get();
+      if (settings.TELEGRAM_ENABLED === 'true' && settings.TELEGRAM_BOT_TOKEN) {
+        health.checks.telegram = { status: 'ok', message: 'Telegram 凭据已配置' };
+      } else if (settings.TELEGRAM_ENABLED === 'true') {
+        health.checks.telegram = { status: 'warning', message: 'Telegram 已启用但凭据未配置' };
+      } else {
+        health.checks.telegram = { status: 'ok', message: 'Telegram 未启用' };
+      }
+    } catch (e: any) {
+      health.checks.telegram = { status: 'error', message: e.message };
+    }
+
+    // 检测 QQ 配置
+    try {
+      const settings = configStore.get();
+      if (settings.QQ_ENABLED === 'true' && (settings.QQ_ONEBOT_WS_URL || settings.QQ_ONEBOT_HTTP_URL)) {
+        health.checks.qq = { status: 'ok', message: 'QQ OneBot 已配置' };
+      } else if (settings.QQ_ENABLED === 'true') {
+        health.checks.qq = { status: 'warning', message: 'QQ 已启用但 OneBot 地址未配置' };
+      } else {
+        health.checks.qq = { status: 'ok', message: 'QQ 未启用' };
+      }
+    } catch (e: any) {
+      health.checks.qq = { status: 'error', message: e.message };
+    }
+
+    // 检测 WhatsApp 配置
+    try {
+      const settings = configStore.get();
+      const whatsappMode = settings.WHATSAPP_MODE || 'personal';
+      if (settings.WHATSAPP_ENABLED === 'true') {
+        if (whatsappMode === 'business') {
+          if (settings.WHATSAPP_BUSINESS_PHONE_ID && settings.WHATSAPP_BUSINESS_ACCESS_TOKEN) {
+            health.checks.whatsapp = { status: 'ok', message: 'WhatsApp Business API 已配置' };
+          } else {
+            health.checks.whatsapp = { status: 'warning', message: 'WhatsApp Business 已启用但凭据未配置' };
+          }
+        } else {
+          health.checks.whatsapp = { status: 'ok', message: 'WhatsApp Personal 模式已启用' };
+        }
+      } else {
+        health.checks.whatsapp = { status: 'ok', message: 'WhatsApp 未启用' };
+      }
+    } catch (e: any) {
+      health.checks.whatsapp = { status: 'error', message: e.message };
     }
 
     res.json(health);

@@ -28,11 +28,12 @@ http://localhost:4098
 
 ### 面板功能
 
-- **配置管理**：实时修改飞书、Discord、OpenCode、可靠性等所有配置参数
+- **配置管理**：实时修改飞书、Discord、企业微信、OpenCode、可靠性等所有配置参数
 - **Cron 任务**：创建、启用/禁用、删除定时任务
 - **服务状态**：查看运行时长、版本、数据库路径
 - **模型列表**：获取 OpenCode 可用模型
 - **服务控制**：远程重启服务
+- **平台状态**：查看各平台连接状态
 
 ### 访问密码
 
@@ -69,7 +70,7 @@ opencode-bridge
 ```
 
 **说明**：
-- npm 包主要提供 CLI 分发与版本管理便利，不替代 OpenCode 本地服务与飞书/Discord 配置。
+- npm 包主要提供 CLI 分发与版本管理便利，不替代 OpenCode 本地服务与飞书/Discord/企业微信配置。
 - 运行后通过 Web 配置面板（`http://localhost:4098`）完成业务配置。
 - CLI 默认优先读取当前工作目录下的 `.env`；若当前目录没有 `.env`，会自动回退读取 `~/.config/opencode-bridge/.env`。
 - 你也可以显式指定配置目录：`opencode-bridge --config-dir /path/to/config`。
@@ -105,7 +106,7 @@ opencode-bridge --config-dir ~/.config/opencode-bridge
 
 ### .env 文件（启动参数）
 
-v2.9.2-beta 版本后，`.env` 文件仅存储 Admin 面板的启动参数：
+v2.9.3-beta 版本后，`.env` 文件仅存储 Admin 面板的启动参数：
 
 ```dotenv
 # Admin 面板端口（默认 4098）
@@ -130,3 +131,34 @@ ADMIN_PASSWORD=your-admin-password
 | Web 面板 | 访问 `http://localhost:4098` 可视化修改 |
 | SQLite 工具 | 直接编辑 `data/config.db` 数据库 |
 | 配置文件 | 首次启动前在 `.env` 中配置（会自动迁移） |
+
+## 平台配置
+
+### 飞书配置
+
+详见 [飞书后台配置文档](feishu-config.md)。
+
+### Discord 配置
+
+详见 [Discord 配置文档](discord-config.md)。
+
+### 企业微信配置
+
+详见 [企业微信配置文档](wecom-config.md)。
+
+## 可靠性配置
+
+详见 [可靠性指南](reliability.md)。
+
+## 故障排查
+
+详见 [故障排查文档](troubleshooting.md)。
+
+### 常见问题
+
+| 问题 | 解决方案 |
+|---|---|
+| 服务无法启动 | 检查端口占用，查看 `logs/service.err` |
+| Web 面板无法访问 | 检查防火墙设置，确认 `ADMIN_PORT` 配置 |
+| 平台无响应 | 检查平台配置，查看服务日志 |
+| OpenCode 连接失败 | 检查 `OPENCODE_HOST` 和 `OPENCODE_PORT` 配置 |
