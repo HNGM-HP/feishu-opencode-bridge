@@ -10,27 +10,29 @@
       <!-- 飞书配置 -->
       <el-card class="config-card">
         <template #header>
-          <span class="card-title">🤖 飞书（Lark）配置</span>
+          <div class="card-header-row">
+            <span class="card-title">🤖 飞书（Lark）配置 <el-tag size="small" type="info">可选</el-tag></span>
+            <div class="inline-switch">
+              <span>启用飞书</span>
+              <el-switch v-model="feishuEnabled"
+                active-text="开启" inactive-text="关闭"
+                @change="form.FEISHU_ENABLED = feishuEnabled ? 'true' : 'false'" />
+            </div>
+          </div>
         </template>
 
         <el-row :gutter="24">
           <el-col :span="12">
-            <el-form-item label="App ID" required>
-              <template #label>
-                App ID <el-tag size="small" type="danger" style="margin-left:6px">必填</el-tag>
-              </template>
+            <el-form-item label="App ID">
               <el-input v-model="form.FEISHU_APP_ID" placeholder="cli_xxxxxxxxxxxxx"
-                prefix-icon="Key" clearable />
+                prefix-icon="Key" clearable :disabled="!feishuEnabled" />
               <div class="field-tip">飞书开发者后台 → 凭证与基础信息 → App ID</div>
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="App Secret" required>
-              <template #label>
-                App Secret <el-tag size="small" type="danger" style="margin-left:6px">必填</el-tag>
-              </template>
+            <el-form-item label="App Secret">
               <el-input v-model="form.FEISHU_APP_SECRET" placeholder="••••••••"
-                type="password" show-password prefix-icon="Lock" />
+                type="password" show-password prefix-icon="Lock" :disabled="!feishuEnabled" />
               <div class="field-tip">飞书开发者后台 → 凭证与基础信息 → App Secret</div>
             </el-form-item>
           </el-col>
@@ -40,14 +42,14 @@
           <el-col :span="12">
             <el-form-item label="Encrypt Key（可选）">
               <el-input v-model="form.FEISHU_ENCRYPT_KEY" placeholder="留空则不加密"
-                type="password" show-password />
+                type="password" show-password :disabled="!feishuEnabled" />
               <div class="field-tip">消息加密密钥，与飞书后台「事件订阅 → 加密策略」保持一致</div>
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item label="Verification Token（可选）">
               <el-input v-model="form.FEISHU_VERIFICATION_TOKEN" placeholder="留空则跳过验证"
-                type="password" show-password />
+                type="password" show-password :disabled="!feishuEnabled" />
               <div class="field-tip">飞书事件订阅验证 Token，用于校验请求来源</div>
             </el-form-item>
           </el-col>
@@ -58,7 +60,7 @@
       <el-card class="config-card">
         <template #header>
           <div class="card-header-row">
-            <span class="card-title">🎮 Discord 配置</span>
+            <span class="card-title">🎮 Discord 配置 <el-tag size="small" type="info">可选</el-tag></span>
             <div class="inline-switch">
               <span>启用 Discord</span>
               <el-switch v-model="discordEnabled"
@@ -161,6 +163,7 @@ import { useConfigStore } from '../stores/config'
 
 const store = useConfigStore()
 const saving = ref(false)
+const feishuEnabled = ref(false)
 const discordEnabled = ref(false)
 const groupRequireMention = ref(false)
 const enabledPlatforms = ref<string[]>([])
@@ -199,6 +202,7 @@ const sessionGroups = computed(() => {
 })
 
 const form = reactive({
+  FEISHU_ENABLED: 'false',
   FEISHU_APP_ID: '',
   FEISHU_APP_SECRET: '',
   FEISHU_ENCRYPT_KEY: '',
@@ -220,6 +224,7 @@ watch(() => store.settings, () => syncFromStore(), { deep: true })
 function syncFromStore() {
   const s = store.settings
   Object.assign(form, {
+    FEISHU_ENABLED: s.FEISHU_ENABLED || 'false',
     FEISHU_APP_ID: s.FEISHU_APP_ID || '',
     FEISHU_APP_SECRET: s.FEISHU_APP_SECRET || '',
     FEISHU_ENCRYPT_KEY: s.FEISHU_ENCRYPT_KEY || '',
@@ -233,6 +238,7 @@ function syncFromStore() {
     ALLOWED_USERS: s.ALLOWED_USERS || '',
     GROUP_REQUIRE_MENTION: s.GROUP_REQUIRE_MENTION || 'false',
   })
+  feishuEnabled.value = form.FEISHU_ENABLED === 'true'
   discordEnabled.value = form.DISCORD_ENABLED === 'true'
   groupRequireMention.value = form.GROUP_REQUIRE_MENTION === 'true'
   enabledPlatforms.value = form.ENABLED_PLATFORMS
@@ -252,10 +258,14 @@ function onAllowedUsersChange(val: string[]) {
 }
 
 async function handleSave() {
-  if (!form.FEISHU_APP_ID || !form.FEISHU_APP_SECRET) {
-    ElMessage.error('飞书 App ID 和 App Secret 为必填项')
-    return
+  // 检查是否至少配置了一个平台
+  const hasFeishu = feishuEnabled.value && form.FEISHU_APP_ID && form.FEISHU_APP_SECRET
+  const hasDiscord = discordEnabled.value && (form.DISCORD_TOKEN || form.DISCORD_BOT_TOKEN)
+
+  if (!hasFeishu && !hasDiscord) {
+    ElMessage.warning('建议至少启用并配置一个平台（飞书或 Discord）')
   }
+
   saving.value = true
   try {
     const result = await store.saveConfig({ ...form })

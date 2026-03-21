@@ -17,7 +17,7 @@ import { lifecycleHandler } from './handlers/lifecycle.js';
 import { createDiscordHandler } from './handlers/discord.js';
 import { commandHandler } from './handlers/command.js';
 import { cardActionHandler } from './handlers/card-action.js';
-import { validateConfig, routerConfig, outputConfig, reliabilityConfig, opencodeConfig } from './config.js';
+import { validateConfig, routerConfig, outputConfig, reliabilityConfig, opencodeConfig, isPlatformConfigured } from './config.js';
 import { rootRouter } from './router/root-router.js';
 import { ConversationHeartbeatEngine } from './reliability/conversation-heartbeat.js';
 import { CronScheduler } from './reliability/scheduler.js';
@@ -534,13 +534,12 @@ async function main() {
   }
 
   // 3. 验证配置
-  let isFeishuConfigured = true;
   try {
     validateConfig();
   } catch (error) {
-    console.warn('[Config] ⚠️ 飞书核心凭据未配置完备（可能是首次部署），飞书机器人核心服务暂不拉起。');
+    console.warn('[Config] ⚠️ 未检测到已配置的平台（可能是首次部署），机器人服务暂不拉起。');
     console.warn('[Config] 💡 核心管理后台即将启动，请前往 Web 控制台配置相关参数并按提示重启服务生效！');
-    isFeishuConfigured = false;
+    console.warn(`[Config] 详细信息: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   // 1.5. 路由器模式配置
@@ -1802,20 +1801,24 @@ async function main() {
     // Discord 启动失败不影响 Feishu 流程
   }
   // 8. 启动飞书客户端
-  feishuClient.setCardActionHandler(async (event) => {
-    const actionValue = event.action?.value;
-    const action = actionValue && typeof actionValue === 'object'
-      ? (actionValue as Record<string, unknown>).action
-      : undefined;
-    const actionName = typeof action === 'string' ? action : '';
+  if (isPlatformConfigured('feishu')) {
+    feishuClient.setCardActionHandler(async (event) => {
+      const actionValue = event.action?.value;
+      const action = actionValue && typeof actionValue === 'object'
+        ? (actionValue as Record<string, unknown>).action
+        : undefined;
+      const actionName = typeof action === 'string' ? action : '';
 
-    if (actionName.startsWith('create_chat')) {
-      return await p2pHandler.handleCardAction(event);
-    }
+      if (actionName.startsWith('create_chat')) {
+        return await p2pHandler.handleCardAction(event);
+      }
 
-    return await cardActionHandler.handle(event);
-  });
-  if (isFeishuConfigured) { await feishuClient.start(); } else { console.log('[System] 飞书长连接暂未启动 (等待凭据配置)'); }
+      return await cardActionHandler.handle(event);
+    });
+    await feishuAdapter.start();
+  } else {
+    console.log('[System] 飞书长连接暂未启动 (未配置 FEISHU_APP_ID/FEISHU_APP_SECRET)');
+  }
 
   // 9. 启动清理检查
   await lifecycleHandler.cleanUpOnStart();

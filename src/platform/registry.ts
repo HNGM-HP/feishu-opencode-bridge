@@ -58,7 +58,7 @@ export function list(): PlatformAdapter[] {
  *
  * 优先级：
  * 1. 环境变量 PLATFORM_{PLATFORM_ID}_ENABLED
- * 2. 默认值（feishu 默认启用，其他默认禁用）
+ * 2. 默认值：所有平台默认禁用，需显式配置或通过配置验证
  *
  * @param platformId - 平台唯一标识
  * @returns 是否启用
@@ -73,8 +73,9 @@ function isPlatformEnabled(platformId: string): boolean {
     return ['1', 'true', 'yes', 'on'].includes(normalized);
   }
 
-  // 默认策略：feishu 默认启用，其他默认禁用
-  return platformId.toLowerCase() === 'feishu';
+  // 默认策略：所有平台默认禁用
+  // 平台启动由各适配器的 start() 方法根据配置决定
+  return false;
 }
 
 /**

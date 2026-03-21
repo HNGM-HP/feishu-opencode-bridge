@@ -59,7 +59,7 @@ if (!resolvedEnvFile) {
 // ──────────────────────────────────────────────
 if (!configStore.isMigrated() && resolvedEnvFile) {
   const envKeys: (keyof BridgeSettings)[] = [
-    'FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_ENCRYPT_KEY', 'FEISHU_VERIFICATION_TOKEN',
+    'FEISHU_ENABLED', 'FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_ENCRYPT_KEY', 'FEISHU_VERIFICATION_TOKEN',
     'ALLOWED_USERS', 'ENABLED_PLATFORMS',
     'DISCORD_ENABLED', 'DISCORD_TOKEN', 'DISCORD_BOT_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_ALLOWED_BOT_IDS',
     'OPENCODE_HOST', 'OPENCODE_PORT', 'OPENCODE_AUTO_START', 'OPENCODE_AUTO_START_CMD',
@@ -193,6 +193,7 @@ export const routerConfig = {
 
 // 飞书配置
 export const feishuConfig = {
+  enabled: parseBooleanEnv(process.env.FEISHU_ENABLED, true), // 默认启用
   appId: process.env.FEISHU_APP_ID || '',
   appSecret: process.env.FEISHU_APP_SECRET || '',
   encryptKey: process.env.FEISHU_ENCRYPT_KEY,
@@ -384,12 +385,45 @@ export const reliabilityConfig = {
   loopbackOnly: parseBooleanEnv(process.env.RELIABILITY_LOOPBACK_ONLY, true),
 };
 
-// 验证配置
+// 验证配置：至少有一个平台已配置
 export function validateConfig(): void {
   const errors: string[] = [];
-  if (!feishuConfig.appId) errors.push('缺少 FEISHU_APP_ID');
-  if (!feishuConfig.appSecret) errors.push('缺少 FEISHU_APP_SECRET');
+
+  // 检查各平台配置状态
+  const platformStatus = {
+    feishu: !!(feishuConfig.enabled && feishuConfig.appId && feishuConfig.appSecret),
+    discord: !!(discordConfig.enabled && discordConfig.token),
+  };
+
+  // 至少一个平台配置完成即可
+  const hasAnyPlatform = Object.values(platformStatus).some(Boolean);
+
+  if (!hasAnyPlatform) {
+    errors.push('至少需要配置一个平台:');
+    if (!platformStatus.feishu) {
+      if (!feishuConfig.enabled) {
+        errors.push('  - 飞书: 已禁用 (FEISHU_ENABLED=false)');
+      } else {
+        errors.push('  - 飞书: 缺少 FEISHU_APP_ID 或 FEISHU_APP_SECRET');
+      }
+    }
+    if (!platformStatus.discord) {
+      errors.push('  - Discord: 需设置 DISCORD_ENABLED=true 并配置 DISCORD_TOKEN');
+    }
+  }
+
   if (errors.length > 0) {
     throw new Error(`配置错误:\n${errors.join('\n')}`);
   }
+}
+
+// 检查平台是否已配置（用于启动判断）
+export function isPlatformConfigured(platform: 'feishu' | 'discord'): boolean {
+  if (platform === 'feishu') {
+    return !!(feishuConfig.enabled && feishuConfig.appId && feishuConfig.appSecret);
+  }
+  if (platform === 'discord') {
+    return !!(discordConfig.enabled && discordConfig.token);
+  }
+  return false;
 }

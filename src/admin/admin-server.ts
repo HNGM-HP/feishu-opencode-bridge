@@ -34,6 +34,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 需要重启才能生效的敏感配置项
 // ──────────────────────────────────────────────
 const RESTART_REQUIRED_KEYS: (keyof BridgeSettings)[] = [
+  'FEISHU_ENABLED',
   'FEISHU_APP_ID',
   'FEISHU_APP_SECRET',
   'FEISHU_ENCRYPT_KEY',
@@ -631,7 +632,10 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
     // 检测飞书配置
     try {
       const settings = configStore.get();
-      if (settings.FEISHU_APP_ID && settings.FEISHU_APP_SECRET) {
+      const feishuEnabled = settings.FEISHU_ENABLED !== 'false'; // 默认启用，只有显式设为 false 才禁用
+      if (!feishuEnabled) {
+        health.checks.feishu = { status: 'warning', message: '飞书已禁用 (FEISHU_ENABLED=false)' };
+      } else if (settings.FEISHU_APP_ID && settings.FEISHU_APP_SECRET) {
         health.checks.feishu = { status: 'ok', message: '飞书凭据已配置' };
       } else {
         health.checks.feishu = { status: 'warning', message: '飞书凭据未配置' };

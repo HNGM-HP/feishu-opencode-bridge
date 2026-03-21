@@ -17,6 +17,7 @@ import path from 'node:path';
 // ──────────────────────────────────────────────
 export interface BridgeSettings {
   // 飞书
+  FEISHU_ENABLED?: string;
   FEISHU_APP_ID?: string;
   FEISHU_APP_SECRET?: string;
   FEISHU_ENCRYPT_KEY?: string;
