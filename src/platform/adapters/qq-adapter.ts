@@ -15,6 +15,7 @@ import type {
   PlatformMessageEvent,
   PlatformActionEvent,
   PlatformSender,
+  PlatformAttachment,
 } from '../types.js';
 import { qqConfig } from '../../config.js';
 import { chatSessionStore } from '../../store/chat-session.js';
@@ -43,6 +44,15 @@ type OneBotEvent = {
 type OneBotMessageSegment = {
   type: string;
   data: Record<string, unknown>;
+};
+
+// OneBot 附件类型映射
+type OneBotAttachmentData = {
+  file?: string;       // 文件名或 URL
+  url?: string;        // 文件 URL
+  filename?: string;   // 文件名
+  size?: number;       // 文件大小
+  file_size?: number;  // 文件大小（备用字段）
 };
 
 type QQMessage = {
@@ -203,7 +213,7 @@ class QQOfficialClient {
   }
 
   async startWebhook(
-    onMessage: (chatId: string, text: string, messageId: string, senderId: string) => Promise<void>,
+    onMessage: (chatId: string, text: string, messageId: string, senderId: string, attachments?: PlatformAttachment[]) => Promise<void>,
   ): Promise<void> {
     const port = this.callbackUrl ? this.extractPort(this.callbackUrl) : 8080;
 
@@ -262,9 +272,12 @@ class QQOfficialClient {
                 : msg.author?.user_openid || '';
               const content = msg.content || '';
 
-              if (content) {
-                console.log(`[QQ Official] 收到消息: chatId=${chatId}, sender=${senderId}`);
-                await onMessage(chatId, content, messageId, senderId);
+              // 提取附件
+              const attachments = this.extractOfficialAttachments(msg);
+
+              if (content || attachments.length > 0) {
+                console.log(`[QQ Official] 收到消息: chatId=${chatId}, sender=${senderId}, attachments=${attachments.length}`);
+                await onMessage(chatId, content, messageId, senderId, attachments.length > 0 ? attachments : undefined);
               }
               return;
             }
@@ -319,6 +332,40 @@ class QQOfficialClient {
     const message = eventTs + plainToken;
     const keyMaterial = crypto.createHmac('sha256', this.secret).digest();
     return crypto.createHmac('sha256', keyMaterial).update(Buffer.from(message, 'utf8')).digest('hex');
+  }
+
+  /**
+   * 从 QQ 官方消息中提取附件
+   */
+  private extractOfficialAttachments(msg: QQMessage): PlatformAttachment[] {
+    const attachments: PlatformAttachment[] = [];
+
+    if (!msg.attachments || msg.attachments.length === 0) {
+      return attachments;
+    }
+
+    for (const att of msg.attachments) {
+      const contentType = att.content_type || '';
+      const url = att.url || '';
+
+      if (!url) continue;
+
+      // 判断附件类型
+      let type: 'image' | 'file' = 'file';
+      if (contentType.startsWith('image/')) {
+        type = 'image';
+      }
+
+      attachments.push({
+        type,
+        fileKey: url,
+        fileName: att.filename,
+        fileType: contentType,
+        fileSize: att.size,
+      });
+    }
+
+    return attachments;
   }
 }
 
@@ -426,7 +473,8 @@ class OneBotClient {
     if (event.post_type !== 'message') return;
 
     const content = this.parseMessageContent(event);
-    if (!content.trim()) return;
+    const attachments = this.parseAttachments(event);
+    if (!content.trim() && attachments.length === 0) return;
 
     const isGroup = event.message_type === 'group';
     const conversationId = isGroup
@@ -441,8 +489,9 @@ class OneBotClient {
       senderId: event.user_id?.toString() || '',
       senderType: 'user',
       content,
-      msgType: 'text',
+      msgType: attachments.length > 0 && !content.trim() ? 'attachment' : 'text',
       chatType: isGroup ? 'group' : 'p2p',
+      attachments: attachments.length > 0 ? attachments : undefined,
       rawEvent: event,
     };
 
@@ -476,6 +525,134 @@ class OneBotClient {
         return '';
       })
       .trim();
+  }
+
+  /**
+   * 解析 OneBot 消息中的附件
+   * 支持：image, file, video, record 等类型
+   */
+  private parseAttachments(event: OneBotEvent): PlatformAttachment[] {
+    const attachments: PlatformAttachment[] = [];
+
+    // 处理数组格式的消息段
+    if (Array.isArray(event.message)) {
+      for (const seg of event.message) {
+        const att = this.parseMessageSegment(seg);
+        if (att) {
+          attachments.push(att);
+        }
+      }
+    }
+
+    // 处理字符串格式（CQ码）
+    if (typeof event.message === 'string' || typeof event.raw_message === 'string') {
+      const raw = (event.raw_message || event.message) as string;
+      const cqAttachments = this.parseCQCodeAttachments(raw);
+      attachments.push(...cqAttachments);
+    }
+
+    return attachments;
+  }
+
+  /**
+   * 解析单个消息段
+   */
+  private parseMessageSegment(seg: OneBotMessageSegment): PlatformAttachment | null {
+    const { type, data } = seg;
+
+    if (type === 'image') {
+      const imageData = data as OneBotAttachmentData;
+      const fileKey = imageData.url || imageData.file || '';
+      if (!fileKey) return null;
+
+      return {
+        type: 'image',
+        fileKey,
+        fileName: imageData.filename || this.extractFilename(fileKey),
+        fileType: 'image',
+        fileSize: imageData.size || imageData.file_size,
+      };
+    }
+
+    if (type === 'file') {
+      const fileData = data as OneBotAttachmentData;
+      const fileKey = fileData.url || fileData.file || '';
+      if (!fileKey) return null;
+
+      return {
+        type: 'file',
+        fileKey,
+        fileName: fileData.filename || this.extractFilename(fileKey),
+        fileSize: fileData.size || fileData.file_size,
+      };
+    }
+
+    // video 和 record 作为 file 处理
+    if (type === 'video' || type === 'record') {
+      const mediaData = data as OneBotAttachmentData;
+      const fileKey = mediaData.url || mediaData.file || '';
+      if (!fileKey) return null;
+
+      return {
+        type: 'file',
+        fileKey,
+        fileName: mediaData.filename || this.extractFilename(fileKey),
+        fileType: type === 'video' ? 'video' : 'audio',
+        fileSize: mediaData.size || mediaData.file_size,
+      };
+    }
+
+    return null;
+  }
+
+  /**
+   * 解析 CQ 码中的附件
+   */
+  private parseCQCodeAttachments(raw: string): PlatformAttachment[] {
+    const attachments: PlatformAttachment[] = [];
+
+    // 匹配 [CQ:image,file=xxx] 或 [CQ:file,url=xxx] 等
+    const cqRegex = /\[CQ:(image|file|video|record),([^\]]+)\]/g;
+    let match;
+
+    while ((match = cqRegex.exec(raw)) !== null) {
+      const type = match[1] as 'image' | 'file' | 'video' | 'record';
+      const params = match[2];
+
+      // 解析参数
+      const urlMatch = params.match(/(?:file|url)=([^,\]]+)/);
+      const filenameMatch = params.match(/filename=([^,\]]+)/);
+      const sizeMatch = params.match(/size=(\d+)/);
+
+      if (urlMatch) {
+        const fileKey = urlMatch[1];
+        attachments.push({
+          type: type === 'image' ? 'image' : 'file',
+          fileKey,
+          fileName: filenameMatch?.[1] || this.extractFilename(fileKey),
+          fileType: type === 'image' ? 'image' : type === 'video' ? 'video' : type === 'record' ? 'audio' : undefined,
+          fileSize: sizeMatch ? parseInt(sizeMatch[1], 10) : undefined,
+        });
+      }
+    }
+
+    return attachments;
+  }
+
+  /**
+   * 从 URL 或文件路径中提取文件名
+   */
+  private extractFilename(fileKey: string): string {
+    try {
+      const url = new URL(fileKey);
+      const pathname = url.pathname;
+      const parts = pathname.split('/');
+      return parts[parts.length - 1] || 'attachment';
+    } catch {
+      // 不是 URL，尝试作为文件路径处理
+      const parts = fileKey.split(/[/\\]/);
+      return parts[parts.length - 1] || 'attachment';
+    }
   }
 
   private scheduleReconnect(): void {
@@ -599,7 +776,7 @@ export class QQAdapter implements PlatformAdapter {
 
     this.officialClient = new QQOfficialClient(appId, secret, callbackUrl, encryptKey);
 
-    await this.officialClient.startWebhook(async (chatId, text, messageId, senderId) => {
+    await this.officialClient.startWebhook(async (chatId, text, messageId, senderId, attachments) => {
       const event: PlatformMessageEvent = {
         platform: 'qq',
         conversationId: chatId,
@@ -607,8 +784,9 @@ export class QQAdapter implements PlatformAdapter {
         senderId,
         senderType: 'user',
         content: text,
-        msgType: 'text',
+        msgType: attachments && attachments.length > 0 && !text.trim() ? 'attachment' : 'text',
         chatType: chatId.startsWith('group_') ? 'group' : 'p2p',
+        attachments,
         rawEvent: {},
       };
 

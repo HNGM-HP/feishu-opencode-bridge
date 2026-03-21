@@ -41,7 +41,6 @@ const RESTART_REQUIRED_KEYS: (keyof BridgeSettings)[] = [
   'FEISHU_VERIFICATION_TOKEN',
   'DISCORD_ENABLED',
   'DISCORD_TOKEN',
-  'DISCORD_BOT_TOKEN',
   'DISCORD_CLIENT_ID',
   'WECOM_ENABLED',
   'WECOM_BOT_ID',
@@ -162,7 +161,6 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
     const secretKeys: (keyof BridgeSettings)[] = [
       'FEISHU_APP_SECRET',
       'DISCORD_TOKEN',
-      'DISCORD_BOT_TOKEN',
       'WECOM_SECRET',
       'TELEGRAM_BOT_TOKEN',
       'QQ_SECRET',
@@ -188,7 +186,6 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
     const secretKeys: (keyof BridgeSettings)[] = [
       'FEISHU_APP_SECRET',
       'DISCORD_TOKEN',
-      'DISCORD_BOT_TOKEN',
       'WECOM_SECRET',
       'TELEGRAM_BOT_TOKEN',
       'QQ_SECRET',
@@ -676,7 +673,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
     // 检测 Discord 配置
     try {
       const settings = configStore.get();
-      if (settings.DISCORD_ENABLED === 'true' && (settings.DISCORD_TOKEN || settings.DISCORD_BOT_TOKEN)) {
+      if (settings.DISCORD_ENABLED === 'true' && settings.DISCORD_TOKEN) {
         health.checks.discord = { status: 'ok', message: 'Discord 凭据已配置' };
       } else if (settings.DISCORD_ENABLED === 'true') {
         health.checks.discord = { status: 'warning', message: 'Discord 已启用但凭据未配置' };

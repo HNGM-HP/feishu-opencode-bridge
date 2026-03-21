@@ -92,7 +92,7 @@
             </div>
             <div class="status-row">
               <span class="status-label">配置状态:</span>
-              <el-tag :type="settings.DISCORD_ENABLED === 'true' && settings.DISCORD_BOT_TOKEN ? 'success' : 'info'" size="small">
+              <el-tag :type="settings.DISCORD_ENABLED === 'true' && settings.DISCORD_TOKEN ? 'success' : 'info'" size="small">
                 {{ settings.DISCORD_ENABLED === 'true' ? '已启用' : '已禁用' }}
               </el-tag>
             </div>

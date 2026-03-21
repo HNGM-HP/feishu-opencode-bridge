@@ -61,7 +61,7 @@ if (!configStore.isMigrated() && resolvedEnvFile) {
   const envKeys: (keyof BridgeSettings)[] = [
     'FEISHU_ENABLED', 'FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_ENCRYPT_KEY', 'FEISHU_VERIFICATION_TOKEN',
     'ALLOWED_USERS', 'ENABLED_PLATFORMS',
-    'DISCORD_ENABLED', 'DISCORD_TOKEN', 'DISCORD_BOT_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_ALLOWED_BOT_IDS',
+    'DISCORD_ENABLED', 'DISCORD_TOKEN', 'DISCORD_CLIENT_ID', 'DISCORD_ALLOWED_BOT_IDS',
     'WECOM_ENABLED', 'WECOM_BOT_ID', 'WECOM_SECRET',
     'TELEGRAM_ENABLED', 'TELEGRAM_BOT_TOKEN',
     'QQ_ENABLED', 'QQ_PROTOCOL', 'QQ_ONEBOT_HTTP_URL', 'QQ_ONEBOT_WS_URL',
@@ -209,7 +209,7 @@ export const feishuConfig = {
 // Discord配置
 export const discordConfig = {
   enabled: parseBooleanEnv(process.env.DISCORD_ENABLED, false),
-  token: process.env.DISCORD_TOKEN?.trim() || process.env.DISCORD_BOT_TOKEN?.trim() || '',
+  token: process.env.DISCORD_TOKEN?.trim() || '',
   clientId: process.env.DISCORD_CLIENT_ID?.trim() || '',
   allowedBotIds: (() => {
     const raw = process.env.DISCORD_ALLOWED_BOT_IDS || '';

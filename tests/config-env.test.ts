@@ -3,7 +3,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 const envKeys = [
   'DISCORD_ENABLED',
   'DISCORD_TOKEN',
-  'DISCORD_BOT_TOKEN',
   'DISCORD_CLIENT_ID',
   'GROUP_REQUIRE_MENTION',
   'GROUP_REPLY_REQUIRE_MENTION',
@@ -63,24 +62,13 @@ describe('Config env compatibility', () => {
     expect(groupConfig.requireMentionInGroup).toBe(true);
   });
 
-  it('应兼容 DISCORD_BOT_TOKEN 作为 DISCORD_TOKEN 的回退', async () => {
+  it('应读取 DISCORD_TOKEN', async () => {
     snapshotEnv();
-    delete process.env.DISCORD_TOKEN;
-    process.env.DISCORD_BOT_TOKEN = 'bot-token-from-alias';
+    process.env.DISCORD_TOKEN = 'test-token';
 
     const { discordConfig } = await loadConfigModule();
-    expect(discordConfig.token).toBe('bot-token-from-alias');
+    expect(discordConfig.token).toBe('test-token');
   });
-
-  it('DISCORD_TOKEN 应优先于 DISCORD_BOT_TOKEN', async () => {
-    snapshotEnv();
-    process.env.DISCORD_TOKEN = 'primary-token';
-    process.env.DISCORD_BOT_TOKEN = 'fallback-token';
-
-    const { discordConfig } = await loadConfigModule();
-    expect(discordConfig.token).toBe('primary-token');
-  });
-
 
   it('应读取 DISCORD_CLIENT_ID', async () => {
     snapshotEnv();

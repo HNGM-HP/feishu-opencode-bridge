@@ -9,6 +9,7 @@
 import makeWASocket, {
   DisconnectReason,
   useMultiFileAuthState,
+  downloadMediaMessage,
   type WASocket,
   type WAMessage,
   type ConnectionState,
@@ -18,6 +19,7 @@ import type {
   PlatformSender,
   PlatformMessageEvent,
   PlatformActionEvent,
+  PlatformAttachment,
 } from '../types.js';
 import { whatsappConfig } from '../../config.js';
 import path from 'node:path';
@@ -457,7 +459,9 @@ export class WhatsAppAdapter implements PlatformAdapter {
       this.socket.ev.on('messages.upsert', ({ messages, type }) => {
         if (type === 'notify') {
           for (const message of messages) {
-            this.handleMessage(message);
+            this.handleMessage(message).catch(error => {
+              console.error('[WhatsApp] 消息处理失败:', error);
+            });
           }
         }
       });
@@ -532,7 +536,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
     return this.qrCode;
   }
 
-  private handleMessage(message: WAMessage): void {
+  private async handleMessage(message: WAMessage): Promise<void> {
     if (!message.key || message.key.fromMe) {
       return;
     }
@@ -551,6 +555,19 @@ export class WhatsAppAdapter implements PlatformAdapter {
     // 判断聊天类型
     const chatType = conversationId.endsWith('@g.us') ? 'group' : 'p2p';
 
+    // 检测消息类型
+    const messageType = this.detectMessageType(message);
+
+    // 提取附件（如果有媒体）
+    let attachments: PlatformAttachment[] = [];
+    if (messageType !== 'text' && messageType !== 'location' && messageType !== 'contact') {
+      try {
+        attachments = await this.extractAttachments(message);
+      } catch (error) {
+        console.error('[WhatsApp] 提取附件失败:', error);
+      }
+    }
+
     // 构建平台消息事件
     const event: PlatformMessageEvent = {
       platform: 'whatsapp',
@@ -559,9 +576,10 @@ export class WhatsAppAdapter implements PlatformAdapter {
       senderId: message.key.participant || message.key.remoteJid || '',
       senderType: 'user',
       content,
-      msgType: 'text',
+      msgType: messageType,
       chatType,
       rawEvent: message,
+      ...(attachments.length > 0 ? { attachments } : {}),
     };
 
     // 记录消息与会话的映射
@@ -611,6 +629,16 @@ export class WhatsAppAdapter implements PlatformAdapter {
       return msg.documentMessage.caption;
     }
 
+    // 音频消息
+    if (msg.audioMessage) {
+      return '[音频]';
+    }
+
+    // 贴纸消息
+    if (msg.stickerMessage) {
+      return '[贴纸]';
+    }
+
     // 位置消息
     if (msg.locationMessage) {
       const lat = msg.locationMessage.degreesLatitude;
@@ -626,6 +654,186 @@ export class WhatsAppAdapter implements PlatformAdapter {
     // 其他消息类型返回类型标识
     const messageType = Object.keys(msg)[0];
     return messageType ? `[${messageType}]` : null;
+  }
+
+  /**
+   * 检测消息类型
+   */
+  private detectMessageType(message: WAMessage): string {
+    if (!message.message) {
+      return 'text';
+    }
+
+    const msg = message.message;
+
+    if (msg.imageMessage) return 'image';
+    if (msg.videoMessage) return 'video';
+    if (msg.audioMessage) return msg.audioMessage.ptt ? 'voice' : 'audio';
+    if (msg.documentMessage) return 'document';
+    if (msg.stickerMessage) return 'sticker';
+    if (msg.locationMessage) return 'location';
+    if (msg.contactMessage) return 'contact';
+
+    return 'text';
+  }
+
+  /**
+   * 提取媒体附件信息
+   * Personal 模式：下载媒体并转为 base64 data URL
+   * Business 模式：返回 mediaId（需通过 Business API 下载）
+   */
+  private async extractAttachments(message: WAMessage): Promise<PlatformAttachment[]> {
+    if (!message.message) {
+      return [];
+    }
+
+    const msg = message.message;
+    const attachments: PlatformAttachment[] = [];
+
+    // 图片消息
+    if (msg.imageMessage) {
+      const mediaMessage = msg.imageMessage;
+      const mimeType = mediaMessage.mimetype || 'image/jpeg';
+      const ext = mimeType.split('/')[1] || 'jpg';
+      const fileName = `image.${ext}`;
+
+      try {
+        const buffer = await downloadMediaMessage(
+          message,
+          'buffer',
+          {}
+        );
+
+        const base64 = buffer.toString('base64');
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+
+        attachments.push({
+          type: 'image',
+          fileKey: dataUrl,
+          fileName,
+          fileType: mimeType,
+          fileSize: buffer.length,
+        });
+      } catch (error) {
+        console.error('[WhatsApp] 图片下载失败:', error);
+      }
+    }
+
+    // 视频消息
+    if (msg.videoMessage) {
+      const mediaMessage = msg.videoMessage;
+      const mimeType = mediaMessage.mimetype || 'video/mp4';
+      const ext = mimeType.split('/')[1] || 'mp4';
+      const fileName = `video.${ext}`;
+
+      try {
+        const buffer = await downloadMediaMessage(
+          message,
+          'buffer',
+          {}
+        );
+
+        const base64 = buffer.toString('base64');
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+
+        attachments.push({
+          type: 'file',
+          fileKey: dataUrl,
+          fileName,
+          fileType: mimeType,
+          fileSize: buffer.length,
+        });
+      } catch (error) {
+        console.error('[WhatsApp] 视频下载失败:', error);
+      }
+    }
+
+    // 音频消息（包括语音）
+    if (msg.audioMessage) {
+      const mediaMessage = msg.audioMessage;
+      const mimeType = mediaMessage.mimetype || 'audio/ogg';
+      const ext = mediaMessage.ptt ? 'ogg' : (mimeType.split('/')[1] || 'ogg');
+      const fileName = `audio.${ext}`;
+
+      try {
+        const buffer = await downloadMediaMessage(
+          message,
+          'buffer',
+          {}
+        );
+
+        const base64 = buffer.toString('base64');
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+
+        attachments.push({
+          type: 'file',
+          fileKey: dataUrl,
+          fileName,
+          fileType: mimeType,
+          fileSize: buffer.length,
+        });
+      } catch (error) {
+        console.error('[WhatsApp] 音频下载失败:', error);
+      }
+    }
+
+    // 文档消息
+    if (msg.documentMessage) {
+      const mediaMessage = msg.documentMessage;
+      const mimeType = mediaMessage.mimetype || 'application/octet-stream';
+      const fileName = mediaMessage.fileName || 'document';
+
+      try {
+        const buffer = await downloadMediaMessage(
+          message,
+          'buffer',
+          {}
+        );
+
+        const base64 = buffer.toString('base64');
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+
+        attachments.push({
+          type: 'file',
+          fileKey: dataUrl,
+          fileName,
+          fileType: mimeType,
+          fileSize: buffer.length,
+        });
+      } catch (error) {
+        console.error('[WhatsApp] 文档下载失败:', error);
+      }
+    }
+
+    // 贴纸消息（WebP 格式）
+    if (msg.stickerMessage) {
+      const mediaMessage = msg.stickerMessage;
+      const mimeType = mediaMessage.mimetype || 'image/webp';
+      const fileName = 'sticker.webp';
+
+      try {
+        const buffer = await downloadMediaMessage(
+          message,
+          'buffer',
+          {}
+        );
+
+        const base64 = buffer.toString('base64');
+        const dataUrl = `data:${mimeType};base64,${base64}`;
+
+        attachments.push({
+          type: 'image',
+          fileKey: dataUrl,
+          fileName,
+          fileType: mimeType,
+          fileSize: buffer.length,
+        });
+      } catch (error) {
+        console.error('[WhatsApp] 贴纸下载失败:', error);
+      }
+    }
+
+    return attachments;
   }
 }
 

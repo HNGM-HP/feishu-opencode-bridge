@@ -3,6 +3,7 @@
  *
  * 使用 grammy 库实现 PlatformAdapter 接口
  * 支持 Long Polling 模式连接 Telegram Bot API
+ * 支持附件下载：photo、document、video、audio
  */
 
 import { Bot, InlineKeyboard, type Context } from 'grammy';
@@ -11,10 +12,13 @@ import type {
   PlatformSender,
   PlatformMessageEvent,
   PlatformActionEvent,
+  PlatformAttachment,
 } from '../types.js';
 import { telegramConfig } from '../../config.js';
+import type { File as TelegramFile } from '@grammyjs/types';
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
+const TELEGRAM_FILE_BASE_URL = 'https://api.telegram.org/file/bot';
 
 /**
  * Telegram 卡片载荷类型
@@ -327,6 +331,143 @@ export class TelegramAdapter implements PlatformAdapter {
   }
 
   /**
+   * 通过 file_id 下载 Telegram 文件
+   * @param fileId Telegram 文件 ID
+   * @returns 文件内容和元信息，或 null 表示下载失败
+   */
+  async downloadFile(fileId: string): Promise<{ buffer: Buffer; fileName: string; mimeType: string } | null> {
+    if (!this.bot) {
+      console.warn('[Telegram] Bot 未初始化，无法下载文件');
+      return null;
+    }
+
+    try {
+      const fileInfo: TelegramFile = await this.bot.api.getFile(fileId);
+      if (!fileInfo.file_path) {
+        console.warn('[Telegram] getFile 返回的 file_path 为空');
+        return null;
+      }
+
+      const fileUrl = `${TELEGRAM_FILE_BASE_URL}${telegramConfig.botToken}/${fileInfo.file_path}`;
+      const response = await fetch(fileUrl);
+      if (!response.ok) {
+        console.error(`[Telegram] 下载文件失败: HTTP ${response.status}`);
+        return null;
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
+
+      // 从 Content-Type 或 file_path 推断 MIME 类型
+      const contentType = response.headers.get('content-type') || 'application/octet-stream';
+      const mimeType = contentType.split(';')[0]?.trim() || 'application/octet-stream';
+
+      // 从 file_path 提取文件名
+      const pathParts = fileInfo.file_path.split('/');
+      const fileName = pathParts[pathParts.length - 1] || `file_${fileId}`;
+
+      return { buffer, fileName, mimeType };
+    } catch (error) {
+      console.error('[Telegram] 下载文件失败:', error);
+      return null;
+    }
+  }
+
+  /**
+   * 从消息中提取附件信息
+   * 支持 photo、document、video、audio 类型
+   */
+  private extractAttachmentFromMessage(message: NonNullable<Context['message']>): PlatformAttachment[] | undefined {
+    const attachments: PlatformAttachment[] = [];
+
+    // 处理图片（选择最大尺寸）
+    if (message.photo && message.photo.length > 0) {
+      const largestPhoto = message.photo[message.photo.length - 1];
+      if (largestPhoto?.file_id) {
+        attachments.push({
+          type: 'image',
+          fileKey: largestPhoto.file_id,
+          fileName: `photo_${largestPhoto.file_id.slice(0, 8)}.jpg`,
+          fileType: 'image/jpeg',
+          fileSize: largestPhoto.file_size,
+        });
+      }
+    }
+
+    // 处理文档
+    if (message.document) {
+      const doc = message.document;
+      if (doc.file_id) {
+        const isImage = doc.mime_type?.startsWith('image/');
+        attachments.push({
+          type: isImage ? 'image' : 'file',
+          fileKey: doc.file_id,
+          fileName: doc.file_name,
+          fileType: doc.mime_type,
+          fileSize: doc.file_size,
+        });
+      }
+    }
+
+    // 处理视频
+    if (message.video) {
+      const video = message.video;
+      if (video.file_id) {
+        attachments.push({
+          type: 'file',
+          fileKey: video.file_id,
+          fileName: video.file_name,
+          fileType: video.mime_type || 'video/mp4',
+          fileSize: video.file_size,
+        });
+      }
+    }
+
+    // 处理音频
+    if (message.audio) {
+      const audio = message.audio;
+      if (audio.file_id) {
+        attachments.push({
+          type: 'file',
+          fileKey: audio.file_id,
+          fileName: audio.file_name,
+          fileType: audio.mime_type || 'audio/mpeg',
+          fileSize: audio.file_size,
+        });
+      }
+    }
+
+    // 处理语音消息
+    if (message.voice) {
+      const voice = message.voice;
+      if (voice.file_id) {
+        attachments.push({
+          type: 'file',
+          fileKey: voice.file_id,
+          fileName: `voice_${voice.file_id.slice(0, 8)}.ogg`,
+          fileType: voice.mime_type || 'audio/ogg',
+          fileSize: voice.file_size,
+        });
+      }
+    }
+
+    return attachments.length > 0 ? attachments : undefined;
+  }
+
+  /**
+   * 确定消息类型
+   */
+  private determineMessageType(message: NonNullable<Context['message']>): string {
+    if (message.photo && message.photo.length > 0) return 'image';
+    if (message.document) return 'document';
+    if (message.video) return 'video';
+    if (message.audio) return 'audio';
+    if (message.voice) return 'voice';
+    if (message.text) return 'text';
+    return 'unknown';
+  }
+
+  /**
    * 处理消息事件
    */
   private async handleMessage(ctx: Context): Promise<void> {
@@ -340,7 +481,7 @@ export class TelegramAdapter implements PlatformAdapter {
     if (!chat) return;
 
     const chatType = chat.type === 'private' ? 'p2p' : 'group';
-    const text = message.text || '';
+    const text = message.text || message.caption || '';
 
     // 群聊检查：需要 @ 机器人才响应
     if (chatType === 'group' && this.botUsername) {
@@ -358,6 +499,10 @@ export class TelegramAdapter implements PlatformAdapter {
       cleanedContent = text.replace(mentionPattern, '').trim();
     }
 
+    // 提取附件信息
+    const attachments = this.extractAttachmentFromMessage(message);
+    const msgType = this.determineMessageType(message);
+
     // 构建平台通用事件
     const event: PlatformMessageEvent = {
       platform: 'telegram',
@@ -366,8 +511,9 @@ export class TelegramAdapter implements PlatformAdapter {
       senderId: String(message.from?.id || ''),
       senderType: 'user',
       content: cleanedContent,
-      msgType: 'text',
+      msgType,
       chatType: chatType as 'p2p' | 'group',
+      attachments,
       rawEvent: ctx,
     };
 

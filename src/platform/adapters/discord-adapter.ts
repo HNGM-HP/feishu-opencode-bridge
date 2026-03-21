@@ -336,8 +336,8 @@ export class DiscordAdapter implements PlatformAdapter {
     }
 
     if (!discordConfig.token) {
-      console.warn('[Discord] ⚠️ 已启用但缺少 DISCORD_TOKEN（或 DISCORD_BOT_TOKEN），适配器将保持不活跃状态');
-      console.warn('[Discord] 请设置 DISCORD_TOKEN 或 DISCORD_BOT_TOKEN 后重启服务');
+      console.warn('[Discord] ⚠️ 已启用但缺少 DISCORD_TOKEN，适配器将保持不活跃状态');
+      console.warn('[Discord] 请设置 DISCORD_TOKEN 后重启服务');
       return;
     }
 

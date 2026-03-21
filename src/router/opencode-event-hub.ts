@@ -19,6 +19,7 @@ import { permissionHandler } from '../permissions/handler.js';
 import { questionHandler } from '../opencode/question-handler.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { feishuClient } from '../feishu/client.js';
+import * as platformRegistry from '../platform/registry.js';
 
 // ==================== 类型定义 ====================
 
@@ -308,6 +309,113 @@ export class OpenCodeEventHub {
         'permission'
       );
       outputBuffer.touch(bufferKey);
+
+      // 为 QQ 等不支持卡片的平台发送文本权限请求通知
+      if (route.platform === 'qq') {
+        const adapter = platformRegistry.get('qq');
+        if (adapter) {
+          const sender = adapter.getSender();
+          const riskText = permissionInfo.risk === 'high' ? '⚠️ 高风险' :
+                          permissionInfo.risk === 'medium' ? '⚡ 中等风险' : '✅ 低风险';
+          const permissionText = `🔐 权限确认请求
+
+工具名称: ${permissionInfo.tool}
+操作描述: ${permissionInfo.description}
+风险等级: ${riskText}
+
+请回复以下选项之一:
+1 - 允许
+2 - 拒绝
+3 - 始终允许此工具
+
+也可以直接回复: 允许 / 拒绝 / 始终允许 (或 y / n / always)`;
+          sender.sendText(route.conversationId, permissionText).catch(err => {
+            console.error('[权限] QQ 权限请求通知发送失败:', err);
+          });
+        }
+      }
+
+      // 为 Telegram 发送带 InlineKeyboard 的权限请求卡片
+      if (route.platform === 'telegram') {
+        const adapter = platformRegistry.get('telegram');
+        if (adapter) {
+          const sender = adapter.getSender();
+          const riskText = permissionInfo.risk === 'high' ? '⚠️ 高风险' :
+                          permissionInfo.risk === 'medium' ? '⚡ 中等风险' : '✅ 低风险';
+          const permissionText = `🔐 权限确认请求
+
+工具名称: ${permissionInfo.tool}
+操作描述: ${permissionInfo.description}
+风险等级: ${riskText}
+
+也可以直接回复: 允许 / 拒绝 / 始终允许 (或 y / n / always)`;
+
+          const allowCallbackData = JSON.stringify({
+            action: 'permission_allow',
+            sessionId: permissionInfo.sessionId,
+            permissionId: permissionInfo.permissionId,
+            remember: false,
+            ...(event.parentSessionId ? { parentSessionId: event.parentSessionId } : {}),
+            ...(event.relatedSessionId ? { relatedSessionId: event.relatedSessionId } : {}),
+          });
+
+          const denyCallbackData = JSON.stringify({
+            action: 'permission_deny',
+            sessionId: permissionInfo.sessionId,
+            permissionId: permissionInfo.permissionId,
+            ...(event.parentSessionId ? { parentSessionId: event.parentSessionId } : {}),
+            ...(event.relatedSessionId ? { relatedSessionId: event.relatedSessionId } : {}),
+          });
+
+          const alwaysAllowCallbackData = JSON.stringify({
+            action: 'permission_allow',
+            sessionId: permissionInfo.sessionId,
+            permissionId: permissionInfo.permissionId,
+            remember: true,
+            ...(event.parentSessionId ? { parentSessionId: event.parentSessionId } : {}),
+            ...(event.relatedSessionId ? { relatedSessionId: event.relatedSessionId } : {}),
+          });
+
+          const permissionCard = {
+            text: permissionText,
+            telegramText: permissionText,
+            buttons: [
+              { text: '✅ 允许', callback_data: allowCallbackData },
+              { text: '❌ 拒绝', callback_data: denyCallbackData },
+              { text: '📝 始终允许', callback_data: alwaysAllowCallbackData },
+            ],
+          };
+
+          sender.sendCard(route.conversationId, permissionCard).catch(err => {
+            console.error('[权限] Telegram 权限请求卡片发送失败:', err);
+          });
+        }
+      }
+
+      // 为企业微信发送 Markdown 格式的权限请求
+      if (route.platform === 'wecom') {
+        const adapter = platformRegistry.get('wecom');
+        if (adapter) {
+          const sender = adapter.getSender();
+          const riskText = permissionInfo.risk === 'high' ? '⚠️ **高风险**' :
+                          permissionInfo.risk === 'medium' ? '⚡ **中等风险**' : '✅ **低风险**';
+          const permissionText = `🔐 **权限确认请求**
+
+**工具名称:** ${permissionInfo.tool}
+**操作描述:** ${permissionInfo.description}
+**风险等级:** ${riskText}
+
+请回复以下选项之一:
+- 1 或 允许 - 允许本次操作
+- 2 或 拒绝 - 拒绝本次操作
+- 3 或 始终允许 - 始终允许此工具
+
+也可以直接回复: 允许 / 拒绝 / 始终允许 (或 y / n / always)`;
+          sender.sendText(route.conversationId, permissionText).catch(err => {
+            console.error('[权限] 企业微信权限请求通知发送失败:', err);
+          });
+        }
+      }
     };
 
     console.log(
@@ -789,7 +897,200 @@ export class OpenCodeEventHub {
       questionHandler.register(request, bufferKey, route.conversationId);
       upsertTimelineNote(bufferKey, `question:${request.sessionID}:${request.id}`, '🤝 问答交互（请在当前流式卡片中作答）', 'question');
       outputBuffer.touch(bufferKey);
+
+      // 为 QQ 等不支持卡片的平台发送文本问答通知
+      if (route.platform === 'qq') {
+        const adapter = platformRegistry.get('qq');
+        if (adapter) {
+          const sender = adapter.getSender();
+          const firstQuestion = request.questions[0];
+          if (firstQuestion) {
+            const questionText = this.buildQuestionText(request);
+            sender.sendText(route.conversationId, questionText).catch(err => {
+              console.error('[问题] QQ 问答通知发送失败:', err);
+            });
+          }
+        }
+      }
+
+      // 为 WhatsApp 平台发送文本问答提示
+      if (route.platform === 'whatsapp') {
+        const adapter = platformRegistry.get('whatsapp');
+        if (adapter) {
+          const sender = adapter.getSender();
+          const questionText = this.buildQuestionText(request);
+          sender.sendText(route.conversationId, questionText).catch(err => {
+            console.error('[问题] WhatsApp 问答提示发送失败:', err);
+          });
+        }
+      }
+
+      // 为 Telegram 发送带 InlineKeyboard 的问答卡片
+      if (route.platform === 'telegram') {
+        this.sendTelegramQuestionCard(route.conversationId, request);
+      }
+
+      // 为企业微信发送 Markdown 格式的问答提示
+      if (route.platform === 'wecom') {
+        const adapter = platformRegistry.get('wecom');
+        if (adapter) {
+          const sender = adapter.getSender();
+          const questionText = this.buildWeComQuestionText(request);
+          sender.sendText(route.conversationId, questionText).catch(err => {
+            console.error('[问题] 企业微信问答提示发送失败:', err);
+          });
+        }
+      }
     }
+  }
+
+  /**
+   * 构建问答提示文本消息
+   */
+  private buildQuestionText(request: import('../opencode/question-handler.js').QuestionRequest): string {
+    const totalQuestions = request.questions.length;
+    const lines: string[] = ['🤝 AI 需要您回答以下问题：'];
+
+    for (let i = 0; i < totalQuestions; i++) {
+      const question = request.questions[i];
+      const questionNum = i + 1;
+      lines.push(`\n【问题 ${questionNum}/${totalQuestions}】`);
+      if (question.header) {
+        lines.push(question.header);
+      }
+      if (question.question) {
+        lines.push(question.question);
+      }
+      if (question.options && question.options.length > 0) {
+        lines.push('\n选项：');
+        for (let j = 0; j < question.options.length; j++) {
+          const option = question.options[j];
+          lines.push(`  ${j + 1}. ${option.label}${option.description ? ` - ${option.description}` : ''}`);
+        }
+        if (question.multiple) {
+          lines.push('（可多选，用空格或逗号分隔多个编号）');
+        }
+      }
+    }
+
+    lines.push('\n请回复选项编号（如 1）或直接输入自定义答案');
+    lines.push('回复"跳过"可跳过当前问题');
+
+    return lines.join('\n');
+  }
+
+  /**
+   * 构建企业微信 Markdown 格式的问答提示文本消息
+   */
+  private buildWeComQuestionText(request: import('../opencode/question-handler.js').QuestionRequest): string {
+    const totalQuestions = request.questions.length;
+    const lines: string[] = ['🤝 **AI 需要您回答以下问题：**'];
+
+    for (let i = 0; i < totalQuestions; i++) {
+      const question = request.questions[i];
+      const questionNum = i + 1;
+      lines.push(`\n**【问题 ${questionNum}/${totalQuestions}】**`);
+      if (question.header) {
+        lines.push(`**${question.header}**`);
+      }
+      if (question.question) {
+        lines.push(question.question);
+      }
+      if (question.options && question.options.length > 0) {
+        lines.push('\n**选项：**');
+        for (let j = 0; j < question.options.length; j++) {
+          const option = question.options[j];
+          lines.push(`> ${j + 1}. **${option.label}**${option.description ? ` - ${option.description}` : ''}`);
+        }
+        if (question.multiple) {
+          lines.push('_（可多选，用空格或逗号分隔多个编号）_');
+        }
+      }
+    }
+
+    lines.push('\n---');
+    lines.push('请回复选项编号（如 1）或直接输入自定义答案');
+    lines.push('回复"跳过"可跳过当前问题');
+
+    return lines.join('\n');
+  }
+
+  /**
+   * 为 Telegram 发送带 InlineKeyboard 的问答卡片
+   */
+  private sendTelegramQuestionCard(
+    conversationId: string,
+    request: import('../opencode/question-handler.js').QuestionRequest
+  ): void {
+    const adapter = platformRegistry.get('telegram');
+    if (!adapter) return;
+
+    const sender = adapter.getSender();
+    const questionCount = request.questions.length;
+
+    if (questionCount === 0) return;
+
+    // 获取当前问题（初始为第一个）
+    const questionIndex = 0;
+    const question = request.questions[questionIndex];
+    const questionText = `❓ *${this.escapeTelegramMarkdown(question.header || '问题')}*\n\n${this.escapeTelegramMarkdown(question.question)}`;
+
+    // 构建选项按钮
+    const buttons: { text: string; callback_data: string }[] = [];
+    const optionLabels = question.options.map(opt => opt.label);
+
+    for (let i = 0; i < optionLabels.length; i++) {
+      const label = optionLabels[i];
+      const callbackData = JSON.stringify({
+        action: 'question_select',
+        requestId: request.id,
+        sessionId: request.sessionID,
+        questionIndex: questionIndex,
+        label: label,
+      });
+      buttons.push({ text: label, callback_data: callbackData });
+    }
+
+    // 添加跳过按钮
+    const skipCallbackData = JSON.stringify({
+      action: 'question_skip',
+      requestId: request.id,
+      sessionId: request.sessionID,
+      questionIndex: questionIndex,
+    });
+    buttons.push({ text: '⏭️ 跳过', callback_data: skipCallbackData });
+
+    // 如果支持自定义答案，添加自定义按钮
+    if (question.custom) {
+      const customCallbackData = JSON.stringify({
+        action: 'question_custom',
+        requestId: request.id,
+        sessionId: request.sessionID,
+        questionIndex: questionIndex,
+      });
+      buttons.push({ text: '✏️ 自定义', callback_data: customCallbackData });
+    }
+
+    const progressHint = questionCount > 1
+      ? `\n\n📋 第 ${questionIndex + 1}/${questionCount} 题`
+      : '';
+
+    const questionCard = {
+      text: questionText + progressHint + '\n\n💡 也可以直接回复文本作答',
+      telegram_text: questionText + progressHint + '\n\n💡 也可以直接回复文本作答',
+      buttons,
+    };
+
+    sender.sendCard(conversationId, questionCard).catch(err => {
+      console.error('[问题] Telegram 问答卡片发送失败:', err);
+    });
+  }
+
+  /**
+   * 转义 Telegram Markdown 特殊字符
+   */
+  private escapeTelegramMarkdown(text: string): string {
+    return text.replace(/([_*\[\]()~`>#+\-=|{}.!\\])/g, '\\$1');
   }
 
   // ==================== 依赖注入辅助 ====================

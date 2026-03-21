@@ -554,6 +554,14 @@ class ChatSessionStore {
     }
   }
 
+  updateTitleByConversation(platform: string, conversationId: string, title: string): void {
+    const session = this.getSessionByConversation(platform, conversationId);
+    if (session) {
+      session.title = title;
+      this.save();
+    }
+  }
+
   updateResolvedDirectory(chatId: string, directory: string): void {
     const session = this.getChatDataLegacyOrNamespaced(chatId);
     if (session) {
@@ -606,6 +614,18 @@ class ChatSessionStore {
 
   popInteraction(chatId: string): InteractionRecord | undefined {
     const session = this.getChatDataLegacyOrNamespaced(chatId);
+    if (session && session.interactionHistory && session.interactionHistory.length > 0) {
+      const record = session.interactionHistory.pop();
+
+      this.updateLegacyPointers(session);
+      this.save();
+      return record;
+    }
+    return undefined;
+  }
+
+  popInteractionByConversation(platform: string, conversationId: string): InteractionRecord | undefined {
+    const session = this.getSessionByConversation(platform, conversationId);
     if (session && session.interactionHistory && session.interactionHistory.length > 0) {
       const record = session.interactionHistory.pop();
 

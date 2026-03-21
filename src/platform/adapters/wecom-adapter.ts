@@ -20,7 +20,12 @@ import { wecomConfig } from '../../config.js';
 interface WeComMessageExt {
   text?: { content: string };
   image?: { url?: string; aeskey?: string };
-  file?: { url?: string; aeskey?: string };
+  file?: {
+    url?: string;
+    aeskey?: string;
+    name?: string;
+    size?: number;
+  };
   mixed?: {
     msg_item: Array<{
       msgtype: 'text' | 'image';
@@ -303,17 +308,20 @@ export class WeComAdapter implements PlatformAdapter {
           type: 'image',
           fileKey: body.image.url,
           fileName: 'image',
-          fileType: 'image',
+          fileType: 'image/png',
         });
       }
 
       // 处理文件消息
       if (body.file?.url) {
+        const fileName = body.file.name || 'file';
+        const fileSize = body.file.size;
         attachments.push({
           type: 'file',
           fileKey: body.file.url,
-          fileName: 'file',
-          fileType: 'file',
+          fileName,
+          fileType: this.guessFileTypeFromName(fileName),
+          fileSize,
         });
       }
     }
@@ -322,6 +330,26 @@ export class WeComAdapter implements PlatformAdapter {
       text: textParts.join('\n').trim(),
       attachments: attachments.length > 0 ? attachments : undefined,
     };
+  }
+
+  // 根据文件名猜测文件类型
+  private guessFileTypeFromName(fileName: string): string {
+    const ext = fileName.split('.').pop()?.toLowerCase();
+    switch (ext) {
+      case 'png':
+        return 'image/png';
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'pdf':
+        return 'application/pdf';
+      default:
+        return 'application/octet-stream';
+    }
   }
 }
 

@@ -32,7 +32,6 @@ export interface BridgeSettings {
   // Discord
   DISCORD_ENABLED?: string;
   DISCORD_TOKEN?: string;
-  DISCORD_BOT_TOKEN?: string;
   DISCORD_CLIENT_ID?: string;
   DISCORD_ALLOWED_BOT_IDS?: string;
 

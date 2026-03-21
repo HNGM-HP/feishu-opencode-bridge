@@ -75,19 +75,9 @@
             <el-form-item label="Bot Token">
               <el-input v-model="form.DISCORD_TOKEN" placeholder="your-discord-bot-token"
                 type="password" show-password :disabled="!discordEnabled" />
-              <div class="field-tip">Discord Developer Portal → Bot → Token（优先使用此字段）</div>
+              <div class="field-tip">Discord Developer Portal → Bot → Token</div>
             </el-form-item>
           </el-col>
-          <el-col :span="12">
-            <el-form-item label="Bot Token（兼容别名 DISCORD_BOT_TOKEN）">
-              <el-input v-model="form.DISCORD_BOT_TOKEN" placeholder="与 DISCORD_TOKEN 二选一"
-                type="password" show-password :disabled="!discordEnabled" />
-              <div class="field-tip">当 DISCORD_TOKEN 未设置时使用此字段，功能完全相同</div>
-            </el-form-item>
-          </el-col>
-        </el-row>
-
-        <el-row :gutter="24">
           <el-col :span="12">
             <el-form-item label="Client ID">
               <el-input v-model="form.DISCORD_CLIENT_ID" placeholder="your-discord-client-id"
@@ -95,6 +85,9 @@
               <div class="field-tip">Discord Developer Portal → OAuth2 → Client ID</div>
             </el-form-item>
           </el-col>
+        </el-row>
+
+        <el-row :gutter="24">
           <el-col :span="12">
             <el-form-item label="允许的 Bot ID 列表（可选）">
               <el-input v-model="form.DISCORD_ALLOWED_BOT_IDS" placeholder="纯数字 ID，逗号分隔"
@@ -516,7 +509,6 @@ const form = reactive({
   FEISHU_VERIFICATION_TOKEN: '',
   DISCORD_ENABLED: 'false',
   DISCORD_TOKEN: '',
-  DISCORD_BOT_TOKEN: '',
   DISCORD_CLIENT_ID: '',
   DISCORD_ALLOWED_BOT_IDS: '',
   WECOM_ENABLED: 'false',
@@ -555,7 +547,6 @@ function syncFromStore() {
     FEISHU_VERIFICATION_TOKEN: s.FEISHU_VERIFICATION_TOKEN || '',
     DISCORD_ENABLED: s.DISCORD_ENABLED || 'false',
     DISCORD_TOKEN: s.DISCORD_TOKEN || '',
-    DISCORD_BOT_TOKEN: s.DISCORD_BOT_TOKEN || '',
     DISCORD_CLIENT_ID: s.DISCORD_CLIENT_ID || '',
     DISCORD_ALLOWED_BOT_IDS: s.DISCORD_ALLOWED_BOT_IDS || '',
     WECOM_ENABLED: s.WECOM_ENABLED || 'false',
@@ -605,7 +596,7 @@ function onAllowedUsersChange(val: string[]) {
 async function handleSave() {
   // 检查是否至少配置了一个平台
   const hasFeishu = feishuEnabled.value && form.FEISHU_APP_ID && form.FEISHU_APP_SECRET
-  const hasDiscord = discordEnabled.value && (form.DISCORD_TOKEN || form.DISCORD_BOT_TOKEN)
+  const hasDiscord = discordEnabled.value && form.DISCORD_TOKEN
   const hasWecom = wecomEnabled.value && form.WECOM_BOT_ID && form.WECOM_SECRET
   const hasTelegram = telegramEnabled.value && form.TELEGRAM_BOT_TOKEN
   const hasQQ = qqEnabled.value && (
