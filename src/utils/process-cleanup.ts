@@ -17,9 +17,11 @@ const processManagerPath = path.join(rootDir, 'scripts', 'process-manager.mjs');
  * 执行进程管理命令
  */
 function runProcessManager(args: string[]): { stdout: string; stderr: string; status: number | null } {
+  const isWindows = process.platform === 'win32';
   const result = spawnSync(process.execPath, [processManagerPath, ...args], {
     cwd: rootDir,
     encoding: 'utf-8',
+    windowsHide: isWindows,
   });
 
   return {

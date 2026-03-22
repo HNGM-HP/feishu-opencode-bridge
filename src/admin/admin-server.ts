@@ -379,7 +379,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
     try {
       // 拉取最新代码
       try {
-        execSync('git pull --ff-only', { encoding: 'utf-8', cwd: process.cwd() });
+        execSync('git pull --ff-only', { encoding: 'utf-8', cwd: process.cwd(), windowsHide: true });
       } catch {
         // 忽略 git 错误，可能是本地修改
       }
@@ -402,7 +402,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
 
       try {
         // 安装依赖
-        execSync('npm install --include=dev', { encoding: 'utf-8', cwd: process.cwd() });
+        execSync('npm install --include=dev', { encoding: 'utf-8', cwd: process.cwd(), windowsHide: true });
       } finally {
         if (puppeteerHostSet) {
           if (originalEnv) {
@@ -414,10 +414,10 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       }
 
       // 构建前端
-      execSync('npm run build:web', { encoding: 'utf-8', cwd: process.cwd() });
+      execSync('npm run build:web', { encoding: 'utf-8', cwd: process.cwd(), windowsHide: true });
 
       // 构建后端
-      execSync('npm run build', { encoding: 'utf-8', cwd: process.cwd() });
+      execSync('npm run build', { encoding: 'utf-8', cwd: process.cwd(), windowsHide: true });
 
       res.json({ ok: true, message: '升级完成，请重启服务' });
     } catch (error: any) {
@@ -432,7 +432,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       // 检查是否安装
       let version: string | null = null;
       try {
-        version = execSync('opencode --version', { encoding: 'utf-8', timeout: 5000 }).trim();
+        version = execSync('opencode --version', { encoding: 'utf-8', timeout: 5000, windowsHide: true }).trim();
       } catch {
         // 未安装
       }
@@ -510,7 +510,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
 
       // 获取远程最新版本（通过 git fetch）
       try {
-        execSync('git fetch --tags', { encoding: 'utf-8', timeout: 30000 });
+        execSync('git fetch --tags', { encoding: 'utf-8', timeout: 30000, windowsHide: true });
       } catch {
         // 忽略 fetch 错误
       }
@@ -520,7 +520,8 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       try {
         latestTag = execSync('git describe --tags "$(git rev-list --tags --max-count=1)"', {
           encoding: 'utf-8',
-          timeout: 5000
+          timeout: 5000,
+          windowsHide: true,
         }).trim();
       } catch {
         // 没有 tag
@@ -530,8 +531,8 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       let hasUpdate = false;
       if (latestTag) {
         try {
-          const currentCommit = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
-          const tagCommit = execSync('git rev-parse ' + latestTag, { encoding: 'utf-8' }).trim();
+          const currentCommit = execSync('git rev-parse HEAD', { encoding: 'utf-8', windowsHide: true }).trim();
+          const tagCommit = execSync('git rev-parse ' + latestTag, { encoding: 'utf-8', windowsHide: true }).trim();
           hasUpdate = currentCommit !== tagCommit;
         } catch {
           // 忽略错误
@@ -555,7 +556,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
     // 异步安装（使用 npm 安装）
     setTimeout(() => {
       try {
-        execSync('npm i -g opencode-ai', { encoding: 'utf-8', timeout: 120000 });
+        execSync('npm i -g opencode-ai', { encoding: 'utf-8', timeout: 120000, windowsHide: true });
         console.log('[Admin] OpenCode 安装完成');
       } catch (error: any) {
         console.error('[Admin] OpenCode 安装失败:', error.message);
@@ -570,7 +571,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
     // 异步升级（使用 opencode upgrade 命令）
     setTimeout(() => {
       try {
-        execSync('opencode upgrade', { encoding: 'utf-8', timeout: 120000 });
+        execSync('opencode upgrade', { encoding: 'utf-8', timeout: 120000, windowsHide: true });
         console.log('[Admin] OpenCode 升级完成');
       } catch (error: any) {
         console.error('[Admin] OpenCode 升级失败:', error.message);
@@ -628,6 +629,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
         execSync('node ' + path.join(process.cwd(), 'scripts', 'process-manager.mjs') + ' kill-opencode', {
           encoding: 'utf-8',
           timeout: 10000,
+          windowsHide: true,
         });
         console.log('[Admin] OpenCode 进程已终止');
       } catch (error: any) {
@@ -810,7 +812,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
   api.get('/opencode/models', async (_req, res) => {
     try {
       const { execSync } = await import('node:child_process');
-      const output = execSync('opencode models', { encoding: 'utf-8', timeout: 30000 });
+      const output = execSync('opencode models', { encoding: 'utf-8', timeout: 30000, windowsHide: true });
       const models = output
         .split('\n')
         .map(line => line.trim())
@@ -929,6 +931,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
           const processManagerPath = path.resolve(__dirname, '../../scripts/process-manager.mjs');
           spawnSync(process.execPath, [processManagerPath, 'kill-opencode'], {
             stdio: 'inherit',
+            windowsHide: true,
           });
           console.log('[Admin] OpenCode 进程已终止');
         } catch (e: any) {
