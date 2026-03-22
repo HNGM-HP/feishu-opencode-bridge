@@ -91,6 +91,36 @@ type OpencodePartInput = { type: 'text'; text: string } | OpencodeFilePartInput;
 export type QuestionSkipActionResult = 'applied' | 'not_found' | 'stale_card' | 'invalid_state';
 
 export class GroupHandler {
+  constructor() {
+    // 启动时清理残留的临时文件
+    this.cleanupStaleTempFiles();
+  }
+
+  // 清理残留的临时文件（启动时调用）
+  private async cleanupStaleTempFiles(): Promise<void> {
+    try {
+      await fs.mkdir(ATTACHMENT_BASE_DIR, { recursive: true });
+      const files = await fs.readdir(ATTACHMENT_BASE_DIR);
+      const now = Date.now();
+      const staleThresholdMs = 24 * 60 * 60 * 1000; // 24 小时
+
+      for (const file of files) {
+        const filePath = path.join(ATTACHMENT_BASE_DIR, file);
+        try {
+          const stat = await fs.stat(filePath);
+          if (now - stat.mtimeMs > staleThresholdMs) {
+            await fs.unlink(filePath);
+            console.log(`[Group] 清理残留临时文件: ${file}`);
+          }
+        } catch {
+          // 忽略单个文件清理失败
+        }
+      }
+    } catch (error) {
+      console.warn('[Group] 清理临时文件目录失败:', error instanceof Error ? error.message : String(error));
+    }
+  }
+
   private ensureStreamingBuffer(chatId: string, sessionId: string, replyMessageId: string | null): void {
     const key = `chat:${chatId}`;
     const current = outputBuffer.get(key);
@@ -330,10 +360,16 @@ export class GroupHandler {
 
       const parts: OpencodePartInput[] = [];
 
-      // 按需注入文件发送指令：仅在检测到发送意图关键词时注入
+      // 按需注入文件发送指令：仅在检测到明确的发送意图关键词时注入
+      // 使用更精确的匹配模式，避免干扰正常对话
       let effectiveText = text;
-      if (effectiveText && /发给我|发送文件|上传|传给我|send.*file/i.test(effectiveText)) {
-        effectiveText += '\n[feishu-bridge: 如需发送文件到当前群聊，执行 echo FEISHU_SEND_FILE <文件绝对路径>]';
+      if (effectiveText) {
+        // 精确匹配：以特定关键词结尾或包含完整的请求句式
+        const sendFilePattern = /(?:请|帮)?(?:把|将|那个)?(?:文件|图片|截图)(?:发|传|发给我|传给我|发送)(?:给我|过来)?[。！？]?$/i;
+        const requestFilePattern = /发送文件到当前群聊|send file to (this )?chat/i;
+        if (sendFilePattern.test(effectiveText) || requestFilePattern.test(effectiveText)) {
+          effectiveText += '\n\n[系统提示: 如需发送文件到当前群聊，请让 AI 执行: echo FEISHU_SEND_FILE <文件绝对路径>]';
+        }
       }
 
       if (effectiveText) {
@@ -393,8 +429,9 @@ export class GroupHandler {
             // 回写缓存，后续消息不再重复查询
             chatSessionStore.updateResolvedDirectory(chatId, directory);
           }
-        } catch {
-          // 获取失败不阻塞消息发送
+        } catch (error) {
+          // 获取失败不阻塞消息发送，但记录调试日志
+          console.debug('[Group] 获取会话目录失败，将使用默认目录:', error instanceof Error ? error.message : String(error));
         }
       }
       await opencodeClient.sendMessagePartsAsync(

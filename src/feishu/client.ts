@@ -718,7 +718,8 @@ class FeishuClient extends EventEmitter {
       return { msg: 'ok' };
     } catch (error) {
       console.error('[飞书] 解析卡片事件失败:', error);
-      return { msg: 'ok' };
+      // 返回错误提示，但仍返回 200 避免飞书重试
+      return { msg: 'ok', error: '卡片事件处理失败，请稍后重试' };
     }
   }
 

@@ -141,9 +141,19 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
     }
     const authHeader = req.headers.authorization ?? '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-    const tokenBuf = Buffer.from(token);
-    const passBuf = Buffer.from(currentPassword);
-    if (tokenBuf.length !== passBuf.length || !crypto.timingSafeEqual(tokenBuf, passBuf)) {
+
+    // 使用时序安全的密码比较，避免长度泄露
+    // 将两个 buffer padding 到相同长度后再比较
+    const tokenBuf = Buffer.from(token, 'utf-8');
+    const passBuf = Buffer.from(currentPassword, 'utf-8');
+    const maxLen = Math.max(tokenBuf.length, passBuf.length, 64);
+
+    const paddedToken = Buffer.alloc(maxLen);
+    const paddedPass = Buffer.alloc(maxLen);
+    tokenBuf.copy(paddedToken);
+    passBuf.copy(paddedPass);
+
+    if (!crypto.timingSafeEqual(paddedToken, paddedPass)) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }

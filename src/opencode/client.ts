@@ -356,45 +356,46 @@ class OpencodeClientWrapper extends EventEmitter {
 
   // 连接到OpenCode服务器
   async connect(): Promise<boolean> {
-    try {
-      console.log(`[OpenCode] 正在连接到 ${opencodeConfig.baseUrl}...`);
+    console.log(`[OpenCode] 正在连接到 ${opencodeConfig.baseUrl}...`);
 
+    try {
       this.client = createOpencodeClient({
         baseUrl: opencodeConfig.baseUrl,
         headers: withOpencodeAuthorizationHeaders(),
       });
 
       // 通过获取会话列表来检查服务器状态
-      try {
-        const result = await this.client.session.list();
-        if (result.error) {
-          const statusCode = result.response?.status;
-          const reason = appendAuthHint(
-            statusCode
-              ? `OpenCode 连接失败（HTTP ${statusCode}）`
-              : `OpenCode 连接失败: ${formatSdkError(result.error)}`,
-            statusCode
-          );
-          console.error(`[OpenCode] ${reason}`);
-          return false;
-        }
+      const result = await this.client.session.list();
 
-        console.log('[OpenCode] 已连接');
-        this.eventListeningEnabled = true;
-        
-        // 启动事件监听
-        void this.startEventListener();
-        return true;
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        const withHint = /\b(401|403)\b/.test(errorMessage)
-          ? `${errorMessage}；${buildAuthEnvHint()}`
-          : errorMessage;
-        console.error(`[OpenCode] 服务器状态异常: ${withHint}`);
+      if (result.error) {
+        const statusCode = result.response?.status;
+        const reason = appendAuthHint(
+          statusCode
+            ? `OpenCode 连接失败（HTTP ${statusCode}）`
+            : `OpenCode 连接失败: ${formatSdkError(result.error)}`,
+          statusCode
+        );
+        console.error(`[OpenCode] ${reason}`);
         return false;
       }
+
+      console.log('[OpenCode] 已连接');
+      this.eventListeningEnabled = true;
+
+      // 启动事件监听
+      void this.startEventListener();
+      return true;
     } catch (error) {
-      console.error('[OpenCode] 连接失败:', error);
+      // 统一错误处理：格式化错误信息并添加认证提示
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      const statusCode = /\b(\d{3})\b/.exec(errorMessage)?.[1];
+      const numericCode = statusCode ? parseInt(statusCode, 10) : undefined;
+
+      const reason = appendAuthHint(
+        `OpenCode 连接失败: ${errorMessage}`,
+        numericCode
+      );
+      console.error(`[OpenCode] ${reason}`);
       return false;
     }
   }

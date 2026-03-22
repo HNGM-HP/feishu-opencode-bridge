@@ -163,6 +163,9 @@ class OutputBuffer {
     if (!buffer || buffer.timer) return;
 
     buffer.timer = setTimeout(() => {
+      // 再次检查 buffer 是否仍然存在（可能在定时器触发前被 clearAll 清理）
+      const currentBuffer = this.buffers.get(key);
+      if (!currentBuffer) return;
       this.triggerUpdate(key);
     }, outputConfig.updateInterval);
   }

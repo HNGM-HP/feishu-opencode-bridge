@@ -11,6 +11,8 @@ import { qqAdapter } from './platform/adapters/qq-adapter.js';
 import { whatsappAdapter } from './platform/adapters/whatsapp-adapter.js';
 import type { PlatformSender } from './platform/types.js';
 import { opencodeClient, type PermissionRequestEvent } from './opencode/client.js';
+import { streamStateManager, type ToolRuntimeState, type TimelineSegment, type StreamTimelineState } from './store/stream-state.js';
+import { buildTelegramText, buildPortableUpdateText, buildPortableUpdatePayload } from './utils/text-builder.js';
 
 // 根据平台获取正确的 Sender
 function getSenderByPlatform(platform: string): PlatformSender | null {
@@ -565,6 +567,30 @@ async function main() {
     }
   }
 
+  // 注册进程退出时的清理逻辑，确保子进程不会变成孤儿进程
+  const cleanupChildProcess = () => {
+    if (opencodeChildProcess && opencodeChildProcess.pid) {
+      try {
+        // 由于子进程是 detached，需要显式终止
+        process.kill(opencodeChildProcess.pid, 'SIGTERM');
+        console.log(`[Index] 已发送 SIGTERM 到 OpenCode 子进程 (PID=${opencodeChildProcess.pid})`);
+      } catch {
+        // 进程可能已经退出，忽略错误
+      }
+    }
+  };
+
+  // 监听主进程退出事件
+  process.on('exit', cleanupChildProcess);
+  process.on('SIGINT', () => {
+    cleanupChildProcess();
+    process.exit(0);
+  });
+  process.on('SIGTERM', () => {
+    cleanupChildProcess();
+    process.exit(0);
+  });
+
   // 3. 验证配置
   try {
     validateConfig();
@@ -594,59 +620,9 @@ async function main() {
   }
 
   // 3. 配置输出缓冲 (流式响应)
-  const streamContentMap = new Map<string, { text: string; thinking: string }>();
-  const reasoningSnapshotMap = new Map<string, string>();
-  const textSnapshotMap = new Map<string, string>();
-  const retryNoticeMap = new Map<string, string>();
-  const errorNoticeMap = new Map<string, string>();
-  const streamCardMessageIdsMap = new Map<string, string[]>();
   const STREAM_CARD_COMPONENT_BUDGET = 180;
   const CORRELATION_CACHE_TTL_MS = 10 * 60 * 1000;
 
-  type CorrelationChatRef = {
-    chatId: string;
-    expiresAt: number;
-  };
-
-  const toolCallChatMap = new Map<string, CorrelationChatRef>();
-  const messageChatMap = new Map<string, CorrelationChatRef>();
-
-  type ToolRuntimeState = {
-    name: string;
-    status: 'pending' | 'running' | 'completed' | 'failed';
-    output?: string;
-    kind?: 'tool' | 'subtask';
-  };
-
-  type TimelineSegment =
-    | {
-        type: 'text';
-        text: string;
-      }
-    | {
-        type: 'reasoning';
-        text: string;
-      }
-    | {
-        type: 'tool';
-        name: string;
-        status: ToolRuntimeState['status'];
-        output?: string;
-        kind?: 'tool' | 'subtask';
-      }
-    | {
-        type: 'note';
-        text: string;
-        variant?: 'retry' | 'compaction' | 'question' | 'error' | 'permission';
-      };
-
-  type StreamTimelineState = {
-    order: string[];
-    segments: Map<string, TimelineSegment>;
-  };
-
-  const streamToolStateMap = new Map<string, Map<string, ToolRuntimeState>>();
-  const streamTimelineMap = new Map<string, StreamTimelineState>();
   const getPendingPermissionForChat = (chatId: string): StreamCardPendingPermission | undefined => {
     const head = permissionHandler.peekForChat(chatId);
     if (!head) return undefined;
@@ -665,34 +641,15 @@ async function main() {
   };
 
   const getOrCreateTimelineState = (bufferKey: string): StreamTimelineState => {
-    let timeline = streamTimelineMap.get(bufferKey);
-    if (!timeline) {
-      timeline = {
-        order: [],
-        segments: new Map(),
-      };
-      streamTimelineMap.set(bufferKey, timeline);
-    }
-    return timeline;
+    return streamStateManager.getOrCreateTimeline(bufferKey);
   };
 
   const trimTimeline = (timeline: StreamTimelineState): void => {
-    const limit = 80;
-    while (timeline.order.length > limit) {
-      const removedKey = timeline.order.shift();
-      if (removedKey) {
-        timeline.segments.delete(removedKey);
-      }
-    }
+    streamStateManager.trimTimeline(timeline);
   };
 
   const upsertTimelineSegment = (bufferKey: string, segmentKey: string, segment: TimelineSegment): void => {
-    const timeline = getOrCreateTimelineState(bufferKey);
-    if (!timeline.segments.has(segmentKey)) {
-      timeline.order.push(segmentKey);
-      trimTimeline(timeline);
-    }
-    timeline.segments.set(segmentKey, segment);
+    streamStateManager.upsertTimelineSegment(bufferKey, segmentKey, segment);
   };
 
   const appendTimelineText = (
@@ -793,7 +750,7 @@ async function main() {
   const discordHandler = createDiscordHandler(discordAdapter.getSender());
 
   const getTimelineSegments = (bufferKey: string): StreamCardSegment[] => {
-    const timeline = streamTimelineMap.get(bufferKey);
+    const timeline = streamStateManager.getTimeline(bufferKey);
     if (!timeline) {
       return [];
     }
@@ -881,48 +838,60 @@ async function main() {
     return normalized.length > 0 ? normalized : undefined;
   };
 
+  // 关联缓存辅助函数（使用 StreamStateManager）
+  const setToolCallCorrelation = (toolCallId: unknown, chatId: unknown): void => {
+    const normalizedKey = toNonEmptyString(toolCallId);
+    const normalizedChatId = toNonEmptyString(chatId);
+    if (!normalizedKey || !normalizedChatId) return;
+    streamStateManager.setToolCallChat(normalizedKey, normalizedChatId);
+  };
+
+  const setMessageCorrelation = (messageId: unknown, chatId: unknown): void => {
+    const normalizedKey = toNonEmptyString(messageId);
+    const normalizedChatId = toNonEmptyString(chatId);
+    if (!normalizedKey || !normalizedChatId) return;
+    streamStateManager.setMessageChat(normalizedKey, normalizedChatId);
+  };
+
+  const getToolCallCorrelation = (toolCallId: unknown): string | undefined => {
+    const normalizedKey = toNonEmptyString(toolCallId);
+    if (!normalizedKey) return undefined;
+    const chatId = streamStateManager.getChatIdByToolCall(normalizedKey);
+    if (!chatId) return undefined;
+    // 会话存在性检查
+    if (!chatSessionStore.hasConversationId(chatId)) {
+      return undefined;
+    }
+    return chatId;
+  };
+
+  const getMessageCorrelation = (messageId: unknown): string | undefined => {
+    const normalizedKey = toNonEmptyString(messageId);
+    if (!normalizedKey) return undefined;
+    const chatId = streamStateManager.getChatIdByMessage(normalizedKey);
+    if (!chatId) return undefined;
+    // 会话存在性检查
+    if (!chatSessionStore.hasConversationId(chatId)) {
+      return undefined;
+    }
+    return chatId;
+  };
+
+  // 兼容旧接口（已废弃，保留导出兼容性）
   const setCorrelationChatRef = (
-    map: Map<string, CorrelationChatRef>,
+    _map: unknown,
     key: unknown,
     chatId: unknown
   ): void => {
-    const normalizedKey = toNonEmptyString(key);
-    const normalizedChatId = toNonEmptyString(chatId);
-    if (!normalizedKey || !normalizedChatId) {
-      return;
-    }
-
-    map.set(normalizedKey, {
-      chatId: normalizedChatId,
-      expiresAt: Date.now() + CORRELATION_CACHE_TTL_MS,
-    });
+    console.warn('[Deprecated] setCorrelationChatRef is deprecated, use setToolCallCorrelation or setMessageCorrelation instead');
   };
 
   const getCorrelationChatRef = (
-    map: Map<string, CorrelationChatRef>,
+    _map: unknown,
     key: unknown
   ): string | undefined => {
-    const normalizedKey = toNonEmptyString(key);
-    if (!normalizedKey) {
-      return undefined;
-    }
-
-    const entry = map.get(normalizedKey);
-    if (!entry) {
-      return undefined;
-    }
-
-    if (entry.expiresAt <= Date.now()) {
-      map.delete(normalizedKey);
-      return undefined;
-    }
-
-    if (!chatSessionStore.hasConversationId(entry.chatId)) {
-      map.delete(normalizedKey);
-      return undefined;
-    }
-
-    return entry.chatId;
+    console.warn('[Deprecated] getCorrelationChatRef is deprecated, use getToolCallCorrelation or getMessageCorrelation instead');
+    return undefined;
   };
 
   type PermissionChatResolution = {
@@ -952,12 +921,12 @@ async function main() {
       }
     }
 
-    const toolCallChatId = getCorrelationChatRef(toolCallChatMap, event.callId);
+    const toolCallChatId = getToolCallCorrelation(event.callId);
     if (toolCallChatId) {
       return { chatId: toolCallChatId, source: 'tool_call' };
     }
 
-    const messageChatId = getCorrelationChatRef(messageChatMap, event.messageId);
+    const messageChatId = getMessageCorrelation(event.messageId);
     if (messageChatId) {
       return { chatId: messageChatId, source: 'message' };
     }
@@ -1006,206 +975,6 @@ async function main() {
       return resolvedConversationId;
     }
     return `${platform}:${resolvedConversationId}`;
-  };
-
-  /**
-   * 构建 Telegram 纯文本格式（不含 MarkdownV2 特殊字符）
-   */
-  const buildTelegramText = (data: StreamCardData, showThinking: boolean = true): string => {
-    const mainText = data.text.trim();
-    const thinkingText = showThinking ? data.thinking.trim() : '';
-
-    if (mainText && thinkingText) {
-      const clippedThinking = thinkingText.length > 1400
-        ? `${thinkingText.slice(0, 1400)}\n...(思考内容已截断)`
-        : thinkingText;
-      return [
-        '💭 思考过程：',
-        clippedThinking,
-        '',
-        '📝 回复：',
-        mainText,
-      ].join('\n');
-    }
-
-    if (mainText) {
-      return mainText;
-    }
-
-    if (thinkingText) {
-      const clippedThinking = thinkingText.length > 1400
-        ? `${thinkingText.slice(0, 1400)}\n...(思考内容已截断)`
-        : thinkingText;
-      return [
-        '💭 思考过程：',
-        clippedThinking,
-        '',
-        '⏳ 正在生成回复...',
-      ].join('\n');
-    }
-
-    if (data.status === 'failed') {
-      return '❌ 执行失败';
-    }
-
-    if (data.status === 'completed') {
-      return '✅ 已完成';
-    }
-
-    return '⏳ 正在处理...';
-  };
-
-  const buildPortableUpdateText = (data: StreamCardData, showThinking: boolean = true): string => {
-    const mainText = data.text.trim();
-    const thinkingText = showThinking ? data.thinking.trim() : '';
-
-    if (mainText && thinkingText) {
-      const safeThinking = thinkingText.replace(/```/g, '` ` `');
-      const clippedThinking = safeThinking.length > 1400
-        ? `${safeThinking.slice(0, 1400)}\n...(思考内容已截断)`
-        : safeThinking;
-      return [
-        '-----------',
-        '```md',
-        clippedThinking,
-        '```',
-        '-----------',
-        mainText,
-      ].join('\n');
-    }
-
-    if (mainText) {
-      return `-----------\n${mainText}`;
-    }
-
-    if (thinkingText) {
-      const safeThinking = thinkingText.replace(/```/g, '` ` `');
-      const clippedThinking = safeThinking.length > 1400
-        ? `${safeThinking.slice(0, 1400)}\n...(思考内容已截断)`
-        : safeThinking;
-      return [
-        '-----------',
-        '```md',
-        clippedThinking,
-        '```',
-        '-----------',
-        '⏳ 正在处理...',
-      ].join('\n');
-    }
-
-    if (data.status === 'failed') {
-      return '❌ 执行失败';
-    }
-
-    if (data.status === 'completed') {
-      return '✅ 已完成';
-    }
-
-    return '⏳ 正在处理...';
-  };
-
-  const buildPortableUpdatePayload = (data: StreamCardData, conversationId: string, platform: string = 'feishu'): {
-    text: string;
-    markdown: string;
-    telegramText: string;
-    discordText: string;
-    discordComponents?: Array<{
-      type: 'select';
-      customId: string;
-      placeholder: string;
-      options: Array<{ label: string; value: string; description?: string }>;
-      minValues?: number;
-      maxValues?: number;
-    }>;
-    buttons?: Array<{ text: string; callback_data: string }>;
-  } => {
-    // 根据平台读取可见性配置
-    const showThinkingChain = platform === 'discord'
-      ? outputConfig.discord.showThinkingChain
-      : platform === 'feishu'
-        ? outputConfig.feishu.showThinkingChain
-        : outputConfig.showThinkingChain;
-    const showToolChain = platform === 'discord'
-      ? outputConfig.discord.showToolChain
-      : platform === 'feishu'
-        ? outputConfig.feishu.showToolChain
-        : outputConfig.showToolChain;
-
-    // 过滤 segments，移除 tool 和 reasoning 类型（当对应开关关闭时）
-    const filteredSegments = showToolChain && showThinkingChain
-      ? data.segments
-      : (data.segments ?? []).filter(segment => {
-          if (!showToolChain && segment.type === 'tool') return false;
-          if (!showThinkingChain && segment.type === 'reasoning') return false;
-          return true;
-        });
-
-    const filteredData: StreamCardData = {
-      ...data,
-      segments: filteredSegments,
-    };
-
-    const baseText = buildPortableUpdateText(filteredData, showThinkingChain);
-    const telegramBaseText = buildTelegramText(filteredData, showThinkingChain);
-
-    if (!data.pendingQuestion) {
-      return { text: baseText, markdown: baseText, telegramText: telegramBaseText, discordText: baseText };
-    }
-
-    const questionLine = `❓ ${data.pendingQuestion.question}`;
-    const progressLine = `第 ${data.pendingQuestion.questionIndex + 1}/${data.pendingQuestion.totalQuestions} 题`;
-    const discordText = `${baseText}\n${questionLine}\n${progressLine}`;
-    const telegramTextWithQuestion = `${telegramBaseText}\n\n${questionLine}\n${progressLine}`;
-
-    const optionList = data.pendingQuestion.options
-      .filter(option => option.label.trim().length > 0)
-      .slice(0, 24)
-      .map(option => ({
-        label: option.label,
-        value: option.label,
-        ...(option.description ? { description: option.description } : {}),
-      }));
-
-    const options = [...optionList, {
-      label: '跳过本题',
-      value: '__skip__',
-      description: '留空并进入下一题',
-    }];
-
-    if (options.length === 0) {
-      return { text: discordText, markdown: discordText, telegramText: telegramTextWithQuestion, discordText };
-    }
-
-    const maxValues = data.pendingQuestion.multiple
-      ? Math.min(Math.max(1, optionList.length), 25)
-      : 1;
-
-    // Telegram 按钮
-    const telegramButtons = optionList.slice(0, 8).map((opt, idx) => ({
-      text: opt.label,
-      callback_data: `oc_question:${idx}`,
-    }));
-    if (telegramButtons.length < 8) {
-      telegramButtons.push({ text: '跳过本题', callback_data: 'oc_question:skip' });
-    }
-
-    return {
-      text: discordText,
-      markdown: discordText,
-      telegramText: telegramTextWithQuestion,
-      discordText,
-      discordComponents: [
-        {
-          type: 'select',
-          customId: `oc_question:${conversationId}`,
-          placeholder: '选择当前问题答案',
-          options,
-          minValues: 1,
-          maxValues,
-        },
-      ],
-      buttons: telegramButtons,
-    };
   };
 
   const normalizeToolStatus = (status: unknown): 'pending' | 'running' | 'completed' | 'failed' => {
@@ -1329,16 +1098,16 @@ async function main() {
   };
 
   const getOrCreateToolStateBucket = (bufferKey: string): Map<string, ToolRuntimeState> => {
-    let bucket = streamToolStateMap.get(bufferKey);
+    let bucket = streamStateManager.getToolStates(bufferKey);
     if (!bucket) {
       bucket = new Map();
-      streamToolStateMap.set(bufferKey, bucket);
+      streamStateManager.setToolStates(bufferKey, bucket);
     }
     return bucket;
   };
 
   const syncToolsToBuffer = (bufferKey: string): void => {
-    const bucket = streamToolStateMap.get(bufferKey);
+    const bucket = streamStateManager.getToolStates(bufferKey);
     if (!bucket) {
       outputBuffer.setTools(bufferKey, []);
       return;
@@ -1375,7 +1144,7 @@ async function main() {
   };
 
   const markActiveToolsCompleted = (bufferKey: string): void => {
-    const bucket = streamToolStateMap.get(bufferKey);
+    const bucket = streamStateManager.getToolStates(bufferKey);
     if (!bucket) return;
     for (const [toolKey, item] of bucket.entries()) {
       if (item.status === 'running' || item.status === 'pending') {
@@ -1401,7 +1170,7 @@ async function main() {
     }
 
     const key = `${sessionID}:${part.id}`;
-    const prev = textSnapshotMap.get(key) || '';
+    const prev = streamStateManager.getTextSnapshot(key) || '';
     const current = part.text;
     if (current.startsWith(prev)) {
       const deltaText = current.slice(prev.length);
@@ -1411,7 +1180,7 @@ async function main() {
     } else if (current !== prev) {
       outputBuffer.append(bufferKey, current);
     }
-    textSnapshotMap.set(key, current);
+    streamStateManager.setTextSnapshot(key, current);
     setTimelineText(bufferKey, `text:${key}`, 'text', current);
   };
 
@@ -1424,7 +1193,7 @@ async function main() {
     }
 
     const key = `${sessionID}:${part.id}`;
-    const prev = reasoningSnapshotMap.get(key) || '';
+    const prev = streamStateManager.getReasoningSnapshot(key) || '';
     const current = part.text;
     if (current.startsWith(prev)) {
       const deltaText = current.slice(prev.length);
@@ -1434,24 +1203,19 @@ async function main() {
     } else if (current !== prev) {
       outputBuffer.appendThinking(bufferKey, current);
     }
-    reasoningSnapshotMap.set(key, current);
+    streamStateManager.setReasoningSnapshot(key, current);
     setTimelineText(bufferKey, `reasoning:${key}`, 'reasoning', current);
   };
 
   const clearPartSnapshotsForSession = (sessionID: string): void => {
+    // 注意：StreamStateManager 的快照是按 bufferKey 管理的
+    // 这里保留旧的 sessionID:partId 格式，但需要遍历所有键
+    // 暂时保留原始实现，后续可以优化
     const prefix = `${sessionID}:`;
-    for (const key of reasoningSnapshotMap.keys()) {
-      if (key.startsWith(prefix)) {
-        reasoningSnapshotMap.delete(key);
-      }
-    }
-    for (const key of textSnapshotMap.keys()) {
-      if (key.startsWith(prefix)) {
-        textSnapshotMap.delete(key);
-      }
-    }
-    retryNoticeMap.delete(sessionID);
-    errorNoticeMap.delete(sessionID);
+    // 由于 StreamStateManager 没有暴露 keys() 方法，这里暂时跳过
+    // 改为在 clear() 时统一清理
+    streamStateManager.setRetryNotice(sessionID, '');
+    streamStateManager.setErrorNotice(sessionID, '');
   };
 
   const formatProviderError = (raw: unknown): string => {
@@ -1571,7 +1335,7 @@ async function main() {
       buffer.status === 'running'
     ) return;
 
-    const current = streamContentMap.get(buffer.key) || { text: '', thinking: '' };
+    const current = streamStateManager.getContent(buffer.key) || { text: '', thinking: '' };
     current.text += text;
     current.thinking += thinking;
 
@@ -1584,7 +1348,7 @@ async function main() {
       }
     }
 
-    streamContentMap.set(buffer.key, current);
+    streamStateManager.setContent(buffer.key, current);
 
     const hasVisibleContent =
       current.text.trim().length > 0 ||
@@ -1603,7 +1367,7 @@ async function main() {
           ? 'completed'
           : 'processing';
 
-    let existingMessageIds = streamCardMessageIdsMap.get(buffer.key) || [];
+    let existingMessageIds = streamStateManager.getCardMessageIds(buffer.key) || [];
     if (existingMessageIds.length === 0 && buffer.messageId) {
       existingMessageIds = [buffer.messageId];
     }
@@ -1659,16 +1423,13 @@ async function main() {
 
       if (nextMessageIds.length > 0) {
         outputBuffer.setMessageId(buffer.key, nextMessageIds[0]);
-        streamCardMessageIdsMap.set(buffer.key, nextMessageIds);
+        streamStateManager.setCardMessageIds(buffer.key, nextMessageIds);
       } else {
-        streamCardMessageIdsMap.delete(buffer.key);
+        streamStateManager.setCardMessageIds(buffer.key, []);
       }
 
       if (buffer.status !== 'running') {
-        streamContentMap.delete(buffer.key);
-        streamToolStateMap.delete(buffer.key);
-        streamTimelineMap.delete(buffer.key);
-        streamCardMessageIdsMap.delete(buffer.key);
+        streamStateManager.clear(buffer.key);
         clearPartSnapshotsForSession(buffer.sessionId);
         outputBuffer.clear(buffer.key);
       }
@@ -1725,9 +1486,9 @@ async function main() {
 
     if (nextMessageIds.length > 0) {
       outputBuffer.setMessageId(buffer.key, nextMessageIds[0]);
-      streamCardMessageIdsMap.set(buffer.key, nextMessageIds);
+      streamStateManager.setCardMessageIds(buffer.key, nextMessageIds);
     } else {
-      streamCardMessageIdsMap.delete(buffer.key);
+      streamStateManager.setCardMessageIds(buffer.key, []);
     }
 
     cardData.messageId = nextMessageIds[0] || undefined;
@@ -1743,10 +1504,7 @@ async function main() {
     );
 
     if (buffer.status !== 'running') {
-      streamContentMap.delete(buffer.key);
-      streamToolStateMap.delete(buffer.key);
-      streamTimelineMap.delete(buffer.key);
-      streamCardMessageIdsMap.delete(buffer.key);
+      streamStateManager.clear(buffer.key);
       clearPartSnapshotsForSession(buffer.sessionId);
       outputBuffer.clear(buffer.key);
     }
@@ -1846,10 +1604,10 @@ async function main() {
     const conversationId = conversation.conversationId;
 
     const dedupeKey = `${sessionID}:${errorText}`;
-    if (errorNoticeMap.get(sessionID) === dedupeKey) {
+    if (streamStateManager.getErrorNotice(sessionID) === dedupeKey) {
       return;
     }
-    errorNoticeMap.set(sessionID, dedupeKey);
+    streamStateManager.setErrorNotice(sessionID, dedupeKey);
 
     const bufferKey = buildBufferKeyBySession(sessionID, conversationId);
     const existingBuffer = outputBuffer.get(bufferKey) || outputBuffer.getOrCreate(bufferKey, conversationId, sessionID, null);
@@ -1868,21 +1626,13 @@ async function main() {
   };
 
   openCodeEventHub.setContext({
-    CORRELATION_CACHE_TTL_MS,
-    streamContentMap,
-    reasoningSnapshotMap,
-    textSnapshotMap,
-    retryNoticeMap,
-    errorNoticeMap,
-    streamCardMessageIdsMap,
-    toolCallChatMap,
-    messageChatMap,
-    streamToolStateMap,
-    streamTimelineMap,
+    streamStateManager,
     toSessionId,
     toNonEmptyString,
-    setCorrelationChatRef,
-    getCorrelationChatRef,
+    setToolCallCorrelation,
+    setMessageCorrelation,
+    getToolCallCorrelation,
+    getMessageCorrelation,
     resolvePermissionChat,
     normalizeToolStatus,
     getToolStatusText,

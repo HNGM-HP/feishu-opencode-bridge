@@ -5,27 +5,20 @@ import { permissionHandler } from '../src/permissions/handler.js';
 import { chatSessionStore } from '../src/store/chat-session.js';
 import { outputBuffer } from '../src/opencode/output-buffer.js';
 import { OpenCodeEventHub, type OpenCodeEventContext, type PermissionChatResolution, type ToolRuntimeState } from '../src/router/opencode-event-hub.js';
+import { StreamStateManager } from '../src/store/stream-state.js';
 
 function createContext(
   resolvePermissionChat: (event: PermissionRequestEvent) => PermissionChatResolution,
   upsertTimelineNote: OpenCodeEventContext['upsertTimelineNote']
 ): OpenCodeEventContext {
   return {
-    CORRELATION_CACHE_TTL_MS: 10 * 60 * 1000,
-    streamContentMap: new Map(),
-    reasoningSnapshotMap: new Map(),
-    textSnapshotMap: new Map(),
-    retryNoticeMap: new Map(),
-    errorNoticeMap: new Map(),
-    streamCardMessageIdsMap: new Map(),
-    toolCallChatMap: new Map(),
-    messageChatMap: new Map(),
-    streamToolStateMap: new Map(),
-    streamTimelineMap: new Map(),
+    streamStateManager: new StreamStateManager(),
     toSessionId: (value: unknown) => (typeof value === 'string' ? value : ''),
     toNonEmptyString: (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : undefined),
-    setCorrelationChatRef: () => undefined,
-    getCorrelationChatRef: () => undefined,
+    setToolCallCorrelation: () => undefined,
+    setMessageCorrelation: () => undefined,
+    getToolCallCorrelation: () => undefined,
+    getMessageCorrelation: () => undefined,
     resolvePermissionChat,
     normalizeToolStatus: () => 'running',
     getToolStatusText: () => '执行中',

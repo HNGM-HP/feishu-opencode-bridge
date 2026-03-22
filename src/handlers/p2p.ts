@@ -832,6 +832,9 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
         this.createGroupWithSessionSelection(openId, selectedSessionId, chatId, messageId, rawDirectory, customChatName)
           .catch(error => {
             console.error('[P2P] 后台建群失败:', error);
+            // 通过飞书消息通知用户建群失败
+            this.safeReply(messageId, chatId, `❌ 建群失败: ${error instanceof Error ? error.message : '未知错误'}`)
+              .catch(err => console.error('[P2P] 发送建群失败通知失败:', err));
           });
       });
       

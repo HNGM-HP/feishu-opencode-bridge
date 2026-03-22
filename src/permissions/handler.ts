@@ -62,7 +62,7 @@ class PermissionHandler {
     if (!normalizedToolName) return false;
 
     return permissionConfig.toolWhitelist.some(
-      t => t.trim().toLowerCase() === normalizedToolName.toLowerCase()
+      (t: string) => t.trim().toLowerCase() === normalizedToolName.toLowerCase()
     );
   }
 

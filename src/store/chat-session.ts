@@ -61,6 +61,8 @@ type PlatformId = string;
 class ChatSessionStore {
   private data: Map<string, ChatSessionData> = new Map();
   private sessionAliases: Map<string, SessionAliasRecord> = new Map();
+  // 反向索引：chatId -> Set<storageKey>，加速会话别名清理
+  private chatIdToKeysIndex: Map<string, Set<string>> = new Map();
 
   constructor() {
     this.load();
@@ -77,12 +79,52 @@ class ChatSessionStore {
           migratedEntries.push([normalizedKey, value]);
         }
         this.data = new Map(migratedEntries);
+        // 重建反向索引
+        this.rebuildChatIdIndex();
         console.log(`[Store] 已加载 ${this.data.size} 个群组会话`);
         this.save();
       }
     } catch (error) {
       console.error('[Store] 加载数据失败:', error);
     }
+  }
+
+  // 重建 chatId 反向索引
+  private rebuildChatIdIndex(): void {
+    this.chatIdToKeysIndex.clear();
+    for (const [key] of this.data) {
+      const parsed = this.parseConversationKey(key);
+      const chatId = parsed ? parsed.chatId : key;
+      if (!this.chatIdToKeysIndex.has(chatId)) {
+        this.chatIdToKeysIndex.set(chatId, new Set());
+      }
+      this.chatIdToKeysIndex.get(chatId)!.add(key);
+    }
+  }
+
+  // 更新反向索引（添加）
+  private addToChatIdIndex(chatId: string, key: string): void {
+    if (!this.chatIdToKeysIndex.has(chatId)) {
+      this.chatIdToKeysIndex.set(chatId, new Set());
+    }
+    this.chatIdToKeysIndex.get(chatId)!.add(key);
+  }
+
+  // 更新反向索引（移除）
+  private removeFromChatIdIndex(chatId: string, key: string): void {
+    const keys = this.chatIdToKeysIndex.get(chatId);
+    if (keys) {
+      keys.delete(key);
+      if (keys.size === 0) {
+        this.chatIdToKeysIndex.delete(chatId);
+      }
+    }
+  }
+
+  // 检查 chatId 是否有对应的存储键
+  private hasChatIdInIndex(chatId: string): boolean {
+    const keys = this.chatIdToKeysIndex.get(chatId);
+    return keys !== undefined && keys.size > 0;
   }
 
   private save(): void {
@@ -246,10 +288,8 @@ class ChatSessionStore {
   private cleanupExpiredSessionAliases(): void {
     const now = Date.now();
     for (const [sessionId, alias] of this.sessionAliases.entries()) {
-      const hasMatchingKey = Array.from(this.data.keys()).some(key => {
-        const parsed = this.parseConversationKey(key);
-        return parsed ? parsed.chatId === alias.chatId : key === alias.chatId;
-      });
+      // 使用反向索引检查，O(1) 复杂度
+      const hasMatchingKey = this.hasChatIdInIndex(alias.chatId);
       if (alias.expiresAt <= now || !hasMatchingKey) {
         this.sessionAliases.delete(sessionId);
       }
@@ -263,7 +303,11 @@ class ChatSessionStore {
       }
 
       this.data.delete(key);
+      // 同步更新反向索引
       const parsed = this.parseConversationKey(key);
+      const chatId = parsed ? parsed.chatId : key;
+      this.removeFromChatIdIndex(chatId, key);
+
       if (parsed) {
         console.log(`[Store] 会话 ${sessionId} 已改绑，移除旧绑定: ${parsed.platform}:${parsed.chatId}`);
       } else {
@@ -329,6 +373,8 @@ class ChatSessionStore {
 
     this.removeExistingBindingsForSession(sessionId, key);
     this.data.set(key, data);
+    // 更新反向索引
+    this.addToChatIdIndex(conversationId, key);
     this.save();
     console.log(`[Store] 绑定成功: platform=${platform}, conversation=${conversationId} -> session=${sessionId}`);
   }
@@ -384,6 +430,8 @@ class ChatSessionStore {
 
     this.removeExistingBindingsForSession(sessionId, namespacedKey);
     this.data.set(namespacedKey, data);
+    // 更新反向索引
+    this.addToChatIdIndex(chatId, namespacedKey);
     this.save();
     console.log(`[Store] 绑定成功: chat=${chatId} (namespaced: ${namespacedKey}) -> session=${sessionId}`);
   }
@@ -685,6 +733,8 @@ class ChatSessionStore {
         }
       }
       this.data.delete(namespacedKey);
+      // 同步更新反向索引
+      this.removeFromChatIdIndex(chatId, namespacedKey);
       this.save();
       console.log(`[Store] 移除绑定 (namespaced): chat=${chatId} -> ${namespacedKey}`);
       return;
@@ -697,6 +747,8 @@ class ChatSessionStore {
         }
       }
       this.data.delete(chatId);
+      // 同步更新反向索引
+      this.removeFromChatIdIndex(chatId, chatId);
       this.save();
       console.log(`[Store] 移除绑定 (legacy): chat=${chatId}`);
     }
@@ -714,6 +766,8 @@ class ChatSessionStore {
     }
 
     this.data.delete(key);
+    // 同步更新反向索引
+    this.removeFromChatIdIndex(conversationId, key);
     this.save();
     console.log(`[Store] 移除绑定 (platform): ${platform}:${conversationId}`);
   }

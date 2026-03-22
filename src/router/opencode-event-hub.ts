@@ -20,6 +20,8 @@ import { questionHandler } from '../opencode/question-handler.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { feishuClient } from '../feishu/client.js';
 import * as platformRegistry from '../platform/registry.js';
+import type { StreamStateManager, TimelineSegment as StreamTimelineSegment } from '../store/stream-state.js';
+import { CORRELATION_CACHE_TTL_MS } from '../store/stream-state.js';
 
 // ==================== 类型定义 ====================
 
@@ -73,26 +75,16 @@ export type CorrelationChatRef = {
  * 封装 index.ts 中的所有依赖
  */
 export interface OpenCodeEventContext {
-  // 常量
-  CORRELATION_CACHE_TTL_MS: number;
-
-  // Map 状态
-  streamContentMap: Map<string, { text: string; thinking: string }>;
-  reasoningSnapshotMap: Map<string, string>;
-  textSnapshotMap: Map<string, string>;
-  retryNoticeMap: Map<string, string>;
-  errorNoticeMap: Map<string, string>;
-  streamCardMessageIdsMap: Map<string, string[]>;
-  toolCallChatMap: Map<string, CorrelationChatRef>;
-  messageChatMap: Map<string, CorrelationChatRef>;
-  streamToolStateMap: Map<string, Map<string, ToolRuntimeState>>;
-  streamTimelineMap: Map<string, { order: string[]; segments: Map<string, TimelineSegment> }>;
+  // 流状态管理器
+  streamStateManager: StreamStateManager;
 
   // 辅助函数
   toSessionId: (value: unknown) => string;
   toNonEmptyString: (value: unknown) => string | undefined;
-  setCorrelationChatRef: (map: Map<string, CorrelationChatRef>, key: unknown, chatId: unknown) => void;
-  getCorrelationChatRef: (map: Map<string, CorrelationChatRef>, key: unknown) => string | undefined;
+  setToolCallCorrelation: (toolCallId: unknown, chatId: unknown) => void;
+  setMessageCorrelation: (messageId: unknown, chatId: unknown) => void;
+  getToolCallCorrelation: (toolCallId: unknown) => string | undefined;
+  getMessageCorrelation: (messageId: unknown) => string | undefined;
   resolvePermissionChat: (event: PermissionRequestEvent) => PermissionChatResolution;
   normalizeToolStatus: (status: unknown) => 'pending' | 'running' | 'completed' | 'failed';
   getToolStatusText: (status: ToolRuntimeState['status']) => string;
@@ -242,10 +234,8 @@ export class OpenCodeEventHub {
       permissionHandler,
       opencodeClient,
       outputBuffer,
-      CORRELATION_CACHE_TTL_MS,
-      setCorrelationChatRef,
-      toolCallChatMap,
-      messageChatMap,
+      setToolCallCorrelation,
+      setMessageCorrelation,
       upsertTimelineNote,
     } = this.injectedDependencies();
 
@@ -431,8 +421,8 @@ export class OpenCodeEventHub {
       if (event.relatedSessionId) {
         chatSessionStore.rememberSessionAlias(event.relatedSessionId, chatId, CORRELATION_CACHE_TTL_MS);
       }
-      setCorrelationChatRef(toolCallChatMap, event.callId, chatId);
-      setCorrelationChatRef(messageChatMap, event.messageId, chatId);
+      setToolCallCorrelation(event.callId, chatId);
+      setMessageCorrelation(event.messageId, chatId);
     }
 
     // 1. 检查白名单
@@ -500,7 +490,7 @@ export class OpenCodeEventHub {
   private handleSessionStatus(event: unknown): void {
     if (!this.context) return;
 
-    const { toSessionId, chatSessionStore, outputBuffer, retryNoticeMap, upsertTimelineNote, markActiveToolsCompleted } = this.injectedDependencies();
+    const { toSessionId, chatSessionStore, outputBuffer, streamStateManager, upsertTimelineNote, markActiveToolsCompleted } = this.injectedDependencies();
 
     const eventObj = event as Record<string, unknown>;
     const sessionID = toSessionId(eventObj?.sessionID || eventObj?.sessionId);
@@ -520,8 +510,8 @@ export class OpenCodeEventHub {
       const attempt = typeof status.attempt === 'number' ? status.attempt : 0;
       const message = typeof status.message === 'string' ? status.message : '上游模型请求失败，正在重试';
       const signature = `${attempt}:${message}`;
-      if (retryNoticeMap.get(sessionID) !== signature) {
-        retryNoticeMap.set(sessionID, signature);
+      if (streamStateManager.getRetryNotice(sessionID) !== signature) {
+        streamStateManager.setRetryNotice(sessionID, signature);
         upsertTimelineNote(bufferKey, `status-retry:${sessionID}:${signature}`, `⚠️ 模型重试（第 ${attempt} 次）：${message}`, 'retry');
         outputBuffer.touch(bufferKey);
       }
@@ -562,7 +552,7 @@ export class OpenCodeEventHub {
   private async handleMessageUpdated(event: unknown): Promise<void> {
     if (!this.context) return;
 
-    const { toSessionId, chatSessionStore, outputBuffer, CORRELATION_CACHE_TTL_MS, setCorrelationChatRef, messageChatMap, formatProviderError, applyFailureToSession } = this.injectedDependencies();
+    const { toSessionId, chatSessionStore, outputBuffer, setMessageCorrelation, formatProviderError, applyFailureToSession } = this.injectedDependencies();
 
     const eventObj = event as Record<string, unknown>;
     const info = eventObj?.info as Record<string, unknown> | undefined;
@@ -594,7 +584,7 @@ export class OpenCodeEventHub {
 
     if (typeof info.id === 'string' && info.id) {
       outputBuffer.setOpenCodeMsgId(bufferKey, info.id);
-      setCorrelationChatRef(messageChatMap, info.id, chatId);
+      setMessageCorrelation(info.id, chatId);
     }
 
     if (info.error) {
@@ -624,10 +614,8 @@ export class OpenCodeEventHub {
       toSessionId,
       chatSessionStore,
       outputBuffer,
-      CORRELATION_CACHE_TTL_MS,
-      setCorrelationChatRef,
-      toolCallChatMap,
-      messageChatMap,
+      setToolCallCorrelation,
+      setMessageCorrelation,
       asRecord,
       normalizeToolStatus,
       buildToolTraceOutput,
@@ -636,8 +624,7 @@ export class OpenCodeEventHub {
       upsertTimelineNote,
       appendTimelineText,
       setTimelineText,
-      reasoningSnapshotMap,
-      textSnapshotMap,
+      streamStateManager,
       appendTextFromPart,
       appendReasoningFromPart,
       stringifyToolOutput,
@@ -684,12 +671,12 @@ export class OpenCodeEventHub {
         : typeof toolPart.id === 'string' && toolPart.id
           ? toolPart.id
           : `${toolName}:${Date.now()}`;
-      setCorrelationChatRef(toolCallChatMap, toolPart.callID, chatId);
-      setCorrelationChatRef(toolCallChatMap, toolPart.callId, chatId);
-      setCorrelationChatRef(toolCallChatMap, toolPart.toolCallID, chatId);
-      setCorrelationChatRef(toolCallChatMap, toolPart.toolCallId, chatId);
-      setCorrelationChatRef(messageChatMap, toolPart.messageID, chatId);
-      setCorrelationChatRef(messageChatMap, toolPart.messageId, chatId);
+      setToolCallCorrelation(toolPart.callID, chatId);
+      setToolCallCorrelation(toolPart.callId, chatId);
+      setToolCallCorrelation(toolPart.toolCallID, chatId);
+      setToolCallCorrelation(toolPart.toolCallId, chatId);
+      setMessageCorrelation(toolPart.messageID, chatId);
+      setMessageCorrelation(toolPart.messageId, chatId);
       const previous = getOrCreateToolStateBucket(bufferKey).get(toolKey);
       const output = buildToolTraceOutput(toolPart, status, !previous || !previous.output);
 
@@ -773,9 +760,9 @@ export class OpenCodeEventHub {
           outputBuffer.appendThinking(bufferKey, delta);
           if (typeof part?.id === 'string') {
             const key = `${sessionID}:${part.id}`;
-            const prev = reasoningSnapshotMap.get(key) || '';
+            const prev = streamStateManager.getReasoningSnapshot(key) || '';
             const next = `${prev}${delta}`;
-            reasoningSnapshotMap.set(key, next);
+            streamStateManager.setReasoningSnapshot(key, next);
             setTimelineText(bufferKey, `reasoning:${key}`, 'reasoning', next);
           } else {
             appendTimelineText(bufferKey, `reasoning:${sessionID}:anonymous`, 'reasoning', delta);
@@ -785,9 +772,9 @@ export class OpenCodeEventHub {
         if (part?.type === 'text') {
           if (typeof part?.id === 'string' && part.id) {
             const key = `${sessionID}:${part.id}`;
-            const prev = textSnapshotMap.get(key) || '';
+            const prev = streamStateManager.getTextSnapshot(key) || '';
             const next = `${prev}${delta}`;
-            textSnapshotMap.set(key, next);
+            streamStateManager.setTextSnapshot(key, next);
             setTimelineText(bufferKey, `text:${key}`, 'text', next);
           } else {
             appendTimelineText(bufferKey, `text:${sessionID}:anonymous`, 'text', delta);
@@ -814,9 +801,9 @@ export class OpenCodeEventHub {
           outputBuffer.appendThinking(bufferKey, reasoningText);
           if (typeof part?.id === 'string' && part.id) {
             const key = `${sessionID}:${part.id}`;
-            const prev = reasoningSnapshotMap.get(key) || '';
+            const prev = streamStateManager.getReasoningSnapshot(key) || '';
             const next = `${prev}${reasoningText}`;
-            reasoningSnapshotMap.set(key, next);
+            streamStateManager.setReasoningSnapshot(key, next);
             setTimelineText(bufferKey, `reasoning:${key}`, 'reasoning', next);
           } else {
             appendTimelineText(bufferKey, `reasoning:${sessionID}:anonymous`, 'reasoning', reasoningText);
@@ -826,9 +813,9 @@ export class OpenCodeEventHub {
         outputBuffer.appendThinking(bufferKey, deltaObj.thinking);
         if (typeof part?.id === 'string' && part.id) {
           const key = `${sessionID}:${part.id}`;
-          const prev = reasoningSnapshotMap.get(key) || '';
+          const prev = streamStateManager.getReasoningSnapshot(key) || '';
           const next = `${prev}${deltaObj.thinking}`;
-          reasoningSnapshotMap.set(key, next);
+          streamStateManager.setReasoningSnapshot(key, next);
           setTimelineText(bufferKey, `reasoning:${key}`, 'reasoning', next);
         } else {
           appendTimelineText(bufferKey, `reasoning:${sessionID}:anonymous`, 'reasoning', deltaObj.thinking);
@@ -837,9 +824,9 @@ export class OpenCodeEventHub {
         outputBuffer.append(bufferKey, deltaObj.text);
         if (typeof part?.id === 'string' && part.id) {
           const key = `${sessionID}:${part.id}`;
-          const prev = textSnapshotMap.get(key) || '';
+          const prev = streamStateManager.getTextSnapshot(key) || '';
           const next = `${prev}${deltaObj.text}`;
-          textSnapshotMap.set(key, next);
+          streamStateManager.setTextSnapshot(key, next);
           setTimelineText(bufferKey, `text:${key}`, 'text', next);
         } else {
           appendTimelineText(bufferKey, `text:${sessionID}:anonymous`, 'text', deltaObj.text);
@@ -849,9 +836,9 @@ export class OpenCodeEventHub {
         if (part?.type === 'reasoning') {
           if (typeof part?.id === 'string' && part.id) {
             const key = `${sessionID}:${part.id}`;
-            const prev = reasoningSnapshotMap.get(key) || '';
+            const prev = streamStateManager.getReasoningSnapshot(key) || '';
             const next = `${prev}${deltaObj.text}`;
-            reasoningSnapshotMap.set(key, next);
+            streamStateManager.setReasoningSnapshot(key, next);
             setTimelineText(bufferKey, `reasoning:${key}`, 'reasoning', next);
           } else {
             appendTimelineText(bufferKey, `reasoning:${sessionID}:anonymous`, 'reasoning', deltaObj.text);
@@ -859,9 +846,9 @@ export class OpenCodeEventHub {
         } else if (part?.type === 'text') {
           if (typeof part?.id === 'string' && part.id) {
             const key = `${sessionID}:${part.id}`;
-            const prev = textSnapshotMap.get(key) || '';
+            const prev = streamStateManager.getTextSnapshot(key) || '';
             const next = `${prev}${deltaObj.text}`;
-            textSnapshotMap.set(key, next);
+            streamStateManager.setTextSnapshot(key, next);
             setTimelineText(bufferKey, `text:${key}`, 'text', next);
           } else {
             appendTimelineText(bufferKey, `text:${sessionID}:anonymous`, 'text', deltaObj.text);
@@ -1109,21 +1096,13 @@ export class OpenCodeEventHub {
     outputBuffer: typeof import('../opencode/output-buffer.js').outputBuffer;
     feishuClient: typeof import('../feishu/client.js').feishuClient;
     // 从 context 解构
-    CORRELATION_CACHE_TTL_MS: number;
-    streamContentMap: Map<string, { text: string; thinking: string }>;
-    reasoningSnapshotMap: Map<string, string>;
-    textSnapshotMap: Map<string, string>;
-    retryNoticeMap: Map<string, string>;
-    errorNoticeMap: Map<string, string>;
-    streamCardMessageIdsMap: Map<string, string[]>;
-    toolCallChatMap: Map<string, CorrelationChatRef>;
-    messageChatMap: Map<string, CorrelationChatRef>;
-    streamToolStateMap: Map<string, Map<string, ToolRuntimeState>>;
-    streamTimelineMap: Map<string, { order: string[]; segments: Map<string, TimelineSegment> }>;
+    streamStateManager: StreamStateManager;
     toSessionId: (value: unknown) => string;
     toNonEmptyString: (value: unknown) => string | undefined;
-    setCorrelationChatRef: (map: Map<string, CorrelationChatRef>, key: unknown, chatId: unknown) => void;
-    getCorrelationChatRef: (map: Map<string, CorrelationChatRef>, key: unknown) => string | undefined;
+    setToolCallCorrelation: (toolCallId: unknown, chatId: unknown) => void;
+    setMessageCorrelation: (messageId: unknown, chatId: unknown) => void;
+    getToolCallCorrelation: (toolCallId: unknown) => string | undefined;
+    getMessageCorrelation: (messageId: unknown) => string | undefined;
     resolvePermissionChat: (event: PermissionRequestEvent) => PermissionChatResolution;
     normalizeToolStatus: (status: unknown) => 'pending' | 'running' | 'completed' | 'failed';
     getToolStatusText: (status: ToolRuntimeState['status']) => string;
