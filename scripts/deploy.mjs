@@ -796,18 +796,29 @@ async function deployProject(options = {}) {
   console.log('\n[deploy] OpenCode 环境预检（仅提示，不阻断部署）');
   await checkOpencodeEnvironment({ warnOnly: true });
 
-  // 设置 puppeteer 国内镜像，解决 Google 服务器访问问题
+  // 根据时区判断是否使用国内镜像（仅当用户未设置 PUPPETEER_DOWNLOAD_HOST 时）
   const originalPuppeteerHost = process.env.PUPPETEER_DOWNLOAD_HOST;
-  process.env.PUPPETEER_DOWNLOAD_HOST = 'https://cdn.npmmirror.com/binaries/chrome-for-testing';
+  let puppeteerHostSet = false;
+
+  if (!originalPuppeteerHost) {
+    const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+    const isChinaRegion = timezone.startsWith('Asia/Shanghai')
+      || timezone.startsWith('Asia/Chongqing')
+      || timezone.startsWith('Asia/Hong_Kong')
+      || timezone.startsWith('Asia/Taipei')
+      || timezone.startsWith('Asia/Macau');
+
+    if (isChinaRegion) {
+      process.env.PUPPETEER_DOWNLOAD_HOST = 'https://cdn.npmmirror.com/binaries/chrome-for-testing';
+      puppeteerHostSet = true;
+    }
+  }
 
   try {
     run('npm', ['install', '--include=dev'], '安装后端依赖');
   } finally {
-    // 恢复原环境变量
-    if (originalPuppeteerHost === undefined) {
+    if (puppeteerHostSet) {
       delete process.env.PUPPETEER_DOWNLOAD_HOST;
-    } else {
-      process.env.PUPPETEER_DOWNLOAD_HOST = originalPuppeteerHost;
     }
   }
 
@@ -928,11 +939,20 @@ function cleanupForCleanInstall(contextLabel) {
     removedTargets.push('node_modules');
   }
 
-  // 清理可能损坏的 puppeteer 浏览器缓存
-  const puppeteerCacheDir = path.join(os.homedir(), '.cache', 'puppeteer');
-  if (fs.existsSync(puppeteerCacheDir)) {
-    fs.rmSync(puppeteerCacheDir, { recursive: true, force: true });
-    removedTargets.push('~/.cache/puppeteer');
+  // 中国地区用户清理可能损坏的 puppeteer 浏览器缓存（国内网络下载易失败）
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+  const isChinaRegion = timezone.startsWith('Asia/Shanghai')
+    || timezone.startsWith('Asia/Chongqing')
+    || timezone.startsWith('Asia/Hong_Kong')
+    || timezone.startsWith('Asia/Taipei')
+    || timezone.startsWith('Asia/Macau');
+
+  if (isChinaRegion) {
+    const puppeteerCacheDir = path.join(os.homedir(), '.cache', 'puppeteer');
+    if (fs.existsSync(puppeteerCacheDir)) {
+      fs.rmSync(puppeteerCacheDir, { recursive: true, force: true });
+      removedTargets.push('~/.cache/puppeteer');
+    }
   }
 
   const removedTarballs = cleanupPackageTarballs();
