@@ -12,7 +12,7 @@ import { modelConfig, attachmentConfig } from '../config.js';
 import { opencodeClient } from '../opencode/client.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { chatSessionStore } from '../store/chat-session.js';
-import { parseCommand, getHelpText, type ParsedCommand } from '../commands/parser.js';
+import { parseCommand, type ParsedCommand } from '../commands/parser.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
 import type { EffortLevel } from '../commands/effort.js';
@@ -21,6 +21,34 @@ import { questionHandler, type PendingQuestion } from '../opencode/question-hand
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
 
 const WEIXIN_MESSAGE_LIMIT = 1800;
+const WEIXIN_HELP_TEXT = `📖 **微信 × OpenCode 机器人指南**
+
+💬 **如何对话**
+直接发送消息即可与 AI 对话。
+
+🛠️ **常用命令**
+• \`/help\` 显示帮助
+• \`/model\` 查看当前模型
+• \`/model <名称>\` 切换模型 (e.g. \`/model gpt-4\`)
+• \`/agent\` 查看当前角色
+• \`/agent <名称>\` 切换角色
+• \`/effort\` 查看当前强度
+• \`/effort <档位>\` 设置会话强度 (low/high/xhigh)
+• \`/stop\` 停止当前回答
+• \`/undo\` 撤回上一轮对话
+• \`/compact\` 压缩上下文
+
+⚙️ **会话管理**
+• \`/session new\` 开启新话题
+• \`/sessions\` 列出会话
+• \`/rename <新名称>\` 重命名会话
+• \`/project list\` 列出可用项目
+• \`/status\` 查看当前状态
+• \`/clear\` 重置对话上下文
+
+💡 **提示**
+• 切换的模型/角色仅对当前会话生效。
+• 支持 #前缀临时设置强度，如 \`#high 帮我分析代码\``;
 
 type ParsedQuestionAnswer = { type: 'skip' | 'custom' | 'selection'; values?: string[]; custom?: string };
 type OpencodeFilePartInput = { type: 'file'; mime: string; url: string; filename?: string };
@@ -463,7 +491,7 @@ export class WeixinHandler {
 
     switch (command.type) {
       case 'help':
-        await sender.sendText(conversationId, getHelpText());
+        await sender.sendText(conversationId, WEIXIN_HELP_TEXT);
         break;
 
       case 'session': {
