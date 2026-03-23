@@ -234,19 +234,35 @@ http://localhost:4098
 
 ## 详细文档
 
+### 核心文档
+
 | 文档 | 说明 |
 |------|------|
 | [架构设计](assets/docs/architecture.md) | 项目分层设计与核心模块职责 |
 | [配置中心](assets/docs/environment.md) | 完整配置参数说明 |
 | [部署运维](assets/docs/deployment.md) | 部署、升级与 systemd 配置 |
+| [命令速查](assets/docs/commands.md) | 完整命令列表与使用说明 |
+| [可靠性指南](assets/docs/reliability.md) | 心跳、Cron 与宕机救援配置 |
+| [故障排查](assets/docs/troubleshooting.md) | 常见问题与解决方案 |
+
+### 平台配置文档
+
+| 文档 | 说明 |
+|------|------|
 | [飞书配置](assets/docs/feishu-config.md) | 飞书事件订阅与权限配置 |
 | [Discord 配置](assets/docs/discord-config.md) | Discord 机器人配置指南 |
 | [企业微信配置](assets/docs/wecom-config.md) | 企业微信机器人配置指南 |
-| [命令速查](assets/docs/commands.md) | 完整命令列表与使用说明 |
-| [可靠性指南](assets/docs/reliability.md) | 心跳、Cron 与宕机救援配置 |
+| [Telegram 配置](assets/docs/telegram-config.md) | Telegram Bot 配置指南 |
+| [QQ 配置](assets/docs/qq-config.md) | QQ 官方/OneBot 协议配置指南 |
+| [WhatsApp 配置](assets/docs/whatsapp-config.md) | WhatsApp Personal/Business 配置指南 |
+| [微信个人号配置](assets/docs/weixin-config.md) | 微信个人号配置指南 |
+
+### 扩展文档
+
+| 文档 | 说明 |
+|------|------|
 | [Agent 使用](assets/docs/agent.md) | 角色配置与自定义 Agent |
 | [实现细节](assets/docs/implementation.md) | 关键功能实现说明 |
-| [故障排查](assets/docs/troubleshooting.md) | 常见问题与解决方案 |
 | [SDK API](assets/docs/sdk-api.md) | OpenCode SDK 集成指南 |
 | [工作目录指南](assets/docs/workspace-guide.md) | 工作目录策略与项目配置 |
 | [灰度部署](assets/docs/rollout.md) | 路由器模式灰度与回滚 |

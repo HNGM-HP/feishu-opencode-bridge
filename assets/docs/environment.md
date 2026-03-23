@@ -69,6 +69,41 @@
 | `WECOM_BOT_ID` | 否 | - | 企业微信 Bot ID |
 | `WECOM_SECRET` | 否 | - | 企业微信 Secret |
 
+## Telegram 配置
+
+| 变量 | 必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `TELEGRAM_ENABLED` | 否 | `false` | 是否启用 Telegram 适配器 |
+| `TELEGRAM_BOT_TOKEN` | 否 | - | Telegram Bot Token |
+
+## QQ 配置
+
+| 变量 | 必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `QQ_ENABLED` | 否 | `false` | 是否启用 QQ 适配器 |
+| `QQ_PROTOCOL` | 否 | `onebot` | 协议类型：`official`（官方频道机器人）或 `onebot`（社区协议） |
+| `QQ_APP_ID` | 条件 | - | 官方协议：QQ 机器人 App ID |
+| `QQ_SECRET` | 条件 | - | 官方协议：QQ 机器人 Secret |
+| `QQ_CALLBACK_URL` | 否 | - | 官方协议：Webhook 回调地址 |
+| `QQ_ENCRYPT_KEY` | 否 | - | 官方协议：消息加密密钥 |
+| `QQ_ONEBOT_WS_URL` | 条件 | - | OneBot 协议：WebSocket 地址（如 `ws://127.0.0.1:3001`） |
+| `QQ_ONEBOT_HTTP_URL` | 否 | - | OneBot 协议：HTTP API 地址 |
+
+## WhatsApp 配置
+
+| 变量 | 必填 | 默认值 | 说明 |
+|---|---|---|---|
+| `WHATSAPP_ENABLED` | 否 | `false` | 是否启用 WhatsApp 适配器 |
+| `WHATSAPP_MODE` | 否 | `personal` | 运行模式：`personal`（个人号）或 `business`（商业号） |
+| `WHATSAPP_SESSION_PATH` | 否 | `data/whatsapp-session` | Personal 模式：会话文件存储路径 |
+| `WHATSAPP_BUSINESS_PHONE_ID` | 条件 | - | Business 模式：Phone ID |
+| `WHATSAPP_BUSINESS_ACCESS_TOKEN` | 条件 | - | Business 模式：Access Token |
+| `WHATSAPP_BUSINESS_WEBHOOK_VERIFY_TOKEN` | 否 | - | Business 模式：Webhook 验证 Token |
+
+## 微信个人号配置
+
+微信个人号通过数据库配置，不使用环境变量。详见 [微信个人号配置指南](weixin-config.md)。
+
 ## 认证与权限
 
 | 变量 | 必填 | 默认值 | 说明 |

@@ -89,9 +89,13 @@ The following parameters are configured through Web panel or automatically migra
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `QQ_ENABLED` | No | `false` | Enable QQ adapter |
-| `QQ_PROTOCOL` | No | `onebot` | QQ protocol type |
-| `QQ_ONEBOT_HTTP_URL` | No | `http://localhost:3000` | OneBot HTTP URL |
-| `QQ_ONEBOT_WS_URL` | No | `ws://localhost:3001` | OneBot WebSocket URL |
+| `QQ_PROTOCOL` | No | `onebot` | Protocol type: `official` (official channel bot) or `onebot` (community protocol) |
+| `QQ_APP_ID` | Conditional | - | Official protocol: QQ Bot App ID |
+| `QQ_SECRET` | Conditional | - | Official protocol: QQ Bot Secret |
+| `QQ_CALLBACK_URL` | No | - | Official protocol: Webhook callback URL |
+| `QQ_ENCRYPT_KEY` | No | - | Official protocol: Message encryption key |
+| `QQ_ONEBOT_WS_URL` | Conditional | - | OneBot protocol: WebSocket URL (e.g., `ws://127.0.0.1:3001`) |
+| `QQ_ONEBOT_HTTP_URL` | No | - | OneBot protocol: HTTP API URL |
 
 ---
 
@@ -100,17 +104,17 @@ The following parameters are configured through Web panel or automatically migra
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
 | `WHATSAPP_ENABLED` | No | `false` | Enable WhatsApp adapter |
-| `WHATSAPP_MODE` | No | `personal` | WhatsApp mode: `personal` |
+| `WHATSAPP_MODE` | No | `personal` | Running mode: `personal` (personal account) or `business` (business account) |
+| `WHATSAPP_SESSION_PATH` | No | `data/whatsapp-session` | Personal mode: Session file storage path |
+| `WHATSAPP_BUSINESS_PHONE_ID` | Conditional | - | Business mode: Phone ID |
+| `WHATSAPP_BUSINESS_ACCESS_TOKEN` | Conditional | - | Business mode: Access Token |
+| `WHATSAPP_BUSINESS_WEBHOOK_VERIFY_TOKEN` | No | - | Business mode: Webhook verify token |
 
 ---
 
-### WeChat Configuration
+### WeChat Personal Account Configuration
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `WEIXIN_ENABLED` | No | `false` | Enable WeChat adapter |
-
-> Login via QR code in Web management panel, no configuration file needed
+WeChat personal account is configured via database, not environment variables. See [WeChat Personal Account Configuration Guide](weixin-config-en.md).
 
 ---
 

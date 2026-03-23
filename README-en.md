@@ -234,19 +234,35 @@ On first access, you will be prompted to set an administrator password.
 
 ## Detailed Documentation
 
+### Core Documents
+
 | Document | Description |
 |----------|-------------|
 | [Architecture](assets/docs/architecture-en.md) | Project layered design and core module responsibilities |
 | [Configuration](assets/docs/environment-en.md) | Complete configuration parameter reference |
 | [Deployment](assets/docs/deployment-en.md) | Deployment, upgrade and systemd configuration |
+| [Commands](assets/docs/commands-en.md) | Complete command list and usage |
+| [Reliability](assets/docs/reliability-en.md) | Heartbeat, Cron and crash rescue configuration |
+| [Troubleshooting](assets/docs/troubleshooting-en.md) | Common issues and solutions |
+
+### Platform Configuration Documents
+
+| Document | Description |
+|----------|-------------|
 | [Feishu Config](assets/docs/feishu-config-en.md) | Feishu event subscription and permission configuration |
 | [Discord Config](assets/docs/discord-config-en.md) | Discord bot configuration guide |
 | [WeCom Config](assets/docs/wecom-config-en.md) | WeChat Work bot configuration guide |
-| [Commands](assets/docs/commands-en.md) | Complete command list and usage |
-| [Reliability](assets/docs/reliability-en.md) | Heartbeat, Cron and crash rescue configuration |
+| [Telegram Config](assets/docs/telegram-config-en.md) | Telegram Bot configuration guide |
+| [QQ Config](assets/docs/qq-config-en.md) | QQ Official/OneBot protocol configuration guide |
+| [WhatsApp Config](assets/docs/whatsapp-config-en.md) | WhatsApp Personal/Business configuration guide |
+| [WeChat Personal Config](assets/docs/weixin-config-en.md) | WeChat personal account configuration guide |
+
+### Extended Documents
+
+| Document | Description |
+|----------|-------------|
 | [Agent Usage](assets/docs/agent-en.md) | Role configuration and custom Agent |
 | [Implementation](assets/docs/implementation-en.md) | Key feature implementation details |
-| [Troubleshooting](assets/docs/troubleshooting-en.md) | Common issues and solutions |
 | [SDK API](assets/docs/sdk-api-en.md) | OpenCode SDK integration guide |
 | [Workspace Guide](assets/docs/workspace-guide-en.md) | Working directory strategy and project configuration |
 | [Rollout](assets/docs/rollout-en.md) | Router mode rollout and rollback |
