@@ -58,3 +58,8 @@ memory/
 HEARTBEAT.md
 PLAN.md
 PLAN_*.md
+
+# 本地开发包和临时组件
+package/
+*.tgz
+web/src/components/ConfigActionBar.vue
