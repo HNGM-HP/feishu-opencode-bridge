@@ -60,49 +60,177 @@
           </el-col>
         </el-row>
 
-        <el-divider content-position="left"><el-text type="info" size="small">飞书平台特定（覆盖全局，未设置则继承全局）</el-text></el-divider>
-        <el-row :gutter="24">
-          <el-col :span="12">
-            <el-form-item label="飞书：显示思维链（FEISHU_SHOW_THINKING_CHAIN）">
-              <el-select v-model="form.FEISHU_SHOW_THINKING_CHAIN" style="width:100%">
-                <el-option value="" label="继承全局设置" />
-                <el-option value="true" label="显示" />
-                <el-option value="false" label="隐藏" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="飞书：显示工具链（FEISHU_SHOW_TOOL_CHAIN）">
-              <el-select v-model="form.FEISHU_SHOW_TOOL_CHAIN" style="width:100%">
-                <el-option value="" label="继承全局设置" />
-                <el-option value="true" label="显示" />
-                <el-option value="false" label="隐藏" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
+        <el-divider content-position="left"><el-text type="info" size="small">平台独立配置（覆盖全局，未设置则继承全局）</el-text></el-divider>
 
-        <el-divider content-position="left"><el-text type="info" size="small">Discord 平台特定（覆盖全局，未设置则继承全局）</el-text></el-divider>
-        <el-row :gutter="24">
-          <el-col :span="12">
-            <el-form-item label="Discord：显示思维链（DISCORD_SHOW_THINKING_CHAIN）">
-              <el-select v-model="form.DISCORD_SHOW_THINKING_CHAIN" style="width:100%">
-                <el-option value="" label="继承全局设置" />
-                <el-option value="true" label="显示" />
-                <el-option value="false" label="隐藏" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="Discord：显示工具链（DISCORD_SHOW_TOOL_CHAIN）">
-              <el-select v-model="form.DISCORD_SHOW_TOOL_CHAIN" style="width:100%">
-                <el-option value="" label="继承全局设置" />
-                <el-option value="true" label="显示" />
-                <el-option value="false" label="隐藏" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
+        <div class="platform-output-config">
+          <div class="platform-row">
+            <span class="platform-label">飞书</span>
+            <span class="config-item">
+              思维链
+              <el-radio-group v-model="form.FEISHU_SHOW_THINKING_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+            <span class="config-divider">/</span>
+            <span class="config-item">
+              工具链
+              <el-radio-group v-model="form.FEISHU_SHOW_TOOL_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+          </div>
+
+          <div class="platform-row">
+            <span class="platform-label">Discord</span>
+            <span class="config-item">
+              思维链
+              <el-radio-group v-model="form.DISCORD_SHOW_THINKING_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+            <span class="config-divider">/</span>
+            <span class="config-item">
+              工具链
+              <el-radio-group v-model="form.DISCORD_SHOW_TOOL_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+          </div>
+
+          <div class="platform-row">
+            <span class="platform-label">企业微信</span>
+            <span class="config-item">
+              思维链
+              <el-radio-group v-model="form.WECOM_SHOW_THINKING_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+            <span class="config-divider">/</span>
+            <span class="config-item">
+              工具链
+              <el-radio-group v-model="form.WECOM_SHOW_TOOL_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+          </div>
+
+          <div class="platform-row">
+            <span class="platform-label">Telegram</span>
+            <span class="config-item">
+              思维链
+              <el-radio-group v-model="form.TELEGRAM_SHOW_THINKING_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+            <span class="config-divider">/</span>
+            <span class="config-item">
+              工具链
+              <el-radio-group v-model="form.TELEGRAM_SHOW_TOOL_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+          </div>
+
+          <div class="platform-row">
+            <span class="platform-label">QQ</span>
+            <span class="config-item">
+              思维链
+              <el-radio-group v-model="form.QQ_SHOW_THINKING_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+            <span class="config-divider">/</span>
+            <span class="config-item">
+              工具链
+              <el-radio-group v-model="form.QQ_SHOW_TOOL_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+          </div>
+
+          <div class="platform-row">
+            <span class="platform-label">WhatsApp</span>
+            <span class="config-item">
+              思维链
+              <el-radio-group v-model="form.WHATSAPP_SHOW_THINKING_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+            <span class="config-divider">/</span>
+            <span class="config-item">
+              工具链
+              <el-radio-group v-model="form.WHATSAPP_SHOW_TOOL_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+          </div>
+
+          <div class="platform-row">
+            <span class="platform-label">微信</span>
+            <span class="config-item">
+              思维链
+              <el-radio-group v-model="form.WEIXIN_SHOW_THINKING_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+            <span class="config-divider">/</span>
+            <span class="config-item">
+              工具链
+              <el-radio-group v-model="form.WEIXIN_SHOW_TOOL_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+          </div>
+
+          <div class="platform-row">
+            <span class="platform-label">钉钉</span>
+            <span class="config-item">
+              思维链
+              <el-radio-group v-model="form.DINGTALK_SHOW_THINKING_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+            <span class="config-divider">/</span>
+            <span class="config-item">
+              工具链
+              <el-radio-group v-model="form.DINGTALK_SHOW_TOOL_CHAIN" size="small">
+                <el-radio-button value="true">开</el-radio-button>
+                <el-radio-button value="false">关</el-radio-button>
+                <el-radio-button value="">继承</el-radio-button>
+              </el-radio-group>
+            </span>
+          </div>
+        </div>
       </el-card>
 
       <!-- 工作目录 -->
@@ -218,6 +346,18 @@ const form = reactive({
   FEISHU_SHOW_TOOL_CHAIN: '',
   DISCORD_SHOW_THINKING_CHAIN: '',
   DISCORD_SHOW_TOOL_CHAIN: '',
+  WECOM_SHOW_THINKING_CHAIN: '',
+  WECOM_SHOW_TOOL_CHAIN: '',
+  TELEGRAM_SHOW_THINKING_CHAIN: '',
+  TELEGRAM_SHOW_TOOL_CHAIN: '',
+  QQ_SHOW_THINKING_CHAIN: '',
+  QQ_SHOW_TOOL_CHAIN: '',
+  WHATSAPP_SHOW_THINKING_CHAIN: '',
+  WHATSAPP_SHOW_TOOL_CHAIN: '',
+  WEIXIN_SHOW_THINKING_CHAIN: '',
+  WEIXIN_SHOW_TOOL_CHAIN: '',
+  DINGTALK_SHOW_THINKING_CHAIN: '',
+  DINGTALK_SHOW_TOOL_CHAIN: '',
   ALLOWED_DIRECTORIES: '',
   DEFAULT_WORK_DIRECTORY: '',
   PROJECT_ALIASES: '',
@@ -243,6 +383,18 @@ function syncFromStore() {
     FEISHU_SHOW_TOOL_CHAIN: s.FEISHU_SHOW_TOOL_CHAIN || '',
     DISCORD_SHOW_THINKING_CHAIN: s.DISCORD_SHOW_THINKING_CHAIN || '',
     DISCORD_SHOW_TOOL_CHAIN: s.DISCORD_SHOW_TOOL_CHAIN || '',
+    WECOM_SHOW_THINKING_CHAIN: s.WECOM_SHOW_THINKING_CHAIN || '',
+    WECOM_SHOW_TOOL_CHAIN: s.WECOM_SHOW_TOOL_CHAIN || '',
+    TELEGRAM_SHOW_THINKING_CHAIN: s.TELEGRAM_SHOW_THINKING_CHAIN || '',
+    TELEGRAM_SHOW_TOOL_CHAIN: s.TELEGRAM_SHOW_TOOL_CHAIN || '',
+    QQ_SHOW_THINKING_CHAIN: s.QQ_SHOW_THINKING_CHAIN || '',
+    QQ_SHOW_TOOL_CHAIN: s.QQ_SHOW_TOOL_CHAIN || '',
+    WHATSAPP_SHOW_THINKING_CHAIN: s.WHATSAPP_SHOW_THINKING_CHAIN || '',
+    WHATSAPP_SHOW_TOOL_CHAIN: s.WHATSAPP_SHOW_TOOL_CHAIN || '',
+    WEIXIN_SHOW_THINKING_CHAIN: s.WEIXIN_SHOW_THINKING_CHAIN || '',
+    WEIXIN_SHOW_TOOL_CHAIN: s.WEIXIN_SHOW_TOOL_CHAIN || '',
+    DINGTALK_SHOW_THINKING_CHAIN: s.DINGTALK_SHOW_THINKING_CHAIN || '',
+    DINGTALK_SHOW_TOOL_CHAIN: s.DINGTALK_SHOW_TOOL_CHAIN || '',
     ALLOWED_DIRECTORIES: s.ALLOWED_DIRECTORIES || '',
     DEFAULT_WORK_DIRECTORY: s.DEFAULT_WORK_DIRECTORY || '',
     PROJECT_ALIASES: s.PROJECT_ALIASES || '',
@@ -317,6 +469,36 @@ function handleImportConfig(config: typeof form) {
 .card-title { font-weight: 600; font-size: 15px; }
 .field-tip { font-size: 12px; color: #999; margin-top: 4px; line-height: 1.4; }
 code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+
+/* 平台输出配置紧凑布局 */
+.platform-output-config {
+  padding: 0 4px;
+}
+.platform-row {
+  display: flex;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+.platform-row:last-child {
+  border-bottom: none;
+}
+.platform-label {
+  min-width: 80px;
+  font-weight: 500;
+  color: #303133;
+}
+.config-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #606266;
+}
+.config-divider {
+  margin: 0 12px;
+  color: #c0c4cc;
+}
 
 @media (max-width: 900px) {
   .page-layout {

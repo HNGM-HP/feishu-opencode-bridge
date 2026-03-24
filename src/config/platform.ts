@@ -230,6 +230,54 @@ export const outputConfig = {
       get showToolChain() { return parseOptionalBooleanEnv(process.env.DISCORD_SHOW_TOOL_CHAIN) ?? showToolChain; },
     };
   },
+  get wecom() {
+    const showThinkingChain = getShowThinkingChain();
+    const showToolChain = getShowToolChain();
+    return {
+      get showThinkingChain() { return parseOptionalBooleanEnv(process.env.WECOM_SHOW_THINKING_CHAIN) ?? showThinkingChain; },
+      get showToolChain() { return parseOptionalBooleanEnv(process.env.WECOM_SHOW_TOOL_CHAIN) ?? showToolChain; },
+    };
+  },
+  get telegram() {
+    const showThinkingChain = getShowThinkingChain();
+    const showToolChain = getShowToolChain();
+    return {
+      get showThinkingChain() { return parseOptionalBooleanEnv(process.env.TELEGRAM_SHOW_THINKING_CHAIN) ?? showThinkingChain; },
+      get showToolChain() { return parseOptionalBooleanEnv(process.env.TELEGRAM_SHOW_TOOL_CHAIN) ?? showToolChain; },
+    };
+  },
+  get qq() {
+    const showThinkingChain = getShowThinkingChain();
+    const showToolChain = getShowToolChain();
+    return {
+      get showThinkingChain() { return parseOptionalBooleanEnv(process.env.QQ_SHOW_THINKING_CHAIN) ?? showThinkingChain; },
+      get showToolChain() { return parseOptionalBooleanEnv(process.env.QQ_SHOW_TOOL_CHAIN) ?? showToolChain; },
+    };
+  },
+  get whatsapp() {
+    const showThinkingChain = getShowThinkingChain();
+    const showToolChain = getShowToolChain();
+    return {
+      get showThinkingChain() { return parseOptionalBooleanEnv(process.env.WHATSAPP_SHOW_THINKING_CHAIN) ?? showThinkingChain; },
+      get showToolChain() { return parseOptionalBooleanEnv(process.env.WHATSAPP_SHOW_TOOL_CHAIN) ?? showToolChain; },
+    };
+  },
+  get weixin() {
+    const showThinkingChain = getShowThinkingChain();
+    const showToolChain = getShowToolChain();
+    return {
+      get showThinkingChain() { return parseOptionalBooleanEnv(process.env.WEIXIN_SHOW_THINKING_CHAIN) ?? showThinkingChain; },
+      get showToolChain() { return parseOptionalBooleanEnv(process.env.WEIXIN_SHOW_TOOL_CHAIN) ?? showToolChain; },
+    };
+  },
+  get dingtalk() {
+    const showThinkingChain = getShowThinkingChain();
+    const showToolChain = getShowToolChain();
+    return {
+      get showThinkingChain() { return parseOptionalBooleanEnv(process.env.DINGTALK_SHOW_THINKING_CHAIN) ?? showThinkingChain; },
+      get showToolChain() { return parseOptionalBooleanEnv(process.env.DINGTALK_SHOW_TOOL_CHAIN) ?? showToolChain; },
+    };
+  },
 };
 
 export const attachmentConfig = {

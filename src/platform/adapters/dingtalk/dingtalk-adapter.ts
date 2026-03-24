@@ -17,6 +17,7 @@ import type {
   PlatformAttachment,
 } from '../../types.js';
 import { configStore, type DingtalkAccountRow } from '../../../store/config-store.js';
+import { dingtalkConfig } from '../../../config/platform.js';
 import type { DingtalkConfig, DingtalkRawMessage } from './dingtalk-types.js';
 import { DingtalkConnection } from './dingtalk-connection.js';
 import { DingtalkSender } from './dingtalk-sender.js';
@@ -47,6 +48,12 @@ export class DingtalkAdapter implements PlatformAdapter {
   }
 
   async start(): Promise<void> {
+    // 检查全局开关
+    if (!dingtalkConfig.enabled) {
+      console.log('[钉钉] 适配器未启用，跳过启动');
+      return;
+    }
+
     const accounts = configStore.getDingtalkAccounts().filter((a: DingtalkAccountRow) => a.enabled === 1);
 
     // 先设置 isActive，确保异步工作线程能正确检测状态
