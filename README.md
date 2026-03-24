@@ -71,6 +71,23 @@
 - **服务控制**：查看服务状态、远程重启
 
 ---
+<details>
+<summary>WEB可视化界面（点击展开）</summary>
+
+<p>
+  <img src="assets/demo/web1.png" width="720" />
+  <img src="assets/demo/web2.png" width="720" />
+  <img src="assets/demo/web3.png" width="720" />
+  <img src="assets/demo/web4.png" width="720" />
+  <img src="assets/demo/web5.png" width="720" />
+  <img src="assets/demo/web6.png" width="720" />
+  <img src="assets/demo/web7.png" width="720" />
+  <img src="assets/demo/web8.png" width="720" />
+</p>
+
+</details>
+
+---
 
 ## 🚀 快速开始
 
