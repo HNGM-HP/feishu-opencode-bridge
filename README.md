@@ -184,35 +184,79 @@ http://localhost:4098
 
 ## 🏗️ 架构概览
 
+### 系统架构图
+
 ```mermaid
 flowchart TB
-    subgraph platforms["平台适配层"]
-        feishu["飞书"]
-        discord["Discord"]
-        wecom["企业微信"]
-        telegram["Telegram"]
-        qq["QQ"]
-        whatsapp["WhatsApp"]
-        weixin["微信"]
-        dingtalk["钉钉"]
+    %% 样式定义
+    classDef platform fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,rx:8px
+    classDef core fill:#fff3e0,stroke:#f57c00,stroke-width:2px,rx:8px
+    classDef handler fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,rx:8px
+    classDef opencode fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,rx:8px
+    classDef external fill:#fce4ec,stroke:#c2185b,stroke-width:2px,rx:8px,stroke-dasharray:5 5
+
+    subgraph PlatformLayer["📱 平台适配层"]
+        direction LR
+        feishu["✈️ 飞书"]:::platform
+        discord["🎮 Discord"]:::platform
+        wecom["💼 企业微信"]:::platform
+        telegram["📤 Telegram"]:::platform
+        qq["🐧 QQ"]:::platform
+        whatsapp["📞 WhatsApp"]:::platform
+        weixin["💬 微信"]:::platform
+        dingtalk["📌 钉钉"]:::platform
     end
 
-    router["路由层<br/>RootRouter"]
+    subgraph CoreLayer["⚙️ 核心处理层"]
+        direction TB
+        router["🔀 路由中心<br/><b>RootRouter</b>"]:::core
 
-    subgraph handlers["处理模块"]
-        permission["权限处理<br/>Permission"]
-        question["问题处理<br/>Question"]
-        output["输出缓冲<br/>Output"]
+        subgraph Handlers["处理模块"]
+            direction LR
+            permission["🔐 权限处理"]:::handler
+            question["❓ 问题作答"]:::handler
+            output["📤 输出缓冲"]:::handler
+        end
     end
 
-    opencode["OpenCode 集成<br/>OpencodeClient"]
-    cli["OpenCode CLI"]
+    subgraph IntegrationLayer["🔗 集成层"]
+        sdk["🔌 OpenCode SDK<br/><b>OpencodeClient</b>"]:::opencode
+    end
 
-    platforms --> router
-    router --> handlers
-    handlers --> opencode
-    opencode --> cli
+    subgraph External["🌐 外部服务"]
+        opencode["🤖 OpenCode 服务"]:::external
+        cli["💻 OpenCode CLI"]:::external
+    end
+
+    %% 连接关系
+    PlatformLayer --> router
+    router --> Handlers
+    Handlers --> sdk
+    sdk --> opencode
+    opencode -.-> cli
+
+    %% 图例说明
+    subgraph Legend["图例"]
+        direction TB
+        L1["平台适配"]:::platform
+        L2["核心路由"]:::core
+        L3["业务处理"]:::handler
+        L4["SDK 集成"]:::opencode
+        L5["外部依赖"]:::external
+    end
+
+    class Legend transparent
+    class L1,L2,L3,L4,L5 transparent
 ```
+
+**架构说明：**
+
+| 层级 | 职责 | 关键组件 |
+|------|------|----------|
+| 📱 平台适配层 | 接收各平台消息，统一格式转换 | 8 个平台适配器 |
+| ⚙️ 核心处理层 | 消息路由、权限验证、业务处理 | RootRouter、Permission、Question、Output |
+| 🔗 集成层 | 与 OpenCode 通信，发送/接收请求 | OpencodeClient SDK |
+| 🌐 外部服务 | 实际的 AI 服务和命令行工具 | OpenCode 服务、CLI |
 
 ---
 

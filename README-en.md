@@ -184,35 +184,79 @@ The following commands are available on all platforms:
 
 ## 🏗️ Architecture Overview
 
+### System Architecture Diagram
+
 ```mermaid
 flowchart TB
-    subgraph platforms["Platform Adapter Layer"]
-        feishu["Feishu"]
-        discord["Discord"]
-        wecom["WeCom"]
-        telegram["Telegram"]
-        qq["QQ"]
-        whatsapp["WhatsApp"]
-        weixin["WeChat"]
-        dingtalk["DingTalk"]
+    %% Style definitions
+    classDef platform fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,rx:8px
+    classDef core fill:#fff3e0,stroke:#f57c00,stroke-width:2px,rx:8px
+    classDef handler fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,rx:8px
+    classDef opencode fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,rx:8px
+    classDef external fill:#fce4ec,stroke:#c2185b,stroke-width:2px,rx:8px,stroke-dasharray:5 5
+
+    subgraph PlatformLayer["📱 Platform Adapter Layer"]
+        direction LR
+        feishu["✈️ Feishu"]:::platform
+        discord["🎮 Discord"]:::platform
+        wecom["💼 WeCom"]:::platform
+        telegram["📤 Telegram"]:::platform
+        qq["🐧 QQ"]:::platform
+        whatsapp["📞 WhatsApp"]:::platform
+        weixin["💬 WeChat"]:::platform
+        dingtalk["📌 DingTalk"]:::platform
     end
 
-    router["Router Layer<br/>RootRouter"]
+    subgraph CoreLayer["⚙️ Core Processing Layer"]
+        direction TB
+        router["🔀 Router Center<br/><b>RootRouter</b>"]:::core
 
-    subgraph handlers["Handler Modules"]
-        permission["Permission<br/>Handler"]
-        question["Question<br/>Handler"]
-        output["Output<br/>Buffer"]
+        subgraph Handlers["Handler Modules"]
+            direction LR
+            permission["🔐 Permission Handler"]:::handler
+            question["❓ Q&A Handler"]:::handler
+            output["📤 Output Buffer"]:::handler
+        end
     end
 
-    opencode["OpenCode Integration<br/>OpencodeClient"]
-    cli["OpenCode CLI"]
+    subgraph IntegrationLayer["🔗 Integration Layer"]
+        sdk["🔌 OpenCode SDK<br/><b>OpencodeClient</b>"]:::opencode
+    end
 
-    platforms --> router
-    router --> handlers
-    handlers --> opencode
-    opencode --> cli
+    subgraph External["🌐 External Services"]
+        opencode["🤖 OpenCode Service"]:::external
+        cli["💻 OpenCode CLI"]:::external
+    end
+
+    %% Connections
+    PlatformLayer --> router
+    router --> Handlers
+    Handlers --> sdk
+    sdk --> opencode
+    opencode -.-> cli
+
+    %% Legend
+    subgraph Legend["Legend"]
+        direction TB
+        L1["Platform Adapter"]:::platform
+        L2["Core Router"]:::core
+        L3["Business Handler"]:::handler
+        L4["SDK Integration"]:::opencode
+        L5["External Dependency"]:::external
+    end
+
+    class Legend transparent
+    class L1,L2,L3,L4,L5 transparent
 ```
+
+**Architecture Description:**
+
+| Layer | Responsibility | Key Components |
+|-------|----------------|----------------|
+| 📱 Platform Adapter Layer | Receive messages from each platform, unified format conversion | 8 Platform Adapters |
+| ⚙️ Core Processing Layer | Message routing, permission validation, business processing | RootRouter, Permission, Question, Output |
+| 🔗 Integration Layer | Communicate with OpenCode, send/receive requests | OpencodeClient SDK |
+| 🌐 External Services | Actual AI service and CLI tools | OpenCode Service, CLI |
 
 ---
 
