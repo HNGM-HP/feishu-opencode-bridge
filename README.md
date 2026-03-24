@@ -15,16 +15,31 @@
 
 ## 📱 支持平台
 
-| 平台 | 状态 | 核心特性 |
+### 平台概览
+
+| 平台 | 状态 | 登录方式 |
 |------|------|----------|
-| 飞书 (Lark) | ✅ 完整支持 | 卡片交互、流式输出、权限确认、文件传输、撤回同步 |
-| Discord | ✅ 完整支持 | 组件交互、Embed 消息、Slash 命令、频道管理 |
-| 企业微信 (WeCom) | ✅ 完整支持 | 文本交互、消息收发 |
-| Telegram | ✅ 完整支持 | 文本交互、Inline 键盘 |
-| QQ (OneBot) | ✅ 完整支持 | 文本交互、群聊支持 |
-| WhatsApp | ✅ 完整支持 | 文本交互、媒体消息 |
-| 个人微信 | ✅ 完整支持 | 扫码登录、文本交互 |
-| 钉钉 (DingTalk) | ✅ 完整支持 | Stream 模式、单聊群聊、消息收发 |
+| 飞书 (Lark) | ✅ 完整支持 | 机器人应用 |
+| Discord | ✅ 完整支持 | Bot Token |
+| 企业微信 (WeCom) | ✅ 完整支持 | 机器人应用 |
+| Telegram | ✅ 完整支持 | Bot Token |
+| QQ (OneBot) | ✅ 完整支持 | OneBot 协议 |
+| WhatsApp | ✅ 完整支持 | 手机号配对 |
+| 个人微信 | ✅ 完整支持 | 扫码登录 |
+| 钉钉 (DingTalk) | ✅ 完整支持 | 机器人应用 |
+
+### 功能支持对比
+
+| 功能 | 飞书 | Discord | 企业微信 | Telegram | QQ | WhatsApp | 微信 | 钉钉 |
+|------|:----:|:-------:|:--------:|:--------:|:--:|:--------:|:----:|:----:|
+| 文本消息 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 富媒体/卡片 | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| 流式输出 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 权限交互 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 文件传输 | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
+| 群聊支持 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 私聊支持 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 消息撤回 | ✅ | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ✅ |
 
 ---
 
@@ -116,25 +131,44 @@ http://localhost:4098
 
 ## 📝 命令速查
 
-### 飞书命令
+### 通用命令
+
+以下命令在所有平台均可使用：
 
 | 命令 | 说明 |
 |------|------|
 | `/help` | 查看帮助 |
-| `/panel` | 打开控制面板（模型、角色、强度） |
-| `/model <provider:model>` | 切换模型 |
-| `/agent <name>` | 切换 Agent |
+| `/status` | 查看当前状态 |
+| `/panel` | 显示控制面板 |
+| `/model` | 查看当前模型 |
+| `/model <名称>` | 切换模型 |
+| `/models` | 列出所有可用模型 |
+| `/agent` | 查看当前角色 |
+| `/agent <名称>` | 切换角色 |
+| `/agents` | 列出所有可用角色 |
+| `/effort` | 查看当前推理强度 |
 | `/effort <档位>` | 设置推理强度 |
 | `/session new` | 开启新话题 |
-| `/session <sessionId>` | 绑定已有会话 |
+| `/sessions` | 列出会话 |
 | `/undo` | 撤回上一轮交互 |
+| `/stop` | 停止当前回答 |
 | `/compact` | 压缩上下文 |
+| `/rename <名称>` | 重命名会话 |
 | `/project list` | 列出可用项目 |
+| `/clear` | 重置对话上下文 |
+
+### 飞书专属命令
+
+| 命令 | 说明 |
+|------|------|
 | `/send <路径>` | 发送文件到群聊 |
 | `/cron ...` | 管理 Cron 任务 |
-| `!<shell 命令>` | 透传 Shell 命令 |
+| `/commands` | 生成命令清单文件 |
+| `/create_chat` | 私聊中调出建群卡片 |
+| `!<shell 命令>` | 透传 Shell 命令（白名单） |
+| `//xxx` | 透传命名空间命令 |
 
-### Discord 命令
+### Discord 专属命令
 
 | 命令 | 说明 |
 |------|------|
@@ -146,53 +180,70 @@ http://localhost:4098
 | `///workdir` | 设置工作目录 |
 | `///cron ...` | 管理 Cron 任务 |
 
-### 企业微信命令
-
-| 命令 | 说明 |
-|------|------|
-| `/help` | 查看帮助 |
-| `/panel` | 打开控制面板 |
-| `/model <provider:model>` | 切换模型 |
-| `/agent <name>` | 切换 Agent |
-| `/session new` | 开启新话题 |
-| `/undo` | 撤回上一轮交互 |
-| `/compact` | 压缩上下文 |
-
 ---
 
 ## 🏗️ 架构概览
 
+### 系统架构图
+
+```mermaid
+flowchart LR
+    %% 样式定义
+    classDef platform fill:#e1f5fe,stroke:#0288d1,stroke-width:2px,rx:8px
+    classDef core fill:#fff3e0,stroke:#f57c00,stroke-width:2px,rx:8px
+    classDef handler fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px,rx:8px
+    classDef opencode fill:#e8f5e9,stroke:#388e3c,stroke-width:2px,rx:8px
+    classDef external fill:#fce4ec,stroke:#c2185b,stroke-width:2px,rx:8px,stroke-dasharray:5 5
+
+    subgraph PlatformLayer["📱 平台适配层"]
+        direction TB
+        feishu["✈️ 飞书"]:::platform
+        discord["🎮 Discord"]:::platform
+        wecom["💼 企业微信"]:::platform
+        telegram["📤 Telegram"]:::platform
+        qq["🐧 QQ"]:::platform
+        whatsapp["📞 WhatsApp"]:::platform
+        weixin["💬 微信"]:::platform
+        dingtalk["📌 钉钉"]:::platform
+    end
+
+    subgraph CoreLayer["⚙️ 核心处理层"]
+        direction TB
+        router["🔀 路由中心<br/><b>RootRouter</b>"]:::core
+
+        subgraph Handlers["处理模块"]
+            direction LR
+            permission["🔐 权限处理"]:::handler
+            question["❓ 问题作答"]:::handler
+            output["📤 输出缓冲"]:::handler
+        end
+    end
+
+    subgraph IntegrationLayer["🔗 集成层"]
+        sdk["🔌 OpenCode SDK<br/><b>OpencodeClient</b>"]:::opencode
+    end
+
+    subgraph External["🌐 外部服务"]
+        opencode["🤖 OpenCode 服务"]:::external
+        cli["💻 OpenCode CLI"]:::external
+    end
+
+    %% 连接关系
+    PlatformLayer --> router
+    router --> Handlers
+    Handlers --> sdk
+    sdk --> opencode
+    opencode -.-> cli
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      平台适配层                              │
-│  飞书 │ Discord │ 企业微信 │ Telegram │ QQ │ WhatsApp │ 微信  │
-└────┬────────┬────────┬────────┬────────┬────────┬──────────┘
-     │        │        │        │        │        │
-     └────────┴────────┴────────┴────────┴────────┘
-                        │
-              ┌─────────▼─────────┐
-              │     路由层        │
-              │   RootRouter      │
-              └─────────┬─────────┘
-                        │
-     ┌──────────────────┼──────────────────┐
-     │                  │                  │
-┌────▼────┐      ┌─────▼─────┐      ┌─────▼─────┐
-│权限处理 │      │ 问题处理  │      │ 输出缓冲  │
-│Permission│     │ Question  │      │ Output    │
-└────┬────┘      └─────┬─────┘      └─────┬─────┘
-     │                 │                  │
-     └─────────────────┼──────────────────┘
-                       │
-             ┌─────────▼─────────┐
-             │   OpenCode 集成   │
-             │  OpencodeClient   │
-             └─────────┬─────────┘
-                       │
-             ┌─────────▼─────────┐
-             │   OpenCode CLI    │
-             └───────────────────┘
-```
+
+**架构说明：**
+
+| 层级 | 职责 | 关键组件 |
+|------|------|----------|
+| 📱 平台适配层 | 接收各平台消息，统一格式转换 | 8 个平台适配器 |
+| ⚙️ 核心处理层 | 消息路由、权限验证、业务处理 | RootRouter、Permission、Question、Output |
+| 🔗 集成层 | 与 OpenCode 通信，发送/接收请求 | OpencodeClient SDK |
+| 🌐 外部服务 | 实际的 AI 服务和命令行工具 | OpenCode 服务、CLI |
 
 ---
 

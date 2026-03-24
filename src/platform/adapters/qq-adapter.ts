@@ -428,6 +428,7 @@ class QQOfficialClient {
     if (eventType === 'RESUMED') {
       console.log('[QQ Official] 重连成功');
       this.isReconnect = false;
+      this.sendHeartbeat();
       return;
     }
 
