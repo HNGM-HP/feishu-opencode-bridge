@@ -1167,16 +1167,20 @@ class OpencodeClientWrapper extends EventEmitter {
       console.warn('[OpenCode] 获取默认作用域会话列表失败:', error);
     }
 
-    const projects = await this.listProjects();
-    const directories: string[] = [];
-    const seenDirectories = new Set<string>();
-    for (const project of projects) {
-      const normalized = this.normalizeDirectory(project.worktree);
-      if (!normalized || seenDirectories.has(normalized)) {
-        continue;
+    let directories: string[] = [];
+    try {
+      const projects = await this.listProjects();
+      const seenDirectories = new Set<string>();
+      for (const project of projects) {
+        const normalized = this.normalizeDirectory(project.worktree);
+        if (!normalized || seenDirectories.has(normalized)) {
+          continue;
+        }
+        seenDirectories.add(normalized);
+        directories.push(normalized);
       }
-      seenDirectories.add(normalized);
-      directories.push(normalized);
+    } catch (error) {
+      console.warn('[OpenCode] 获取项目列表失败:', error);
     }
 
     const sessionGroups = await Promise.all(
