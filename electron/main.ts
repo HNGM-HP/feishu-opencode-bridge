@@ -12,6 +12,7 @@ import { app, BrowserWindow, Tray, Menu, nativeImage, shell, dialog } from 'elec
 import path from 'node:path';
 import { spawn, ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import http from 'node:http';
 import electronUpdater from 'electron-updater';
 const { autoUpdater } = electronUpdater;
 
@@ -27,8 +28,10 @@ let tray: Tray | null = null;
 // 开发模式检测
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
-// 后端服务端口（默认 3000）
+// 后端服务端口（默认 3000，仅用于内部服务）
 const BACKEND_PORT = parseInt(process.env.PORT || '3000', 10);
+// Admin 管理面板端口（前端页面从这里加载）
+const ADMIN_PORT = parseInt(process.env.ADMIN_PORT || '4098', 10);
 
 // 获取用户数据目录
 function getUserDataPath(): string {
@@ -97,6 +100,51 @@ function stopBackend() {
 }
 
 /**
+ * 等待 Admin Server 就绪
+ */
+function waitForAdminServer(port: number, maxRetries = 30, interval = 500): Promise<boolean> {
+  return new Promise((resolve) => {
+    let retries = 0;
+
+    const check = () => {
+      const req = http.request({
+        hostname: 'localhost',
+        port,
+        path: '/',
+        method: 'GET',
+        timeout: 1000,
+      }, (res) => {
+        if (res.statusCode === 200 || res.statusCode === 302) {
+          console.log(`[Electron] Admin Server is ready (port ${port})`);
+          resolve(true);
+        } else {
+          retry();
+        }
+      });
+
+      req.on('error', () => retry());
+      req.on('timeout', () => {
+        req.destroy();
+        retry();
+      });
+      req.end();
+    };
+
+    const retry = () => {
+      retries++;
+      if (retries >= maxRetries) {
+        console.error(`[Electron] Admin Server not ready after ${maxRetries} retries`);
+        resolve(false);
+      } else {
+        setTimeout(check, interval);
+      }
+    };
+
+    check();
+  });
+}
+
+/**
  * 创建主窗口
  */
 function createWindow() {
@@ -120,9 +168,25 @@ function createWindow() {
     mainWindow.webContents.openDevTools();
   }
 
-  // 加载前端页面
-  const frontendUrl = `http://localhost:${BACKEND_PORT}`;
-  mainWindow.loadURL(frontendUrl);
+  // 加载前端页面（Admin 管理面板）
+  const frontendUrl = `http://localhost:${ADMIN_PORT}`;
+
+  mainWindow.loadURL(frontendUrl).catch((err) => {
+    console.error('[Electron] Failed to load frontend:', err);
+    // 显示错误页面
+    mainWindow?.loadURL(`data:text/html,
+      <html>
+        <head><meta charset="UTF-8"><title>启动失败</title></head>
+        <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;background:#f5f5f5;">
+          <div style="text-align:center;padding:40px;background:white;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color:#e74c3c;margin-bottom:16px;">⚠️ 服务启动失败</h2>
+            <p style="color:#666;margin-bottom:20px;">管理面板服务未能正常启动</p>
+            <button onclick="location.reload()" style="padding:10px 20px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">重试</button>
+          </div>
+        </body>
+      </html>
+    `);
+  });
 
   // 窗口准备就绪时显示
   mainWindow.once('ready-to-show', () => {
@@ -276,18 +340,26 @@ if (!gotTheLock) {
   });
 
   // 应用就绪
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     // 启动后端服务
     startBackend();
 
-    // 等待后端启动后创建窗口
-    setTimeout(() => {
-      createWindow();
-      createTray();
+    // 等待 Admin Server 就绪
+    console.log('[Electron] Waiting for Admin Server...');
+    const isReady = await waitForAdminServer(ADMIN_PORT);
 
-      // 检查更新（非开发模式）
-      checkForUpdates();
-    }, 2000);
+    if (isReady) {
+      createWindow();
+    } else {
+      // 即使未检测到服务就绪，也创建窗口显示错误页面
+      createWindow();
+      console.error('[Electron] Admin Server failed to start, showing error page');
+    }
+
+    createTray();
+
+    // 检查更新（非开发模式）
+    checkForUpdates();
 
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) {
