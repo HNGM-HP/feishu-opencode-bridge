@@ -1,6 +1,6 @@
 {
   "name": "opencode-bridge",
-  "version": "2.9.52",
+  "version": "2.9.53-beta.3",
   "type": "module",
   "description": "Feishu / Discord × OpenCode bridge service with runtime cron and reliability tooling",
   "main": "dist-electron/main.js",
@@ -204,8 +204,7 @@
     },
     "linux": {
       "target": [
-        "AppImage",
-        "deb"
+        "AppImage"
       ],
       "icon": "assets/icon.png",
       "category": "Network;Chat;InstantMessaging;"
