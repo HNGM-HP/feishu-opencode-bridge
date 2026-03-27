@@ -1,6 +1,6 @@
 {
   "name": "opencode-bridge",
-  "version": "2.9.53-beta.3",
+  "version": "2.9.53-beta.6",
   "type": "module",
   "description": "Feishu / Discord × OpenCode bridge service with runtime cron and reliability tooling",
   "main": "dist-electron/main.js",
@@ -156,7 +156,8 @@
           ]
         }
       ],
-      "icon": "assets/icon.ico"
+      "icon": "assets/icon.ico",
+      "publish": "never"
     },
     "nsis": {
       "oneClick": false,
@@ -186,7 +187,8 @@
       "extendInfo": {
         "NSHighResolutionCapable": true,
         "CFBundleShortVersionString": "${version}"
-      }
+      },
+      "publish": "never"
     },
     "dmg": {
       "contents": [
@@ -207,8 +209,8 @@
         "AppImage"
       ],
       "icon": "assets/icon.png",
-      "category": "Network;Chat;InstantMessaging;"
-    },
-    "publish": null
+      "category": "Network;Chat;InstantMessaging;",
+      "publish": "never"
+    }
   }
 }
