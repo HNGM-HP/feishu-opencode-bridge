@@ -620,11 +620,26 @@ async function main() {
     console.log(`[Config] 📝 如需回滚到旧版路由，设置 ROUTER_MODE=legacy 并重启服务`);
   }
 
-  // 2. 连接 OpenCode
+  // 2. 先启动 Admin Server（确保管理面板可用，即使 OpenCode 未运行）
+  if (!process.env.BRIDGE_SPAWNED_BY_ADMIN) {
+    const adminPort = parseInt(process.env.ADMIN_PORT ?? '4098', 10);
+    const adminPassword = process.env.ADMIN_PASSWORD ?? '';
+    const adminServer = createAdminServer({
+      port: adminPort,
+      password: adminPassword,
+      cronManager: undefined, // cronManager 在后面初始化
+      startedAt: new Date(),
+      version: '2.9.5-beta',
+    });
+    adminServer.start();
+    console.log(`[Admin] 管理面板已启动: http://localhost:${adminPort}`);
+  }
+
+  // 3. 连接 OpenCode（失败不退出，允许用户在管理面板中诊断）
   const connected = await opencodeClient.connect();
   if (!connected) {
-    console.error('[OpenCode] 无法连接到服务器，请确保 opencode serve 已运行');
-    process.exit(1);
+    console.warn('[OpenCode] ⚠️ 无法连接到服务器，请确保 opencode serve 已运行');
+    console.warn('[OpenCode] 💡 管理面板已启动，请在浏览器中配置并诊断');
   }
 
   // 3. 配置输出缓冲 (流式响应)
@@ -1520,20 +1535,6 @@ async function main() {
 
   // 3.5 初始化 Reliability 生命周期（heartbeat + scheduler + rescue orchestrator）
   const reliabilityLifecycle = bootstrapReliabilityLifecycle();
-
-  // 3.6 启动可视化配置面板（仅在独立运行时启动，被 Admin spawn 时不启动）
-  if (!process.env.BRIDGE_SPAWNED_BY_ADMIN) {
-    const adminPort = parseInt(process.env.ADMIN_PORT ?? '4098', 10);
-    const adminPassword = process.env.ADMIN_PASSWORD ?? '';
-    const adminServer = createAdminServer({
-      port: adminPort,
-      password: adminPassword,
-      cronManager: getRuntimeCronManager() ?? undefined,
-      startedAt: new Date(),
-      version: '2.9.5-beta',
-    });
-    adminServer.start();
-  }
 
   // 4. 监听飞书消息（通过路由器分发）
   feishuClient.on('message', async (event) => {
