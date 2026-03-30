@@ -21,20 +21,18 @@ export const router = createRouter({
   routes,
 })
 
-// 检查是否需要修改密码
-async function checkPasswordChangeRequired(): Promise<boolean> {
+// 检查密码状态（用于判断是否需要清除旧 token）
+async function checkPasswordStatus(): Promise<{ hasPassword: boolean; needsPasswordChange: boolean }> {
   const token = localStorage.getItem('admin_token')
-  if (!token) return false
-
   try {
     const http = axios.create({
       baseURL: '/api',
-      headers: { Authorization: `Bearer ${token}` },
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
     const { data } = await http.get('/admin/password-status')
-    return data.needsPasswordChange
+    return { hasPassword: data.hasPassword, needsPasswordChange: data.needsPasswordChange }
   } catch {
-    return false
+    return { hasPassword: true, needsPasswordChange: false }
   }
 }
 
@@ -45,7 +43,16 @@ router.beforeEach(async (to, _from, next) => {
   // 登录页
   if (to.path === '/login') {
     if (token) {
-      next('/dashboard')
+      // 有旧 token，检查密码是否已被重置
+      const { hasPassword } = await checkPasswordStatus()
+      if (!hasPassword) {
+        // 密码已重置，清除旧 token，允许访问登录页
+        localStorage.removeItem('admin_token')
+        next()
+      } else {
+        // 密码正常，跳转到 dashboard
+        next('/dashboard')
+      }
     } else {
       next()
     }
@@ -75,8 +82,14 @@ router.beforeEach(async (to, _from, next) => {
 
   // 检查是否需要强制修改密码
   try {
-    const needsChange = await checkPasswordChangeRequired()
-    if (needsChange) {
+    const { needsPasswordChange, hasPassword } = await checkPasswordStatus()
+    // 密码已被重置，清除旧 token 并跳转到登录页
+    if (!hasPassword) {
+      localStorage.removeItem('admin_token')
+      next('/login')
+      return
+    }
+    if (needsPasswordChange) {
       next('/change-password')
       return
     }
