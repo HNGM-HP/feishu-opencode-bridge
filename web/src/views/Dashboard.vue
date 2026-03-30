@@ -177,7 +177,8 @@ const healthChecks = ref<Record<string, HealthCheck>>({
 
 const dbStatus = computed(() => {
   if (!status.value?.dbPath) return '未知'
-  const parts = status.value.dbPath.split('/')
+  // 同时支持 Unix 和 Windows 路径分隔符
+  const parts = status.value.dbPath.split(/[/\\]/)
   return parts[parts.length - 1] || 'SQLite'
 })
 
@@ -277,7 +278,7 @@ function formatStartTime(iso?: string): string {
 }
 .stat-content { flex: 1; }
 .stat-label { font-size: 13px; color: #909399; margin-bottom: 4px; }
-.stat-value { font-size: 18px; font-weight: 600; color: #1a1a2e; }
+.stat-value { font-size: 18px; font-weight: 600; color: #1a1a2e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .config-card { margin-bottom: 20px; }
 .card-title { font-weight: 600; font-size: 15px; }
