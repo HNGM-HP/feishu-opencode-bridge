@@ -50,8 +50,9 @@ export class BridgeManager {
 
     return new Promise((resolve) => {
       try {
+        // Windows 下使用 pipe 而非 inherit，避免 I/O 流绑定问题导致子进程阻塞
         this.child = spawn(process.execPath, [bridgeEntry], {
-          stdio: ['ignore', 'inherit', 'inherit'],
+          stdio: ['ignore', 'pipe', 'pipe'],
           detached: false,
           windowsHide: isWindows,
           env: {
@@ -61,6 +62,16 @@ export class BridgeManager {
         });
 
         this.startedAt = new Date();
+
+        // 处理子进程 stdout 输出
+        this.child.stdout?.on('data', (data) => {
+          console.log(`[Bridge] ${data.toString().trim()}`);
+        });
+
+        // 处理子进程 stderr 输出
+        this.child.stderr?.on('data', (data) => {
+          console.error(`[Bridge Error] ${data.toString().trim()}`);
+        });
 
         this.child.on('error', (err) => {
           console.error('[BridgeManager] Bridge 进程错误:', err);
