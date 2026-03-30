@@ -10,10 +10,22 @@ http.interceptors.request.use(config => {
 })
 
 // 处理密码重置后的 410 响应：清除缓存并跳转到设置密码页面
+// 排除登录、认证、密码状态检查等接口，这些接口允许无密码访问
+const EXCLUDED_PATHS = [
+  '/auth/login',
+  '/auth/verify',
+  '/admin/password-status',
+  '/admin/password',
+]
+
 http.interceptors.response.use(
   response => response,
   error => {
-    if (error.response?.status === 410 && error.response?.data?.reason === 'password_reset') {
+    if (
+      error.response?.status === 410 &&
+      error.response?.data?.reason === 'password_reset' &&
+      !EXCLUDED_PATHS.some(path => error.config?.url?.includes(path))
+    ) {
       localStorage.removeItem('admin_token')
       window.location.href = '/change-password?mode=setup'
     }
