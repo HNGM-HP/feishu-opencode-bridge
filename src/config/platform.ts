@@ -448,7 +448,7 @@ export function validateConfig(): void {
   }
 }
 
-export function isPlatformConfigured(platform: 'feishu' | 'discord' | 'wecom' | 'telegram' | 'qq' | 'whatsapp' | 'dingtalk'): boolean {
+export function isPlatformConfigured(platform: 'feishu' | 'discord' | 'wecom' | 'telegram' | 'qq' | 'whatsapp' | 'weixin' | 'dingtalk'): boolean {
   switch (platform) {
     case 'feishu':
       return !!(feishuConfig.enabled && feishuConfig.appId && feishuConfig.appSecret);
@@ -467,6 +467,9 @@ export function isPlatformConfigured(platform: 'feishu' | 'discord' | 'wecom' | 
       if (!whatsappConfig.enabled) return false;
       return whatsappConfig.mode === 'personal' ||
         !!(whatsappConfig.businessPhoneId && whatsappConfig.businessAccessToken);
+    case 'weixin':
+      // 个人微信通过数据库配置，默认启用
+      return true;
     case 'dingtalk':
       return dingtalkConfig.enabled;
     default:

@@ -6,7 +6,7 @@
  * 支持附件下载：photo、document、video、audio
  */
 
-import { Bot, InlineKeyboard, type Context } from 'grammy';
+import type { Bot, InlineKeyboard, Context } from 'grammy';
 import type {
   PlatformAdapter,
   PlatformSender,
@@ -16,6 +16,16 @@ import type {
 } from '../types.js';
 import { telegramConfig } from '../../config.js';
 import type { File as TelegramFile } from '@grammyjs/types';
+
+// 动态导入缓存：仅在启用时加载 grammy
+type GrammyModule = typeof import('grammy');
+let _grammyModule: GrammyModule | null = null;
+async function getGrammyModule(): Promise<GrammyModule> {
+  if (!_grammyModule) {
+    _grammyModule = await import('grammy');
+  }
+  return _grammyModule;
+}
 
 const TELEGRAM_MESSAGE_LIMIT = 4096;
 const TELEGRAM_FILE_BASE_URL = 'https://api.telegram.org/file/bot';
@@ -106,7 +116,7 @@ class TelegramSender implements PlatformSender {
     const content = payload.telegramText || payload.text || payload.markdown || JSON.stringify(card, null, 2);
 
     try {
-      const keyboard = this.buildInlineKeyboard(payload.buttons);
+      const keyboard = await this.buildInlineKeyboard(payload.buttons);
       // 不使用 parse_mode，发送纯文本避免 MarkdownV2 转义问题
       const result = await bot.api.sendMessage(conversationId, content, {
         reply_markup: keyboard,
@@ -138,7 +148,7 @@ class TelegramSender implements PlatformSender {
       const payload = card as TelegramCardPayload;
       // 优先使用 telegramText（纯文本格式）
       const content = payload.telegramText || payload.text || payload.markdown || JSON.stringify(card, null, 2);
-      const keyboard = this.buildInlineKeyboard(payload.buttons);
+      const keyboard = await this.buildInlineKeyboard(payload.buttons);
 
       // 不使用 parse_mode，发送纯文本
       await bot.api.editMessageText(conversationId, Number(messageId), content, {
@@ -177,11 +187,12 @@ class TelegramSender implements PlatformSender {
   /**
    * 构建 InlineKeyboard
    */
-  private buildInlineKeyboard(buttons?: Array<{ text: string; callback_data: string }>): InlineKeyboard | undefined {
+  private async buildInlineKeyboard(buttons?: Array<{ text: string; callback_data: string }>): Promise<InlineKeyboard | undefined> {
     if (!buttons || buttons.length === 0) {
       return undefined;
     }
 
+    const { InlineKeyboard } = await getGrammyModule();
     const keyboard = new InlineKeyboard();
     for (let i = 0; i < buttons.length; i++) {
       const button = buttons[i];
@@ -234,6 +245,9 @@ export class TelegramAdapter implements PlatformAdapter {
     }
 
     try {
+      // 动态加载 grammy（节省内存，未启用时不加载）
+      console.log('[Telegram] 动态加载 grammy SDK...');
+      const { Bot } = await getGrammyModule();
       this.bot = new Bot(telegramConfig.botToken);
 
       // 获取 Bot 信息

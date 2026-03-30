@@ -1,4 +1,4 @@
-import {
+import type {
   ActionRowBuilder,
   ChannelType,
   Client,
@@ -7,8 +7,8 @@ import {
   Partials,
   StringSelectMenuBuilder,
   StringSelectMenuOptionBuilder,
-  type Interaction,
-  type Message,
+  Interaction,
+  Message,
 } from 'discord.js';
 import type {
   PlatformActionEvent,
@@ -23,6 +23,15 @@ import { chatSessionStore } from '../../store/chat-session.js';
 import { reliabilityConfig } from '../../config.js';
 import { getRuntimeCronManager } from '../../reliability/runtime-cron-registry.js';
 import { cleanupRuntimeCronJobsByConversation } from '../../reliability/runtime-cron-orphan.js';
+
+// 动态导入缓存：仅在启用时加载 discord.js
+let _discordModule: typeof import('discord.js') | null = null;
+async function getDiscordModule(): Promise<typeof import('discord.js')> {
+  if (!_discordModule) {
+    _discordModule = await import('discord.js');
+  }
+  return _discordModule;
+}
 
 const DISCORD_MESSAGE_LIMIT = 1800;
 
@@ -105,7 +114,7 @@ class DiscordSender implements PlatformSender {
     return chunks;
   }
 
-  private normalizeCardPayload(card: object): DiscordMessagePayload {
+  private async normalizeCardPayload(card: object): Promise<DiscordMessagePayload> {
     const payload = card as DiscordCardPayload;
 
     const content = (() => {
@@ -119,7 +128,7 @@ class DiscordSender implements PlatformSender {
       return `\`\`\`json\n${clipped}\n\`\`\``;
     })();
 
-    const rows = this.buildSelectComponents(payload.discordComponents);
+    const rows = await this.buildSelectComponents(payload.discordComponents);
     if (rows.length === 0) {
       return { content };
     }
@@ -130,12 +139,15 @@ class DiscordSender implements PlatformSender {
     };
   }
 
-  private buildSelectComponents(
+  private async buildSelectComponents(
     components?: DiscordSelectComponentPayload[]
-  ): ActionRowBuilder<StringSelectMenuBuilder>[] {
+  ): Promise<ActionRowBuilder<StringSelectMenuBuilder>[]> {
     if (!Array.isArray(components) || components.length === 0) {
       return [];
     }
+
+    // 动态获取 discord.js 类
+    const { ActionRowBuilder, StringSelectMenuBuilder, StringSelectMenuOptionBuilder } = await getDiscordModule();
 
     const rows: ActionRowBuilder<StringSelectMenuBuilder>[] = [];
     for (const component of components.slice(0, 5)) {
@@ -205,7 +217,7 @@ class DiscordSender implements PlatformSender {
       return null;
     }
 
-    const payload = this.normalizeCardPayload(card);
+    const payload = await this.normalizeCardPayload(card);
     const sent = await channel.send(payload);
     this.adapter.rememberMessageConversation(sent.id, conversationId);
     return sent.id;
@@ -222,7 +234,7 @@ class DiscordSender implements PlatformSender {
       return false;
     }
 
-    await message.edit(this.normalizeCardPayload(card));
+    await message.edit(await this.normalizeCardPayload(card));
     return true;
   }
 
@@ -303,7 +315,7 @@ class DiscordSender implements PlatformSender {
     }
 
     try {
-      const sent = await message.reply(this.normalizeCardPayload(card));
+      const sent = await message.reply(await this.normalizeCardPayload(card));
       this.adapter.rememberMessageConversation(sent.id, conversationId);
       return sent.id;
     } catch (error) {
@@ -349,6 +361,11 @@ export class DiscordAdapter implements PlatformAdapter {
       console.warn('[Discord] 适配器已存在客户端实例，跳过重复启动');
       return;
     }
+
+    // 动态导入 discord.js（节省内存，未启用时不加载）
+    console.log('[Discord] 动态加载 discord.js SDK...');
+    const discord = await getDiscordModule();
+    const { Client, GatewayIntentBits, Partials, Events } = discord;
 
     const client = new Client({
       intents: [
@@ -569,7 +586,7 @@ export class DiscordAdapter implements PlatformAdapter {
       fileSize: attachment.size,
     }));
 
-    const chatType = message.channel.type === ChannelType.DM ? 'p2p' as const : 'group' as const;
+    const chatType = message.channel.type === 1 /* ChannelType.DM */ ? 'p2p' as const : 'group' as const;
     const event: PlatformMessageEvent = {
       platform: 'discord',
       conversationId: message.channelId,

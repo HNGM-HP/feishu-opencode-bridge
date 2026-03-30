@@ -4,43 +4,13 @@ import { initLogger } from './utils/logger.js';
 import { logStore } from './store/log-store.js';
 import { createAdminServer } from './admin/admin-server.js';
 import { feishuClient, type FeishuMessageEvent } from './feishu/client.js';
-import { feishuAdapter } from './platform/adapters/feishu-adapter.js';
-import { discordAdapter } from './platform/adapters/discord-adapter.js';
-import { wecomAdapter } from './platform/adapters/wecom-adapter.js';
-import { telegramAdapter } from './platform/adapters/telegram-adapter.js';
-import { qqAdapter } from './platform/adapters/qq-adapter.js';
-import { whatsappAdapter } from './platform/adapters/whatsapp-adapter.js';
-import { weixinAdapter } from './platform/adapters/weixin-adapter.js';
-import { dingtalkAdapter } from './platform/adapters/dingtalk/dingtalk-adapter.js';
-import type { PlatformSender } from './platform/types.js';
+// 平台适配器动态加载，不再静态导入
+import type { PlatformSender, PlatformAdapter } from './platform/types.js';
+import { loadAllConfigured, getSenderByPlatform, getCachedAdapter, getConfiguredPlatforms } from './platform/loader.js';
 import { opencodeClient, type PermissionRequestEvent } from './opencode/client.js';
 import { streamStateManager, type ToolRuntimeState, type TimelineSegment, type StreamTimelineState } from './store/stream-state.js';
 import { buildTelegramText, buildPortableUpdateText, buildPortableUpdatePayload } from './utils/text-builder.js';
 
-// 根据平台获取正确的 Sender
-function getSenderByPlatform(platform: string): PlatformSender | null {
-  switch (platform) {
-    case 'feishu':
-      return feishuAdapter.getSender();
-    case 'discord':
-      return discordAdapter.getSender();
-    case 'wecom':
-      return wecomAdapter.getSender();
-    case 'telegram':
-      return telegramAdapter.getSender();
-    case 'qq':
-      return qqAdapter.getSender();
-    case 'whatsapp':
-      return whatsappAdapter.getSender();
-    case 'weixin':
-      return weixinAdapter.getSender();
-    case 'dingtalk':
-      return dingtalkAdapter.getSender();
-    default:
-      console.warn(`[getSenderByPlatform] 未知平台: ${platform}, 使用飞书作为fallback`);
-      return feishuAdapter.getSender();
-  }
-}
 import { outputBuffer } from './opencode/output-buffer.js';
 import { delayedResponseHandler } from './opencode/delayed-handler.js';
 import { questionHandler } from './opencode/question-handler.js';
@@ -449,6 +419,11 @@ export const bootstrapReliabilityLifecycle = (
         return;
       }
 
+      const feishuAdapter = getCachedAdapter('feishu');
+      if (!feishuAdapter) {
+        logger.error('[Heartbeat] 飞书适配器未加载，无法发送告警');
+        return;
+      }
       const sender = feishuAdapter.getSender();
       for (const chatId of reliabilityConfig.heartbeatAlertChats) {
         try {
@@ -540,6 +515,11 @@ async function main() {
   console.log('╔════════════════════════════════════════════════╗');
   console.log('║   飞书 × OpenCode 桥接服务 v' + pkg.version + '     ║');
   console.log('╚════════════════════════════════════════════════╝');
+
+  // 0. 动态加载已配置的平台适配器（避免全量加载 SDK）
+  const configuredPlatforms = getConfiguredPlatforms();
+  console.log(`[Platform] 已配置的平台: ${configuredPlatforms.join(', ') || '无'}`);
+  await loadAllConfigured();
 
   // 1. 如果启用了 OpenCode 自动启动，先清理旧进程并启动
   let opencodeChildProcess: import('node:child_process').ChildProcess | undefined;
@@ -771,7 +751,6 @@ async function main() {
   // 注入动作处理回调到 RootRouter
   rootRouter.setPermissionCallbacks(createPermissionActionCallbacks(upsertTimelineNote));
   rootRouter.setQuestionCallbacks(createQuestionActionCallbacks());
-  const discordHandler = createDiscordHandler(discordAdapter.getSender());
 
   const getTimelineSegments = (bufferKey: string): StreamCardSegment[] => {
     const timeline = streamStateManager.getTimeline(bufferKey);
@@ -1472,6 +1451,11 @@ async function main() {
 
     const nextMessageIds: string[] = [];
 
+    const feishuAdapter = getCachedAdapter('feishu');
+    if (!feishuAdapter) {
+      console.error('[outputBuffer] 飞书适配器未加载');
+      return;
+    }
     const sender = feishuAdapter.getSender();
     for (let index = 0; index < cards.length; index++) {
       const card = cards[index];
@@ -1553,67 +1537,85 @@ async function main() {
     return await rootRouter.onAction(event);
   });
 
-  discordAdapter.onMessage(async (event) => {
-    await discordHandler.handleMessage(event);
-  });
+  // Discord 消息监听（仅当已配置）
+  const discordAdapter = getCachedAdapter('discord');
+  if (discordAdapter) {
+    const discordHandler = createDiscordHandler(discordAdapter.getSender());
+    discordAdapter.onMessage(async (event) => {
+      await discordHandler.handleMessage(event);
+    });
+    if (discordAdapter.onInteraction) {
+      discordAdapter.onInteraction(async (interaction: unknown) => {
+        await discordHandler.handleInteraction(interaction as any);
+      });
+    }
+  }
 
-  discordAdapter.onInteraction(async (interaction) => {
-    await discordHandler.handleInteraction(interaction);
-  });
+  // 企业微信消息监听（仅当已配置）
+  const wecomAdapter = getCachedAdapter('wecom');
+  if (wecomAdapter) {
+    wecomAdapter.onMessage(async (event) => {
+      const sender = wecomAdapter.getSender();
+      await wecomHandler.handleMessage(event, sender);
+    });
+  }
 
-  // 企业微信消息监听
-  wecomAdapter.onMessage(async (event) => {
-    const sender = wecomAdapter.getSender();
-    await wecomHandler.handleMessage(event, sender);
-  });
+  // Telegram 消息监听（仅当已配置）
+  const telegramAdapter = getCachedAdapter('telegram');
+  if (telegramAdapter) {
+    telegramAdapter.onMessage(async (event) => {
+      const sender = telegramAdapter.getSender();
+      await telegramHandler.handleMessage(event, sender);
+    });
+    telegramAdapter.onAction(async (event) => {
+      const sender = telegramAdapter.getSender();
+      await telegramHandler.handleAction(event, sender);
+    });
+  }
 
-  // Telegram 消息监听
-  telegramAdapter.onMessage(async (event) => {
-    const sender = telegramAdapter.getSender();
-    await telegramHandler.handleMessage(event, sender);
-  });
+  // QQ 消息监听（仅当已配置）
+  const qqAdapter = getCachedAdapter('qq');
+  if (qqAdapter) {
+    qqAdapter.onMessage(async (event) => {
+      const sender = qqAdapter.getSender();
+      await qqHandler.handleMessage(event, sender);
+    });
+    qqAdapter.onAction(async (event) => {
+      const sender = qqAdapter.getSender();
+      await qqHandler.handleAction(event, sender);
+    });
+  }
 
-  // Telegram 回调查询监听
-  telegramAdapter.onAction(async (event) => {
-    const sender = telegramAdapter.getSender();
-    await telegramHandler.handleAction(event, sender);
-  });
+  // WhatsApp 消息监听（仅当已配置）
+  const whatsappAdapter = getCachedAdapter('whatsapp');
+  if (whatsappAdapter) {
+    whatsappAdapter.onMessage(async (event) => {
+      const sender = whatsappAdapter.getSender();
+      await whatsappHandler.handleMessage(event, sender);
+    });
+    whatsappAdapter.onAction(async (event) => {
+      const sender = whatsappAdapter.getSender();
+      await whatsappHandler.handleAction(event, sender);
+    });
+  }
 
-  // QQ 消息监听
-  qqAdapter.onMessage(async (event) => {
-    const sender = qqAdapter.getSender();
-    await qqHandler.handleMessage(event, sender);
-  });
+  // 个人微信消息监听（仅当已配置）
+  const weixinAdapter = getCachedAdapter('weixin');
+  if (weixinAdapter) {
+    weixinAdapter.onMessage(async (event) => {
+      const sender = weixinAdapter.getSender();
+      await weixinHandler.handleMessage(event, sender);
+    });
+  }
 
-  // QQ 动作监听
-  qqAdapter.onAction(async (event) => {
-    const sender = qqAdapter.getSender();
-    await qqHandler.handleAction(event, sender);
-  });
-
-  // WhatsApp 消息监听
-  whatsappAdapter.onMessage(async (event) => {
-    const sender = whatsappAdapter.getSender();
-    await whatsappHandler.handleMessage(event, sender);
-  });
-
-  // WhatsApp 动作监听
-  whatsappAdapter.onAction(async (event) => {
-    const sender = whatsappAdapter.getSender();
-    await whatsappHandler.handleAction(event, sender);
-  });
-
-  // 个人微信消息监听
-  weixinAdapter.onMessage(async (event) => {
-    const sender = weixinAdapter.getSender();
-    await weixinHandler.handleMessage(event, sender);
-  });
-
-  // 钉钉消息监听
-  dingtalkAdapter.onMessage(async (event) => {
-    const sender = dingtalkAdapter.getSender();
-    await dingtalkHandler.handleMessage(event, sender);
-  });
+  // 钉钉消息监听（仅当已配置）
+  const dingtalkAdapter = getCachedAdapter('dingtalk');
+  if (dingtalkAdapter) {
+    dingtalkAdapter.onMessage(async (event) => {
+      const sender = dingtalkAdapter.getSender();
+      await dingtalkHandler.handleMessage(event, sender);
+    });
+  }
 
 
   // 6. OpenCode 事件监听已移至 openCodeEventHub（单一入口）
@@ -1715,78 +1717,117 @@ async function main() {
     }
   });
 
-  // 7.5. 启动 Discord 适配器（如果启用）
-  try {
-    await discordAdapter.start();
-  } catch (e) {
-    console.error('[Discord] 启动失败:', e);
-    // Discord 启动失败不影响 Feishu 流程
+  // 7.5. 启动 Discord 适配器（仅当已配置）
+  if (isPlatformConfigured('discord')) {
+    const discordAdapter = getCachedAdapter('discord');
+    if (discordAdapter) {
+      try {
+        await discordAdapter.start();
+        console.log('[Discord] 适配器已启动');
+      } catch (e) {
+        console.error('[Discord] 启动失败:', e);
+      }
+    }
   }
 
-  // 7.6. 启动企业微信适配器（如果启用）
-  try {
-    await wecomAdapter.start();
-  } catch (e) {
-    console.error('[企业微信] 启动失败:', e);
-    // WeCom 启动失败不影响其他平台流程
+  // 7.6. 启动企业微信适配器（仅当已配置）
+  if (isPlatformConfigured('wecom')) {
+    const wecomAdapter = getCachedAdapter('wecom');
+    if (wecomAdapter) {
+      try {
+        await wecomAdapter.start();
+        console.log('[企业微信] 适配器已启动');
+      } catch (e) {
+        console.error('[企业微信] 启动失败:', e);
+      }
+    }
   }
 
-  // 7.7. 启动 Telegram 适配器（如果启用）
-  try {
-    await telegramAdapter.start();
-  } catch (e) {
-    console.error('[Telegram] 启动失败:', e);
-    // Telegram 启动失败不影响其他平台流程
+  // 7.7. 启动 Telegram 适配器（仅当已配置）
+  if (isPlatformConfigured('telegram')) {
+    const telegramAdapter = getCachedAdapter('telegram');
+    if (telegramAdapter) {
+      try {
+        await telegramAdapter.start();
+        console.log('[Telegram] 适配器已启动');
+      } catch (e) {
+        console.error('[Telegram] 启动失败:', e);
+      }
+    }
   }
 
-  // 7.8. 启动 QQ 适配器（如果启用）
-  try {
-    await qqAdapter.start();
-  } catch (e) {
-    console.error('[QQ] 启动失败:', e);
-    // QQ 启动失败不影响其他平台流程
+  // 7.8. 启动 QQ 适配器（仅当已配置）
+  if (isPlatformConfigured('qq')) {
+    const qqAdapter = getCachedAdapter('qq');
+    if (qqAdapter) {
+      try {
+        await qqAdapter.start();
+        console.log('[QQ] 适配器已启动');
+      } catch (e) {
+        console.error('[QQ] 启动失败:', e);
+      }
+    }
   }
 
-  // 7.9. 启动 WhatsApp 适配器（如果启用）
-  try {
-    await whatsappAdapter.start();
-  } catch (e) {
-    console.error('[WhatsApp] 启动失败:', e);
-    // WhatsApp 启动失败不影响其他平台流程
+  // 7.9. 启动 WhatsApp 适配器（仅当已配置）
+  if (isPlatformConfigured('whatsapp')) {
+    const whatsappAdapter = getCachedAdapter('whatsapp');
+    if (whatsappAdapter) {
+      try {
+        await whatsappAdapter.start();
+        console.log('[WhatsApp] 适配器已启动');
+      } catch (e) {
+        console.error('[WhatsApp] 启动失败:', e);
+      }
+    }
   }
 
-  // 7.10. 启动个人微信适配器（如果启用）
-  try {
-    await weixinAdapter.start();
-  } catch (e) {
-    console.error('[个人微信] 启动失败:', e);
-    // Weixin 启动失败不影响其他平台流程
+  // 7.10. 启动个人微信适配器（仅当已配置）
+  if (isPlatformConfigured('weixin')) {
+    const weixinAdapter = getCachedAdapter('weixin');
+    if (weixinAdapter) {
+      try {
+        await weixinAdapter.start();
+        console.log('[个人微信] 适配器已启动');
+      } catch (e) {
+        console.error('[个人微信] 启动失败:', e);
+      }
+    }
   }
 
-  // 7.11. 启动钉钉适配器（如果启用）
-  try {
-    await dingtalkAdapter.start();
-  } catch (e) {
-    console.error('[钉钉] 启动失败:', e);
-    // 钉钉启动失败不影响其他平台流程
+  // 7.11. 启动钉钉适配器（仅当已配置）
+  if (isPlatformConfigured('dingtalk')) {
+    const dingtalkAdapter = getCachedAdapter('dingtalk');
+    if (dingtalkAdapter) {
+      try {
+        await dingtalkAdapter.start();
+        console.log('[钉钉] 适配器已启动');
+      } catch (e) {
+        console.error('[钉钉] 启动失败:', e);
+      }
+    }
   }
 
   // 8. 启动飞书客户端
   if (isPlatformConfigured('feishu')) {
-    feishuClient.setCardActionHandler(async (event) => {
-      const actionValue = event.action?.value;
-      const action = actionValue && typeof actionValue === 'object'
-        ? (actionValue as Record<string, unknown>).action
-        : undefined;
-      const actionName = typeof action === 'string' ? action : '';
+    const feishuAdapter = getCachedAdapter('feishu');
+    if (feishuAdapter) {
+      feishuClient.setCardActionHandler(async (event) => {
+        const actionValue = event.action?.value;
+        const action = actionValue && typeof actionValue === 'object'
+          ? (actionValue as Record<string, unknown>).action
+          : undefined;
+        const actionName = typeof action === 'string' ? action : '';
 
-      if (actionName.startsWith('create_chat')) {
-        return await p2pHandler.handleCardAction(event);
-      }
+        if (actionName.startsWith('create_chat')) {
+          return await p2pHandler.handleCardAction(event);
+        }
 
-      return await cardActionHandler.handle(event);
-    });
-    await feishuAdapter.start();
+        return await cardActionHandler.handle(event);
+      });
+      await feishuAdapter.start();
+      console.log('[飞书] 适配器已启动');
+    }
   } else {
     console.log('[System] 飞书长连接暂未启动 (未配置 FEISHU_APP_ID/FEISHU_APP_SECRET)');
   }
@@ -1829,53 +1870,26 @@ async function main() {
       console.error('停止 reliability 资源失败:', e);
     }
 
-    // 3. 停止 Discord 适配器
-    try {
-      discordAdapter.stop();
-    } catch (e) {
-      console.error('[Discord] 停止适配器失败:', e);
-    }
+    // 3. 停止各平台适配器（仅停止已加载的）
+    const adaptersToStop = [
+      { platform: 'discord', name: 'Discord' },
+      { platform: 'wecom', name: '企业微信' },
+      { platform: 'telegram', name: 'Telegram' },
+      { platform: 'qq', name: 'QQ' },
+      { platform: 'whatsapp', name: 'WhatsApp' },
+      { platform: 'weixin', name: '个人微信' },
+      { platform: 'dingtalk', name: '钉钉' },
+    ];
 
-    // 3.5. 停止企业微信适配器
-    try {
-      wecomAdapter.stop();
-    } catch (e) {
-      console.error('[企业微信] 停止适配器失败:', e);
-    }
-
-    // 3.6. 停止 Telegram 适配器
-    try {
-      telegramAdapter.stop();
-    } catch (e) {
-      console.error('[Telegram] 停止适配器失败:', e);
-    }
-
-    // 3.7. 停止 QQ 适配器
-    try {
-      qqAdapter.stop();
-    } catch (e) {
-      console.error('[QQ] 停止适配器失败:', e);
-    }
-
-    // 3.8. 停止 WhatsApp 适配器
-    try {
-      whatsappAdapter.stop();
-    } catch (e) {
-      console.error('[WhatsApp] 停止适配器失败:', e);
-    }
-
-    // 3.9. 停止个人微信适配器
-    try {
-      weixinAdapter.stop();
-    } catch (e) {
-      console.error('[个人微信] 停止适配器失败:', e);
-    }
-
-    // 3.10. 停止钉钉适配器
-    try {
-      dingtalkAdapter.stop();
-    } catch (e) {
-      console.error('[钉钉] 停止适配器失败:', e);
+    for (const { platform, name } of adaptersToStop) {
+      const adapter = getCachedAdapter(platform);
+      if (adapter) {
+        try {
+          adapter.stop();
+        } catch (e) {
+          console.error(`[${name}] 停止适配器失败:`, e);
+        }
+      }
     }
 
     // 4. 停止飞书连接
@@ -1917,9 +1931,33 @@ async function main() {
   process.on('SIGUSR2', () => {
     void gracefulShutdown('SIGUSR2');
   }); // nodemon 重启信号
+
+  // 返回停止函数，供进程合并模式下使用
+  return {
+    stop: () => gracefulShutdown('EMBEDDED_STOP'),
+  };
 }
 
-if (process.env.VITEST !== 'true') {
+// 导出 Bridge 控制接口（供进程合并模式使用）
+let runningInstance: { stop: () => Promise<void> } | null = null;
+
+export async function startBridge(): Promise<{ stop: () => Promise<void> }> {
+  if (runningInstance) {
+    console.log('[Bridge] Already running');
+    return runningInstance;
+  }
+  runningInstance = await main();
+  return runningInstance;
+}
+
+export async function stopBridge(): Promise<void> {
+  if (runningInstance) {
+    await runningInstance.stop();
+    runningInstance = null;
+  }
+}
+
+if (process.env.VITEST !== 'true' && process.env.BRIDGE_EMBEDDED_MODE !== '1') {
   main().catch(error => {
     console.error('Fatal Error:', error);
     process.exit(1);

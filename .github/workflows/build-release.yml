@@ -36,6 +36,12 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Setup Python for node-gyp
+        if: matrix.platform == 'win'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Install pnpm
         run: npm install -g pnpm
 

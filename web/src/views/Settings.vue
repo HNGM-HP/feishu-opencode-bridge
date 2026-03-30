@@ -91,14 +91,19 @@
           >
             升级 OpenCode
           </el-button>
-          <el-button
-            v-if="!opencodeStatus?.portOpen"
-            type="success"
-            :loading="startingOpenCode"
-            @click="handleStartOpenCode"
-          >
-            启动 OpenCode
-          </el-button>
+          <template v-if="!opencodeStatus?.portOpen">
+            <el-select v-model="startMode" style="width: 140px" placeholder="启动方式">
+              <el-option label="可视化启动" value="visual" />
+              <el-option label="后台启动" value="headless" />
+            </el-select>
+            <el-button
+              type="success"
+              :loading="startingOpenCode"
+              @click="handleStartOpenCode"
+            >
+              启动 OpenCode
+            </el-button>
+          </template>
           <el-button
             v-else
             type="danger"
@@ -248,6 +253,7 @@ const upgrading = ref(false)
 const checkingOpenCodeUpdate = ref(false)
 const checkingBridgeUpdate = ref(false)
 const savingTimeout = ref(false)
+const startMode = ref<'visual' | 'headless'>('headless')
 
 // 判断是否有 OpenCode 更新
 const hasOpenCodeUpdate = computed(() => {
@@ -394,7 +400,8 @@ async function handleUpgradeOpenCode() {
 async function handleStartOpenCode() {
   startingOpenCode.value = true
   try {
-    const result = await configApi.startOpenCode()
+    const visual = startMode.value === 'visual'
+    const result = await configApi.startOpenCode(visual)
     ElMessage.success(result.message)
     setTimeout(refreshOpenCodeStatus, 2000)
   } catch (e: any) {

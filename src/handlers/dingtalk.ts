@@ -13,6 +13,7 @@ import { chatSessionStore } from '../store/chat-session.js';
 import { parseCommand, type ParsedCommand } from '../commands/parser.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
+import { shouldSkipGroupMessage } from '../utils/group-mention.js';
 import { permissionHandler } from '../permissions/handler.js';
 import { PlatformCommandHandler } from './platform-command.handler.js';
 
@@ -133,6 +134,11 @@ export class DingtalkHandler {
     event: PlatformMessageEvent,
     sender: PlatformSender
   ): Promise<void> {
+    // 群聊 @ 提到检查
+    if (shouldSkipGroupMessage(event)) {
+      return;
+    }
+
     const { conversationId, content, senderId, msgType, chatType } = event;
     const trimmed = content.trim();
 

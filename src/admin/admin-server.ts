@@ -126,6 +126,13 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
 
   app.use(express.json());
 
+  // ── POST /api/admin/reset-password（无需认证，用于密码恢复）
+  app.post('/api/admin/reset-password', (_req, res) => {
+    configStore.setAdminPassword('');
+    configStore.setPasswordChangedAt('');
+    res.json({ ok: true, message: '密码已重置，请重新设置密码' });
+  });
+
   // ── 静态前端文件（dist/public）
   const publicDir = path.resolve(__dirname, '../../dist/public');
   app.use(express.static(publicDir));
@@ -138,12 +145,21 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
     next: express.NextFunction
   ): void {
     const currentPassword = configStore.getAdminPassword() || '';
+    const authHeader = req.headers.authorization ?? '';
+    const hasToken = authHeader.startsWith('Bearer ');
+    const token = hasToken ? authHeader.slice(7) : '';
+
+    // 密码已被重置为空，但请求携带旧token → 返回410提示前端清除缓存
+    if (!currentPassword && hasToken && token.length > 0) {
+      res.status(410).json({ error: 'Password reset', reason: 'password_reset' });
+      return;
+    }
+
+    // 密码为空且无token → 允许通过（首次设置场景）
     if (!currentPassword) {
       next();
       return;
     }
-    const authHeader = req.headers.authorization ?? '';
-    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
 
     // 使用时序安全的密码比较，避免长度泄露
     // 将两个 buffer padding 到相同长度后再比较
@@ -620,8 +636,10 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
   });
 
   // ── POST /api/opencode/start
-  api.post('/opencode/start', async (_req, res) => {
+  api.post('/opencode/start', async (req, res) => {
     try {
+      const { visual = false } = req.body || {};
+
       // 写入 server 配置
       const opencodeConfigDir = path.join(os.homedir(), '.config', 'opencode');
       const fs = await import('node:fs');
@@ -645,15 +663,18 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
 
       // 启动 OpenCode
+      // visual: true -> opencode web (可视化启动，打开 Web 界面)
+      // visual: false -> opencode serve (后台启动，headless 模式)
       const isWindows = process.platform === 'win32';
-      spawn('opencode', [], {
+      const startCommand = visual ? 'web' : 'serve';
+      spawn('opencode', [startCommand], {
         detached: true,
         stdio: 'ignore',
         shell: isWindows,
         windowsHide: isWindows,
       });
 
-      res.json({ ok: true, message: 'OpenCode 已启动' });
+      res.json({ ok: true, message: visual ? 'OpenCode 已启动（可视化模式）' : 'OpenCode 已启动（后台模式）' });
     } catch (error: any) {
       res.status(500).json({ error: '启动失败：' + error.message });
     }

@@ -3,12 +3,15 @@
  *
  * 职责：
  * - 启动后端服务（作为子进程）
- * - 创建应用窗口
  * - 系统托盘图标
  * - 自动更新检查
+ *
+ * 内存优化：
+ * - 不创建 Electron 窗口，使用默认浏览器打开管理面板
+ * - 后台运行，内存占用最小化
  */
 
-import { app, BrowserWindow, Tray, Menu, nativeImage, shell, dialog } from 'electron';
+import { app, Tray, Menu, nativeImage, shell, dialog } from 'electron';
 import path from 'node:path';
 import { spawn, ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
@@ -19,8 +22,6 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // 后端服务进程
 let backendProcess: ChildProcess | null = null;
-// 主窗口
-let mainWindow: BrowserWindow | null = null;
 // 托盘图标
 let tray: Tray | null = null;
 
@@ -96,8 +97,6 @@ function stopBackend() {
     console.log('[Electron] Stopping backend...');
     backendProcess.kill('SIGTERM');
     backendProcess = null;
-    // 隐藏窗口
-    mainWindow?.hide();
   }
 }
 
@@ -147,77 +146,6 @@ function waitForAdminServer(port: number, maxRetries = 30, interval = 500): Prom
 }
 
 /**
- * 创建主窗口
- */
-function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
-    minWidth: 800,
-    minHeight: 600,
-    title: 'OpenCode Bridge',
-    icon: path.join(__dirname, '../assets/icon.png'),
-    autoHideMenuBar: true, // 隐藏菜单栏
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,
-      contextIsolation: true,
-    },
-    show: false, // 先隐藏，加载完成后显示
-  });
-
-  // 开发模式下打开 DevTools
-  if (isDev) {
-    mainWindow.webContents.openDevTools();
-  }
-
-  // 加载前端页面（Admin 管理面板）
-  const frontendUrl = `http://localhost:${ADMIN_PORT}`;
-
-  mainWindow.loadURL(frontendUrl).catch((err) => {
-    console.error('[Electron] Failed to load frontend:', err);
-    // 显示错误页面
-    mainWindow?.loadURL(`data:text/html,
-      <html>
-        <head><meta charset="UTF-8"><title>启动失败</title></head>
-        <body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;font-family:sans-serif;background:#f5f5f5;">
-          <div style="text-align:center;padding:40px;background:white;border-radius:8px;box-shadow:0 2px 10px rgba(0,0,0,0.1);">
-            <h2 style="color:#e74c3c;margin-bottom:16px;">⚠️ 服务启动失败</h2>
-            <p style="color:#666;margin-bottom:20px;">管理面板服务未能正常启动</p>
-            <button onclick="location.reload()" style="padding:10px 20px;background:#3498db;color:white;border:none;border-radius:4px;cursor:pointer;">重试</button>
-          </div>
-        </body>
-      </html>
-    `);
-  });
-
-  // 窗口准备就绪时显示
-  mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
-  });
-
-  // 处理外部链接
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (url.startsWith('http://') || url.startsWith('https://')) {
-      shell.openExternal(url);
-    }
-    return { action: 'deny' };
-  });
-
-  // 关闭窗口时最小化到托盘而非退出
-  mainWindow.on('close', (event) => {
-    if (!(app as any).isQuitting) {
-      event.preventDefault();
-      mainWindow?.hide();
-    }
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
-}
-
-/**
  * 创建托盘图标
  */
 function createTray() {
@@ -230,10 +158,9 @@ function createTray() {
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: '显示窗口',
+      label: '打开管理面板',
       click: () => {
-        mainWindow?.show();
-        mainWindow?.focus();
+        shell.openExternal(`http://localhost:${ADMIN_PORT}`);
       },
     },
     { type: 'separator' },
@@ -295,11 +222,12 @@ function createTray() {
                   dialog.showMessageBox(null, {
                     type: 'info',
                     title: '密码已重置',
-                    message: '管理密码已重置，请重新打开窗口设置新密码。',
-                    buttons: ['确定'],
-                  }).then(() => {
-                    mainWindow?.show();
-                    mainWindow?.loadURL(`http://localhost:${ADMIN_PORT}`);
+                    message: '管理密码已重置，请在浏览器中打开管理面板设置新密码。',
+                    buttons: ['打开管理面板', '确定'],
+                  }).then((result) => {
+                    if (result.response === 0) {
+                      shell.openExternal(`http://localhost:${ADMIN_PORT}`);
+                    }
                   });
                 } else {
                   dialog.showMessageBox(null, {
@@ -345,10 +273,9 @@ function createTray() {
   tray.setToolTip('OpenCode Bridge');
   tray.setContextMenu(contextMenu);
 
-  // 点击托盘图标显示窗口
+  // 点击托盘图标打开管理面板
   tray.on('click', () => {
-    mainWindow?.show();
-    mainWindow?.focus();
+    shell.openExternal(`http://localhost:${ADMIN_PORT}`);
   });
 }
 
@@ -389,7 +316,7 @@ async function checkForUpdates() {
     }
 
     // 提示用户下载
-    const result = await dialog.showMessageBox(mainWindow!, {
+    const result = await dialog.showMessageBox(null, {
       type: 'info',
       title: '发现新版本',
       message: `发现新版本 ${latestVersion}（当前 ${currentVersion}），是否前往下载？`,
@@ -503,14 +430,8 @@ if (!gotTheLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    // 当运行第二个实例时，聚焦到已有窗口
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore();
-      }
-      mainWindow.show();
-      mainWindow.focus();
-    }
+    // 当运行第二个实例时，打开管理面板
+    shell.openExternal(`http://localhost:${ADMIN_PORT}`);
   });
 
   // 应用就绪
@@ -522,33 +443,32 @@ if (!gotTheLock) {
     console.log('[Electron] Waiting for Admin Server...');
     const isReady = await waitForAdminServer(ADMIN_PORT);
 
-    if (isReady) {
-      createWindow();
-    } else {
-      // 即使未检测到服务就绪，也创建窗口显示错误页面
-      createWindow();
-      console.error('[Electron] Admin Server failed to start, showing error page');
+    if (!isReady) {
+      console.error('[Electron] Admin Server failed to start');
+      // 服务启动失败时弹窗提示
+      dialog.showMessageBox(null, {
+        type: 'error',
+        title: '服务启动失败',
+        message: '管理面板服务未能正常启动，请检查日志。',
+        buttons: ['确定'],
+      });
     }
 
+    // 创建托盘（始终创建，作为主要交互入口）
     createTray();
+
+    // 开发模式下自动打开管理面板
+    if (isDev) {
+      console.log('[Electron] Development mode, auto-opening admin panel');
+      shell.openExternal(`http://localhost:${ADMIN_PORT}`);
+    } else {
+      console.log('[Electron] Running in background, click tray to open admin panel');
+    }
 
     // 检查更新（非开发模式）
     checkForUpdates();
-
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) {
-        createWindow();
-      }
-    });
   });
 }
-
-// 所有窗口关闭时退出（macOS 除外）
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
-});
 
 // 应用退出前清理
 app.on('before-quit', () => {

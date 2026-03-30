@@ -9,6 +9,18 @@ http.interceptors.request.use(config => {
   return config
 })
 
+// 处理密码重置后的 410 响应：清除缓存并跳转到设置密码页面
+http.interceptors.response.use(
+  response => response,
+  error => {
+    if (error.response?.status === 410 && error.response?.data?.reason === 'password_reset') {
+      localStorage.removeItem('admin_token')
+      window.location.href = '/change-password?mode=setup'
+    }
+    return Promise.reject(error)
+  }
+)
+
 export interface BridgeSettings {
   FEISHU_APP_ID?: string
   FEISHU_APP_SECRET?: string
@@ -552,8 +564,8 @@ export const configApi = {
     return res.data
   },
 
-  async startOpenCode(): Promise<{ ok: boolean; message: string }> {
-    const res = await http.post('/opencode/start')
+  async startOpenCode(visual?: boolean): Promise<{ ok: boolean; message: string }> {
+    const res = await http.post('/opencode/start', { visual })
     return res.data
   },
 

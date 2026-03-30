@@ -14,6 +14,7 @@ import { chatSessionStore } from '../store/chat-session.js';
 import { parseCommand, type ParsedCommand } from '../commands/parser.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
+import { shouldSkipGroupMessage } from '../utils/group-mention.js';
 import { KNOWN_EFFORT_LEVELS, normalizeEffortLevel, type EffortLevel } from '../commands/effort.js';
 import { permissionHandler } from '../permissions/handler.js';
 import { questionHandler, type PendingQuestion } from '../opencode/question-handler.js';
@@ -1162,10 +1163,15 @@ export class WeComHandler {
     event: PlatformMessageEvent,
     sender: PlatformSender
   ): Promise<void> {
+    // 0. 群聊 @ 提到检查
+    if (shouldSkipGroupMessage(event)) {
+      return;
+    }
+
     const { conversationId: chatId, content, senderId, attachments } = event;
     const trimmed = content.trim();
 
-    // 0. 优先检查待确认权限
+    // 1. 优先检查待确认权限
     if (!trimmed.startsWith('/')) {
       const permissionHandled = await this.tryHandlePendingPermission(event, trimmed, sender);
       if (permissionHandled) {

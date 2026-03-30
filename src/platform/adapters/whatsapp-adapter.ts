@@ -6,15 +6,10 @@
  * - business: 使用 WhatsApp Business API (HTTP API)
  */
 
-import makeWASocket, {
-  DisconnectReason,
-  useMultiFileAuthState,
-  downloadMediaMessage,
-  fetchLatestBaileysVersion,
-  makeCacheableSignalKeyStore,
-  type WASocket,
-  type WAMessage,
-  type ConnectionState,
+import type {
+  WASocket,
+  WAMessage,
+  ConnectionState,
 } from '@whiskeysockets/baileys';
 import type {
   PlatformAdapter,
@@ -26,8 +21,26 @@ import type {
 import { whatsappConfig } from '../../config.js';
 import path from 'node:path';
 import fs from 'node:fs';
-import { Boom } from '@hapi/boom';
-import QRCode from 'qrcode';
+
+// 动态导入缓存：仅在启用时加载 baileys
+type BaileysModule = typeof import('@whiskeysockets/baileys');
+let _baileysModule: BaileysModule | null = null;
+async function getBaileysModule(): Promise<BaileysModule> {
+  if (!_baileysModule) {
+    _baileysModule = await import('@whiskeysockets/baileys');
+  }
+  return _baileysModule;
+}
+
+// 动态导入缓存：QRCode 库
+type QRCodeModule = typeof import('qrcode');
+let _qrcodeModule: QRCodeModule | null = null;
+async function getQRCodeModule(): Promise<QRCodeModule> {
+  if (!_qrcodeModule) {
+    _qrcodeModule = await import('qrcode');
+  }
+  return _qrcodeModule;
+}
 
 const WHATSAPP_MESSAGE_LIMIT = 4096;
 
@@ -474,6 +487,17 @@ export class WhatsAppAdapter implements PlatformAdapter {
     }
 
     try {
+      // 动态加载 baileys（节省内存，未启用时不加载）
+      console.log('[WhatsApp] 动态加载 baileys SDK...');
+      const baileys = await getBaileysModule();
+      const {
+        makeWASocket,
+        useMultiFileAuthState,
+        fetchLatestBaileysVersion,
+        makeCacheableSignalKeyStore,
+        DisconnectReason,
+      } = baileys;
+
       const { state, saveCreds } = await useMultiFileAuthState(sessionPath);
 
       // 获取最新 baileys 版本（关键：WhatsApp 服务器需要匹配的版本）
@@ -520,6 +544,7 @@ export class WhatsAppAdapter implements PlatformAdapter {
           this.connectionStatus = 'need_scan';
           // 将原始二维码转换为 base64 Data URL
           try {
+            const QRCode = await getQRCodeModule();
             this.qrCodeDataUrl = await QRCode.toDataURL(qr, { width: 256 });
             console.log('[WhatsApp] 二维码已生成，可通过前端页面扫码');
             // 写入状态文件（包含二维码）
@@ -539,6 +564,8 @@ export class WhatsAppAdapter implements PlatformAdapter {
           // 写入状态文件
           writeStatusFile(this.getStatus());
 
+          // 动态导入 Boom 用于错误判断
+          const { Boom } = await import('@hapi/boom');
           const statusCode = lastDisconnect?.error instanceof Boom
             ? lastDisconnect.error.output?.statusCode
             : undefined;
@@ -840,6 +867,9 @@ export class WhatsAppAdapter implements PlatformAdapter {
     if (!message.message) {
       return [];
     }
+
+    // 动态获取 downloadMediaMessage
+    const { downloadMediaMessage } = await getBaileysModule();
 
     const msg = message.message;
     const attachments: PlatformAttachment[] = [];

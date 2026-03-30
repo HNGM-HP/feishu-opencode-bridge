@@ -15,6 +15,7 @@ import { chatSessionStore } from '../store/chat-session.js';
 import { parseCommand, getHelpText, type ParsedCommand } from '../commands/parser.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
+import { shouldSkipGroupMessage } from '../utils/group-mention.js';
 import type { PlatformMessageEvent, PlatformSender, PlatformAttachment } from '../platform/types.js';
 import type { EffortLevel } from '../commands/effort.js';
 import { normalizeEffortLevel, KNOWN_EFFORT_LEVELS } from '../commands/effort.js';
@@ -179,6 +180,11 @@ export class TelegramHandler {
     event: PlatformMessageEvent,
     sender: PlatformSender
   ): Promise<void> {
+    // 群聊 @ 提到检查
+    if (shouldSkipGroupMessage(event)) {
+      return;
+    }
+
     const { conversationId: chatId, content, senderId, attachments } = event;
     const trimmed = content.trim();
 

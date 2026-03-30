@@ -3,13 +3,16 @@
  *
  * 职责：
  * 1. 托管 Web 管理面板
- * 2. 管理 Bridge 子进程生命周期
+ * 2. 在内嵌模式下运行 Bridge 逻辑（进程合并，节省内存）
  * 3. 提供 OpenCode 安装/管理 API
  * 4. 提供版本升级 API
  */
 
 // 首先加载配置（包含 dotenv 初始化）
 import '../config.js';
+
+// 设置内嵌模式环境变量，防止 Bridge 自动启动
+process.env.BRIDGE_EMBEDDED_MODE = '1';
 
 import pkg from '../../package.json' with { type: 'json' };
 import { createAdminServer } from './admin-server.js';
@@ -43,23 +46,23 @@ async function main() {
   // 监听 Bridge 状态变化
   bridgeManager.onStatusChange((status: BridgeStatus) => {
     if (status.running) {
-      console.log(`[Admin] Bridge 进程已启动，PID=${status.pid}`);
+      console.log(`[Admin] Bridge 已启动（内嵌模式）`);
     } else {
-      console.log(`[Admin] Bridge 进程已停止，原因: ${status.exitReason || '未知'}`);
+      console.log(`[Admin] Bridge 已停止，原因: ${status.exitReason || '未知'}`);
     }
   });
 
-  // 启动 Bridge 子进程（如果是由用户直接启动 Admin）
+  // 启动 Bridge（内嵌模式，在同一进程中运行）
   // 如果是通过 npm run manage:bridge 启动，则不自动启动 Bridge
   const shouldAutoStartBridge = process.env.BRIDGE_AUTO_START !== '0';
 
   if (shouldAutoStartBridge) {
-    console.log('[Admin] 正在启动 Bridge 子进程...');
+    console.log('[Admin] 正在启动 Bridge（内嵌模式）...');
     const result = await bridgeManager.start();
     if (result.success) {
-      console.log(`[Admin] Bridge 子进程已启动，PID=${result.pid}`);
+      console.log(`[Admin] Bridge 已启动（内嵌模式）`);
     } else {
-      console.error(`[Admin] Bridge 子进程启动失败: ${result.error}`);
+      console.error(`[Admin] Bridge 启动失败: ${result.error}`);
     }
   }
 

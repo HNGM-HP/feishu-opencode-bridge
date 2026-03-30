@@ -13,6 +13,7 @@ import { parseCommand } from '../commands/parser.js';
 import { PlatformCommandHandler } from './platform-command.handler.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
+import { shouldSkipGroupMessage } from '../utils/group-mention.js';
 import { permissionHandler } from '../permissions/handler.js';
 import { questionHandler } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
@@ -456,6 +457,11 @@ export class WhatsAppHandler {
     event: PlatformMessageEvent,
     sender: PlatformSender
   ): Promise<void> {
+    // 群聊 @ 提到检查
+    if (shouldSkipGroupMessage(event)) {
+      return;
+    }
+
     const { conversationId: chatId, content, senderId, attachments } = event;
     const trimmed = content.trim();
 

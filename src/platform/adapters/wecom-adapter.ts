@@ -5,8 +5,7 @@
  * SDK: @wecom/aibot-node-sdk
  */
 
-import { WSClient } from '@wecom/aibot-node-sdk';
-import type { WsFrame, BaseMessage } from '@wecom/aibot-node-sdk';
+import type { WSClient, WsFrame, BaseMessage } from '@wecom/aibot-node-sdk';
 import type {
   PlatformAdapter,
   PlatformSender,
@@ -15,6 +14,16 @@ import type {
   PlatformAttachment,
 } from '../types.js';
 import { wecomConfig } from '../../config.js';
+
+// 动态导入缓存：仅在启用时加载企业微信 SDK
+type WecomModule = typeof import('@wecom/aibot-node-sdk');
+let _wecomModule: WecomModule | null = null;
+async function getWecomModule(): Promise<WecomModule> {
+  if (!_wecomModule) {
+    _wecomModule = await import('@wecom/aibot-node-sdk');
+  }
+  return _wecomModule;
+}
 
 // 企业微信消息扩展类型（SDK BaseMessage 的扩展字段）
 interface WeComMessageExt {
@@ -178,6 +187,10 @@ export class WeComAdapter implements PlatformAdapter {
     }
 
     console.log('[企业微信] 正在连接企业微信 WebSocket...');
+
+    // 动态加载企业微信 SDK（节省内存，未启用时不加载）
+    console.log('[企业微信] 动态加载 @wecom/aibot-node-sdk...');
+    const { WSClient } = await getWecomModule();
 
     // 创建 WSClient 实例
     this.wsClient = new WSClient({

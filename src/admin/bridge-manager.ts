@@ -1,10 +1,9 @@
 /**
  * Bridge 进程管理器
  *
- * 职责：
- * 1. spawn/kill/restart Bridge 子进程
- * 2. 监控 Bridge 进程状态
- * 3. 处理 Bridge 进程退出/崩溃
+ * 支持两种模式：
+ * 1. 内嵌模式（默认）：Bridge 逻辑在同一进程中运行，节省内存
+ * 2. 子进程模式：Bridge 作为独立子进程运行，提供进程隔离
  */
 
 import { spawn, ChildProcess } from 'node:child_process';
@@ -30,15 +29,65 @@ export class BridgeManager {
   private autoRestart: boolean = true;
   private restarting: boolean = false;
 
-  constructor() {
+  // 内嵌模式状态
+  private embeddedMode: boolean = true;
+  private embeddedStopFn: (() => Promise<void>) | null = null;
+
+  constructor(embeddedMode: boolean = true) {
+    this.embeddedMode = embeddedMode;
     // 监听进程退出事件
     process.on('exit', () => this.kill());
   }
 
   /**
-   * 启动 Bridge 进程
+   * 启动 Bridge（内嵌模式或子进程模式）
    */
   async start(): Promise<{ success: boolean; pid?: number; error?: string }> {
+    if (this.child || this.embeddedStopFn) {
+      return { success: false, error: 'Bridge 已在运行' };
+    }
+
+    if (this.embeddedMode) {
+      return this.startEmbedded();
+    } else {
+      return this.startChildProcess();
+    }
+  }
+
+  /**
+   * 内嵌模式启动
+   */
+  private async startEmbedded(): Promise<{ success: boolean; pid?: number; error?: string }> {
+    try {
+      console.log('[BridgeManager] 内嵌模式启动 Bridge...');
+
+      // 动态导入 Bridge 模块
+      const { startBridge } = await import('../index.js');
+
+      this.startedAt = new Date();
+      const controller = await startBridge();
+      this.embeddedStopFn = controller.stop;
+
+      this.notifyStatusChange({
+        running: true,
+        pid: process.pid,
+        startedAt: this.startedAt,
+      });
+
+      console.log(`[BridgeManager] Bridge 已在内嵌模式下启动 (PID=${process.pid})`);
+      return { success: true, pid: process.pid };
+
+    } catch (err: any) {
+      console.error('[BridgeManager] 内嵌模式启动失败:', err);
+      this.startedAt = null;
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * 子进程模式启动
+   */
+  private async startChildProcess(): Promise<{ success: boolean; pid?: number; error?: string }> {
     if (this.child && !this.restarting) {
       return { success: false, error: 'Bridge 进程已在运行' };
     }
@@ -122,9 +171,44 @@ export class BridgeManager {
   }
 
   /**
-   * 停止 Bridge 进程
+   * 停止 Bridge
    */
   async stop(): Promise<{ success: boolean; error?: string }> {
+    if (this.embeddedMode) {
+      return this.stopEmbedded();
+    } else {
+      return this.stopChildProcess();
+    }
+  }
+
+  /**
+   * 内嵌模式停止
+   */
+  private async stopEmbedded(): Promise<{ success: boolean; error?: string }> {
+    if (!this.embeddedStopFn) {
+      return { success: true };
+    }
+
+    try {
+      console.log('[BridgeManager] 正在停止内嵌模式 Bridge...');
+      await this.embeddedStopFn();
+      this.embeddedStopFn = null;
+      this.startedAt = null;
+
+      this.notifyStatusChange({ running: false });
+      console.log('[BridgeManager] 内嵌模式 Bridge 已停止');
+      return { success: true };
+
+    } catch (err: any) {
+      console.error('[BridgeManager] 停止内嵌模式 Bridge 失败:', err);
+      return { success: false, error: err.message };
+    }
+  }
+
+  /**
+   * 子进程模式停止
+   */
+  private async stopChildProcess(): Promise<{ success: boolean; error?: string }> {
     if (!this.child) {
       return { success: true }; // 已经停止
     }
@@ -151,7 +235,7 @@ export class BridgeManager {
   }
 
   /**
-   * 重启 Bridge 进程
+   * 重启 Bridge
    */
   async restart(): Promise<{ success: boolean; pid?: number; error?: string }> {
     console.log('[BridgeManager] 开始重启 Bridge...');
@@ -175,6 +259,17 @@ export class BridgeManager {
    * 获取 Bridge 状态
    */
   getStatus(): BridgeStatus {
+    if (this.embeddedMode) {
+      if (this.embeddedStopFn) {
+        return {
+          running: true,
+          pid: process.pid,
+          startedAt: this.startedAt ?? undefined,
+        };
+      }
+      return { running: false };
+    }
+
     if (!this.child || !this.child.pid) {
       return { running: false };
     }
@@ -202,10 +297,16 @@ export class BridgeManager {
   }
 
   /**
-   * 终止 Bridge 进程（强制）
+   * 终止 Bridge（强制）
    */
   kill(): void {
-    if (this.child) {
+    if (this.embeddedMode) {
+      // 内嵌模式下无法强制终止，只能调用停止函数
+      if (this.embeddedStopFn) {
+        this.autoRestart = false;
+        this.embeddedStopFn().catch(() => {});
+      }
+    } else if (this.child) {
       this.autoRestart = false;
       this.child.kill('SIGTERM');
     }
@@ -222,4 +323,5 @@ export class BridgeManager {
   }
 }
 
-export const bridgeManager = new BridgeManager();
+// 默认使用内嵌模式
+export const bridgeManager = new BridgeManager(true);

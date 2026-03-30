@@ -1,6 +1,6 @@
 # OpenCode Bridge
 
-[![v2.9.56](https://img.shields.io/badge/v2.9.56-3178C6)]()
+[![v2.9.57](https://img.shields.io/badge/v2.9.57-3178C6)]()
 [![Node.js >= 20](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
