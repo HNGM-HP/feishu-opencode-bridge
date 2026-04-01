@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { DirectoryPolicy } from '../src/utils/directory-policy.js';
 import {
   normalizePath,
@@ -242,6 +245,13 @@ describe('DirectoryPolicy - Path Normalization and Security', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.code).toBe('not_allowed');
+        expect(result.userMessage).toContain('尝试目录：/not/allowed');
+        expect(result.userMessage).toContain('配置来源');
+        expect(result.userMessage).toContain('当前允许目录：/allowed');
+        expect(result.userMessage).toContain('ALLOWED_DIRECTORIES');
+        expect(result.userMessage).toContain('Web 管理面板');
+        expect(result.userMessage).toContain('核心行为 -> 工作目录与项目');
+        expect(result.userMessage).toContain('管理面板地址：http://localhost:4098');
       }
     });
 
@@ -290,6 +300,47 @@ describe('DirectoryPolicy - Path Normalization and Security', () => {
       expect(result.ok).toBe(false);
       if (!result.ok) {
         expect(result.code).toBe('explicit_requires_allowlist');
+        expect(result.userMessage).toContain('尝试目录：/explicit');
+        expect(result.userMessage).toContain('配置来源');
+        expect(result.userMessage).toContain('当前允许目录：未配置');
+        expect(result.userMessage).toContain('ALLOWED_DIRECTORIES');
+        expect(result.userMessage).toContain('Web 管理面板');
+        expect(result.userMessage).toContain('核心行为 -> 工作目录与项目');
+        expect(result.userMessage).toContain('管理面板地址：http://localhost:4098');
+      }
+    });
+
+    it('应该在使用 .env 配置时统一引导到 Web 管理面板', () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-bridge-env-'));
+      const envFile = path.join(tempDir, '.env');
+      const previousEnvFile = process.env.OPENCODE_BRIDGE_ACTIVE_ENV_FILE;
+      fs.writeFileSync(envFile, 'ALLOWED_DIRECTORIES=/tmp/project\n', 'utf-8');
+      process.env.OPENCODE_BRIDGE_ACTIVE_ENV_FILE = envFile;
+
+      try {
+        const result = DirectoryPolicy.resolve({
+          explicitDirectory: '/not/allowed',
+          allowedDirectories: ['/allowed'],
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.userMessage).toMatch(/配置来源：\.env|配置来源：混合模式（当前 \.env 优先）/);
+          expect(result.userMessage).toContain('尝试目录：/not/allowed');
+          expect(result.userMessage).toContain('当前允许目录：/allowed');
+          expect(result.userMessage).toContain('Web 管理面板');
+          expect(result.userMessage).toContain('核心行为 -> 工作目录与项目 -> 允许的目录白名单（ALLOWED_DIRECTORIES）');
+          expect(result.userMessage).toContain('管理面板地址：http://localhost:4098');
+          expect(result.userMessage).not.toContain(envFile);
+          expect(result.userMessage).not.toContain('重启服务');
+        }
+      } finally {
+        if (previousEnvFile === undefined) {
+          delete process.env.OPENCODE_BRIDGE_ACTIVE_ENV_FILE;
+        } else {
+          process.env.OPENCODE_BRIDGE_ACTIVE_ENV_FILE = previousEnvFile;
+        }
+        fs.rmSync(tempDir, { recursive: true, force: true });
       }
     });
   });
@@ -314,6 +365,18 @@ describe('DirectoryPolicy - Path Normalization and Security', () => {
         ['/home/user']
       );
       expect(result).toBe(false);
+    });
+  });
+
+  describe('project list empty message', () => {
+    it('应该包含目录配置引导', () => {
+      const result = DirectoryPolicy.buildProjectListEmptyMessage();
+      expect(result).toContain('暂无可用项目');
+      expect(result).toContain('配置来源');
+      expect(result).toContain('当前允许目录');
+      expect(result).toContain('Web 管理面板');
+      expect(result).toContain('管理面板地址：http://localhost:4098');
+      expect(result).toContain('PROJECT_ALIASES');
     });
   });
 });

@@ -1038,7 +1038,7 @@ export class CommandHandler {
     const projects = DirectoryPolicy.listAvailableProjects(knownDirs);
 
     if (projects.length === 0) {
-      await feishuClient.reply(messageId, '暂无可用项目\n管理员可通过 PROJECT_ALIASES 环境变量配置项目别名');
+      await feishuClient.reply(messageId, DirectoryPolicy.buildProjectListEmptyMessage());
       return;
     }
 
