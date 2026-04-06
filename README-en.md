@@ -39,7 +39,9 @@
 | File Transfer | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
 | Group Chat | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Private Chat | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Message Recall | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ❌ | ✅ |
+| Message Recall | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ | ⚠️ | ✅ |
+|
+**> ⚠️ Partial Support**: WeCom and WeChat cannot recall platform messages, but the `/undo` command can revert OpenCode session and send a notification message.
 
 ---
 
