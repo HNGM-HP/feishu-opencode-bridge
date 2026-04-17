@@ -20,7 +20,7 @@
           :disabled="loadingMore || !hasMore"
           @click="$emit('load-more')"
         >
-          加载更早 10 条
+          加载更早 30 条
         </el-button>
       </div>
 

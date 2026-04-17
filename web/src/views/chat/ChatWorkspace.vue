@@ -107,87 +107,75 @@
     />
 
     <el-dialog
-      v-model="createDialogVisible"
-      title="新建项目会话"
-      width="760px"
+      v-model=”createDialogVisible”
+      title=”新建项目会话”
+      width=”640px”
       destroy-on-close
+      class=”create-project-dialog”
     >
-      <div class="create-dialog">
-        <div class="dialog-field">
+      <div class=”create-dialog”>
+        <div class=”dialog-field”>
           <label>会话标题</label>
           <el-input
-            v-model="createForm.title"
-            placeholder="不填写则使用“新对话”"
+            v-model=”createForm.title”
+            placeholder=”不填写则使用新对话”
           />
         </div>
 
-        <div class="dialog-field">
-          <label>项目文件夹</label>
-          <el-select
-            v-model="createBrowserRoot"
-            filterable
-            clearable
-            :loading="workspaceCatalogLoading"
-            placeholder="选择项目文件夹"
-            @change="handleCreateRootChange"
-          >
-            <el-option
-              v-for="workspace in workspaceOptions"
-              :key="workspace.id"
-              :label="workspace.label"
-              :value="workspace.directory"
-            />
-          </el-select>
-        </div>
-
-        <div class="dialog-field">
-          <label>自定义输入路径</label>
-          <div class="create-path-input">
+        <div class=”dialog-field”>
+          <label>选择项目文件夹</label>
+          <div class=”create-path-input”>
             <el-input
-              v-model="createPathInput"
-              placeholder="输入当前项目下路径，回车或点击 GO"
-              @keyup.enter="handleCreatePathGo"
-            />
-            <el-button :disabled="!createBrowserRoot" @click="handleCreatePathGo">GO</el-button>
+              v-model=”createPathInput”
+              placeholder=”输入路径后按回车或点击 GO 浏览”
+              @keyup.enter=”handleCreatePathGo”
+            >
+              <template #prefix>
+                <span style=”color:#9ca3af;font-size:12px”>📂</span>
+              </template>
+            </el-input>
+            <el-button type=”primary” @click=”handleCreatePathGo”>GO</el-button>
           </div>
         </div>
 
-        <div class="dialog-field">
-          <label>当前目录</label>
-          <div class="create-current-path">{{ createCurrentDirectory || '未选择目录' }}</div>
-        </div>
-
-        <div class="dialog-field">
-          <label>目录列表</label>
-
-          <div v-if="createBrowserError" class="create-browser-state create-browser-state--error">
+        <div class=”dialog-field”>
+          <div v-if=”createBrowserError” class=”create-browser-state create-browser-state--error”>
             {{ createBrowserError }}
           </div>
-          <div v-else-if="createBrowserLoading" class="create-browser-state">
+          <div v-else-if=”createBrowserLoading” class=”create-browser-state create-browser-state--loading”>
+            <el-icon class=”is-loading”><Loading /></el-icon>
             正在读取目录...
           </div>
-          <div v-else class="create-browser">
-            <button
-              v-for="entry in createDirectoryEntries"
-              :key="entry.path"
-              type="button"
-              class="create-entry"
-              @click="enterCreateDirectory(entry.path)"
+          <div v-else-if=”createBrowserListing” class=”create-browser”>
+            <div
+              v-for=”entry in createDirectoryEntries”
+              :key=”entry.path”
+              class=”create-entry”
+              @click=”enterCreateDirectory(entry.path)”
             >
-              <span>{{ entry.name }}</span>
-              <span>{{ entry.path || '.' }}</span>
-            </button>
-
-            <div v-if="createDirectoryEntries.length === 0" class="create-browser-state">
-              当前目录没有可进入的子文件夹。
+              <span class=”create-entry-icon”>📁</span>
+              <span class=”create-entry-name”>{{ entry.name }}</span>
+              <span class=”create-entry-arrow”>›</span>
             </div>
+
+            <div v-if=”createDirectoryEntries.length === 0” class=”create-browser-empty”>
+              当前目录没有子文件夹
+            </div>
+          </div>
+          <div v-else class=”create-browser-state”>
+            输入路径后按回车或点击 GO 开始浏览
           </div>
         </div>
       </div>
 
       <template #footer>
-        <el-button @click="createDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="creatingSession" @click="confirmCreateSession">选择此文件夹</el-button>
+        <div class=”create-dialog-footer”>
+          <span class=”create-dialog-path”>{{ createCurrentDirectory || '未选择目录' }}</span>
+          <div class=”create-dialog-actions”>
+            <el-button @click=”createDialogVisible = false”>取消</el-button>
+            <el-button type=”primary” :loading=”creatingSession” :disabled=”!createCurrentDirectory” @click=”confirmCreateSession”>选择此文件夹</el-button>
+          </div>
+        </div>
       </template>
     </el-dialog>
   </div>
@@ -198,7 +186,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
-import { Connection, Document, FolderOpened, Monitor } from '@element-plus/icons-vue'
+import { Connection, Document, FolderOpened, Loading, Monitor } from '@element-plus/icons-vue'
 import {
   chatApi,
   workspaceApi,
@@ -658,12 +646,15 @@ function openCreateDialog(initialDirectory?: string): void {
   createForm.value = {
     title: '',
   }
-  createBrowserRoot.value = findPreferredWorkspaceRoot(initialDirectory || currentSession.value?.directory || workspaceDirectory.value)
-  createPathInput.value = normalizePath(initialDirectory || createBrowserRoot.value)
+  const preferredRoot = findPreferredWorkspaceRoot(initialDirectory || currentSession.value?.directory || workspaceDirectory.value)
+  createBrowserRoot.value = preferredRoot
+  createPathInput.value = normalizePath(initialDirectory || preferredRoot)
   createBrowserListing.value = null
   createBrowserError.value = ''
   createDialogVisible.value = true
-  void handleCreatePathGo()
+  if (createPathInput.value) {
+    void handleCreatePathGo()
+  }
 }
 
 async function handleCreateRootChange(): Promise<void> {
@@ -701,6 +692,21 @@ async function loadCreateDirectories(relativePath = ''): Promise<void> {
 }
 
 async function handleCreatePathGo(): Promise<void> {
+  const input = normalizePath(createPathInput.value)
+  if (!input) {
+    createBrowserError.value = '请输入一个有效路径'
+    createBrowserListing.value = null
+    return
+  }
+
+  // If it's an absolute path, use it as the root and browse
+  if (isAbsolutePath(input)) {
+    createBrowserRoot.value = input
+    await loadCreateDirectories('')
+    return
+  }
+
+  // Otherwise treat as relative to current root
   const resolved = resolveCreateRelativePath()
   if (!resolved.ok) {
     createBrowserListing.value = null
@@ -713,16 +719,13 @@ async function handleCreatePathGo(): Promise<void> {
 
 async function enterCreateDirectory(nextPath: string): Promise<void> {
   await loadCreateDirectories(nextPath)
+  // Sync the path input to show current browsing location
+  const root = normalizePath(createBrowserRoot.value)
+  createPathInput.value = buildAbsolutePath(root, nextPath)
 }
 
 async function confirmCreateSession(): Promise<void> {
-  const resolved = resolveCreateRelativePath()
-  if (!resolved.ok) {
-    ElMessage.warning(resolved.error)
-    return
-  }
-
-  const directory = buildAbsolutePath(normalizePath(createBrowserRoot.value), resolved.path)
+  const directory = createCurrentDirectory.value
   if (!directory) {
     ElMessage.warning('请先选择项目目录')
     return
@@ -1001,12 +1004,15 @@ async function handlePermissionDecision(decision: 'allow' | 'reject' | 'always')
 .workspace-column--panel {
   flex: 0 0 auto;
   overflow: hidden;
-  overflow-y: hidden;
+  display: flex;
+  flex-direction: column;
   border-left: 1px solid #e5e7eb;
 }
 
-.workspace-column--panel :deep(*) {
-  overflow-y: hidden !important;
+.workspace-column--panel > :deep(*) {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .workspace-column--chat {
@@ -1027,7 +1033,7 @@ async function handlePermissionDecision(decision: 'allow' | 'reject' | 'always')
 
 .create-dialog {
   display: grid;
-  gap: 16px;
+  gap: 18px;
 }
 
 .dialog-field {
@@ -1038,7 +1044,7 @@ async function handlePermissionDecision(decision: 'allow' | 'reject' | 'always')
 .dialog-field label {
   font-size: 13px;
   font-weight: 600;
-  color: #111827;
+  color: #1a1a2e;
 }
 
 .create-path-input {
@@ -1047,56 +1053,107 @@ async function handlePermissionDecision(decision: 'allow' | 'reject' | 'always')
   gap: 8px;
 }
 
-.create-current-path {
-  min-width: 0;
-  padding: 10px 12px;
-  border: 1px solid #e5e7eb;
-  background: #f9fafb;
-  color: #374151;
-  font-size: 12px;
-  line-height: 1.6;
-  word-break: break-all;
-}
-
 .create-browser {
-  display: grid;
   max-height: 320px;
   overflow-y: auto;
   border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafbfc;
 }
 
 .create-entry {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 10px 14px;
   border: 0;
-  border-bottom: 1px solid #eceff3;
-  background: #ffffff;
+  border-bottom: 1px solid #f0f0f0;
+  background: transparent;
   text-align: left;
   cursor: pointer;
+  transition: background 0.15s;
+}
+
+.create-entry:last-child {
+  border-bottom: none;
 }
 
 .create-entry:hover {
-  background: #f7f9fc;
+  background: #eef0f5;
 }
 
-.create-entry span:last-child {
-  color: #6b7280;
-  font-size: 11px;
+.create-entry-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.create-entry-name {
+  flex: 1;
+  font-size: 13px;
+  color: #1a1a2e;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.create-entry-arrow {
+  color: #9ca3af;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.create-browser-empty {
+  padding: 20px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
 }
 
 .create-browser-state {
-  padding: 12px;
+  padding: 14px;
   border: 1px solid #e5e7eb;
-  color: #6b7280;
-  font-size: 12px;
+  border-radius: 8px;
+  background: #fafbfc;
+  color: #8b8fa3;
+  font-size: 13px;
+  text-align: center;
 }
 
 .create-browser-state--error {
-  color: #b91c1c;
-  background: #fff7f7;
+  color: #dc2626;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.create-browser-state--loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.create-dialog-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.create-dialog-path {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  color: #6b7280;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.create-dialog-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 .chat-workspace :deep(.session-header),

@@ -58,7 +58,18 @@ watch(
 
 async function handleCopy(): Promise<void> {
   try {
-    await navigator.clipboard.writeText(props.code)
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(props.code)
+    } else {
+      const textarea = document.createElement('textarea')
+      textarea.value = props.code
+      textarea.style.position = 'fixed'
+      textarea.style.left = '-9999px'
+      textarea.style.top = '-9999px'
+      document.body.appendChild(textarea)
+      textarea.select()
+      try { document.execCommand('copy') } finally { document.body.removeChild(textarea) }
+    }
     copied.value = true
     if (copyTimer) {
       window.clearTimeout(copyTimer)

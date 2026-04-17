@@ -14,7 +14,7 @@ import {
 import { useChatStream } from './useChatStream'
 import { usePermission } from './usePermission'
 
-const HISTORY_PAGE_SIZE = 10
+const HISTORY_PAGE_SIZE = 30
 
 export function useChatMessages(sessionId: Ref<string | null>) {
   const messages = ref<ChatMessageVm[]>([])

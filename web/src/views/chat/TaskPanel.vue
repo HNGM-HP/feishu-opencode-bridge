@@ -30,43 +30,52 @@ defineProps<{
 
 <style scoped>
 .panel {
-  padding: 12px;
+  padding: 16px;
   background: #ffffff;
-  border: 1px solid #e5e7eb;
+  min-height: 0;
 }
 
 .panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e5e7eb;
   margin-bottom: 14px;
 }
 
 .panel-head h3 {
-  font-size: 14px;
-  color: #111827;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a1a2e;
 }
 
 .count {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 26px;
-  height: 26px;
-  border: 1px solid #d1d5db;
-  color: #4b5563;
+  min-width: 24px;
+  height: 24px;
+  border-radius: 12px;
+  background: #f0f1f5;
+  color: #4a4e69;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .placeholder {
-  color: #6b7280;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: #f8f9fb;
+  color: #8b8fa3;
   line-height: 1.6;
   font-size: 13px;
 }
 
 .task-list {
-  display: grid;
-  gap: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 </style>

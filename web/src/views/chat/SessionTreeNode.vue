@@ -38,28 +38,29 @@
       @click="handleSelect"
       @keydown.enter="handleSelect"
     >
-      <span class="tree-time" :title="fullTime">{{ relativeTime }}</span>
-
       <div class="tree-main">
         <span class="tree-label">{{ node.label }}</span>
       </div>
 
-      <div class="tree-more-wrap" @click.stop>
-        <el-popover
-          placement="bottom-start"
-          trigger="click"
-          :width="140"
-          popper-class="session-action-popover"
-        >
-          <template #reference>
-            <button type="button" class="tree-more-btn" title="更多操作">&middot;&middot;&middot;</button>
-          </template>
-          <div class="session-action-menu">
-            <button type="button" class="session-action-item" @click="handleRename">重命名</button>
-            <button type="button" class="session-action-item" @click="handleCopy">复制对话</button>
-            <button type="button" class="session-action-item session-action-item--danger" @click="handleRemove">删除对话</button>
-          </div>
-        </el-popover>
+      <div class="tree-trailing" @click.stop>
+        <span class="tree-time" :title="fullTime">{{ relativeTime }}</span>
+        <div class="tree-more-wrap">
+          <el-popover
+            placement="bottom-start"
+            trigger="click"
+            :width="140"
+            popper-class="session-action-popover"
+          >
+            <template #reference>
+              <button type="button" class="tree-more-btn" title="更多操作">&middot;&middot;&middot;</button>
+            </template>
+            <div class="session-action-menu">
+              <button type="button" class="session-action-item" @click="handleRename">重命名</button>
+              <button type="button" class="session-action-item" @click="handleCopy">复制对话</button>
+              <button type="button" class="session-action-item session-action-item--danger" @click="handleRemove">删除对话</button>
+            </div>
+          </el-popover>
+        </div>
       </div>
     </div>
 
@@ -122,9 +123,9 @@ const relativeTime = computed(() => {
   const diff = now - props.node.updatedAt
   const minutes = Math.floor(diff / 60000)
   if (minutes < 1) return '刚刚'
-  if (minutes < 60) return `${minutes}分`
+  if (minutes < 60) return `${minutes}min`
   const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}时`
+  if (hours < 24) return `${hours}h`
   const days = Math.floor(hours / 24)
   if (days < 30) return `${days}天`
   const months = Math.floor(days / 30)
@@ -158,11 +159,34 @@ function handleRename(): void {
 function handleCopy(): void {
   const session = props.node.session
   if (!session) return
-  const text = `${session.title}\n${session.directory || ''}`
-  navigator.clipboard.writeText(text.trim()).then(() => {
+  const text = `${session.title}\n${session.directory || ''}`.trim()
+  copyToClipboard(text).then(() => {
     ElMessage.success('已复制对话信息')
   }).catch(() => {
     ElMessage.error('复制失败')
+  })
+}
+
+function copyToClipboard(text: string): Promise<void> {
+  if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+    return navigator.clipboard.writeText(text)
+  }
+  return new Promise((resolve, reject) => {
+    const textarea = document.createElement('textarea')
+    textarea.value = text
+    textarea.style.position = 'fixed'
+    textarea.style.left = '-9999px'
+    textarea.style.top = '-9999px'
+    document.body.appendChild(textarea)
+    textarea.select()
+    try {
+      document.execCommand('copy')
+      resolve()
+    } catch (err) {
+      reject(err)
+    } finally {
+      document.body.removeChild(textarea)
+    }
   })
 }
 
@@ -222,8 +246,8 @@ function handleRemove(): void {
 
 .tree-row--session {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
   cursor: pointer;
   padding-right: 8px;
   transition: background 0.1s;
@@ -256,13 +280,26 @@ function handleRemove(): void {
   font-size: 13px;
 }
 
+.tree-trailing {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 40px;
+  position: relative;
+}
+
 .tree-time {
   flex-shrink: 0;
   color: #9ca3af;
   font-size: 11px;
-  min-width: 28px;
   text-align: right;
   cursor: default;
+  transition: opacity 0.15s;
+}
+
+.tree-trailing:hover .tree-time {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .tree-count {
@@ -275,12 +312,13 @@ function handleRemove(): void {
 .tree-more-wrap {
   display: flex;
   align-items: center;
+  position: absolute;
+  right: 0;
   opacity: 0;
-  transition: opacity 0.1s;
+  transition: opacity 0.15s;
 }
 
-.tree-row--session:hover .tree-more-wrap,
-.tree-row--active .tree-more-wrap {
+.tree-trailing:hover .tree-more-wrap {
   opacity: 1;
 }
 

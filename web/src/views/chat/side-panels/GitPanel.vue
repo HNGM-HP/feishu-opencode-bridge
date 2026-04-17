@@ -487,144 +487,169 @@ function formatCommitDate(raw: string): string {
 
 <style scoped>
 .workspace-tool {
-  display: grid;
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 16px;
+  min-height: 0;
 }
 
 .section-card {
-  display: grid;
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 0;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.section-card:last-child {
+  border-bottom: none;
 }
 
 .tool-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #e5e7eb;
+  margin-bottom: 4px;
 }
 
-.tool-header h4,
+.tool-header h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #1a1a2e;
+}
+
 .section-head h5 {
-  color: #10223d;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1a1a2e;
 }
 
 .tool-header p {
-  margin-top: 6px;
-  color: #6b7280;
+  margin: 4px 0 0;
+  color: #8b8fa3;
+  line-height: 1.5;
+  font-size: 12px;
+}
+
+.placeholder {
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: #f8f9fb;
+  color: #8b8fa3;
   line-height: 1.6;
   font-size: 13px;
 }
 
-.placeholder {
-  padding: 14px 16px;
-  border: 1px solid #e5e7eb;
-  background: #ffffff;
-  color: #6b7280;
-  line-height: 1.7;
-  font-size: 13px;
-}
-
 .placeholder--error {
-  background: #fff7f7;
-  color: #b91c1c;
+  background: #fef2f2;
+  color: #dc2626;
 }
 
 .repo-summary {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  gap: 8px;
 }
 
 .summary-item {
-  padding: 12px 14px;
-  border: 1px solid #e5e7eb;
-  background: #ffffff;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: #f8f9fb;
 }
 
 .summary-item span {
   display: block;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #7b8ba4;
+  letter-spacing: 0.06em;
+  color: #8b8fa3;
 }
 
 .summary-item strong {
   display: block;
-  margin-top: 8px;
-  color: #10223d;
+  margin-top: 4px;
+  color: #1a1a2e;
+  font-size: 13px;
   word-break: break-word;
 }
 
 .count-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 
 .count-pill {
   display: inline-flex;
   align-items: center;
-  border: 1px solid #d1d5db;
-  padding: 6px 10px;
-  background: #ffffff;
-  color: #42536d;
+  padding: 4px 10px;
+  border-radius: 12px;
+  background: #f0f1f5;
+  color: #4a4e69;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .count-pill--danger {
-  background: #fff7f7;
-  color: #b91c1c;
+  background: #fef2f2;
+  color: #dc2626;
 }
 
 .last-commit {
   display: grid;
   gap: 4px;
-  padding: 14px 16px;
-  border: 1px solid #e5e7eb;
-  background: #ffffff;
+  padding: 12px 14px;
+  border-radius: 6px;
+  background: #f8f9fb;
 }
 
 .eyebrow {
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.12em;
-  color: #66758d;
+  letter-spacing: 0.1em;
+  color: #8b8fa3;
 }
 
 .last-commit strong {
-  color: #10223d;
+  color: #1a1a2e;
+  font-size: 13px;
 }
 
 .last-commit span {
-  color: #5f6d82;
-  font-size: 13px;
+  color: #6b7280;
+  font-size: 12px;
 }
 
 .action-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
+  gap: 8px;
+  align-items: center;
 }
 
 .commit-box {
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 
 .commit-actions,
 .other-actions {
   display: flex;
-  align-items: flex-start;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
 }
 
 .section-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
 }
 
 .section-head--diff {
@@ -632,95 +657,104 @@ function formatCommitDate(raw: string): string {
 }
 
 .section-head span {
-  color: #66758d;
+  color: #8b8fa3;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 600;
 }
 
 .file-list {
-  display: grid;
-  gap: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .file-item {
   width: 100%;
-  padding: 12px 14px;
-  border: 1px solid #e5e7eb;
-  background: #ffffff;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 6px;
+  background: #f8f9fb;
   text-align: left;
   cursor: pointer;
+  transition: background 0.15s;
 }
 
-.file-item:hover,
+.file-item:hover {
+  background: #eef0f5;
+}
+
 .file-item--active {
-  border-color: #cbd5e1;
+  background: #e8eaf3;
 }
 
 .file-main {
   display: grid;
-  gap: 8px;
+  gap: 4px;
 }
 
 .file-path {
-  color: #10223d;
+  color: #1a1a2e;
   word-break: break-word;
   font-size: 13px;
-  line-height: 1.55;
+  line-height: 1.4;
 }
 
 .badge-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
 }
 
 .file-badge {
   display: inline-flex;
   align-items: center;
-  border: 1px solid #d1d5db;
-  padding: 4px 8px;
-  background: #ffffff;
-  color: #44556f;
-  font-size: 11px;
-  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #e8eaf3;
+  color: #4a4e69;
+  font-size: 10px;
+  font-weight: 600;
 }
 
 .signature {
   display: inline-flex;
-  margin-top: 8px;
-  color: #7b8ba4;
+  margin-top: 4px;
+  color: #8b8fa3;
   font-family: 'SFMono-Regular', Consolas, monospace;
-  font-size: 12px;
+  font-size: 11px;
 }
 
 .other-meta {
   min-width: 0;
   display: grid;
-  gap: 6px;
-  color: #6b7280;
+  gap: 4px;
+  color: #8b8fa3;
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.5;
   word-break: break-word;
 }
 
 .mode-switch {
   display: inline-flex;
-  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f0f1f5;
   padding: 2px;
-  background: #ffffff;
 }
 
 .mode-button {
   border: 0;
   background: transparent;
-  padding: 6px 10px;
-  color: #53657f;
+  padding: 4px 10px;
+  border-radius: 4px;
+  color: #6b7280;
   font-size: 12px;
   cursor: pointer;
+  transition: all 0.15s;
 }
 
 .mode-button--active {
-  background: #f3f4f6;
-  color: #10223d;
+  background: #fff;
+  color: #1a1a2e;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
 }
 </style>

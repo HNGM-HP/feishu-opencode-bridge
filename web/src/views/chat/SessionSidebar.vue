@@ -2,7 +2,6 @@
   <aside class="session-sidebar">
     <section class="sidebar-head">
       <h2>会话</h2>
-      <el-button type="primary" size="small" @click="$emit('create')">+ 新建</el-button>
     </section>
 
     <el-input
@@ -77,6 +76,7 @@ const emit = defineEmits<{
 const keyword = ref('')
 const searchInputRef = ref<InputInstance>()
 const expandedFolders = ref<Set<string>>(new Set())
+let hasInitialized = false
 
 const filteredSessions = computed(() => {
   const search = keyword.value.trim().toLowerCase()
@@ -95,19 +95,25 @@ watch(
     const folderIds = collectFolderIds(nodes)
     if (folderIds.length === 0) {
       expandedFolders.value = new Set()
+      hasInitialized = false
       return
     }
 
-    if (keyword.value.trim() || expandedFolders.value.size === 0) {
+    // When searching, always expand all to show results
+    if (keyword.value.trim()) {
       expandedFolders.value = new Set(folderIds)
       return
     }
 
-    const next = new Set(expandedFolders.value)
-    for (const folderId of folderIds) {
-      next.add(folderId)
+    // First load: expand all folders
+    if (!hasInitialized) {
+      expandedFolders.value = new Set(folderIds)
+      hasInitialized = true
+      return
     }
-    expandedFolders.value = next
+
+    // Subsequent updates (e.g., sending message / touchSession):
+    // Keep existing expanded state, do NOT auto-expand
   },
   { immediate: true }
 )
