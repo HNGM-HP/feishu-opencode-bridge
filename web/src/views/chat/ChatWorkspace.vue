@@ -107,73 +107,73 @@
     />
 
     <el-dialog
-      v-model=”createDialogVisible”
-      title=”新建项目会话”
-      width=”640px”
+      v-model="createDialogVisible"
+      title="新建项目会话"
+      width="640px"
       destroy-on-close
-      class=”create-project-dialog”
+      class="create-project-dialog"
     >
-      <div class=”create-dialog”>
-        <div class=”dialog-field”>
+      <div class="create-dialog">
+        <div class="dialog-field">
           <label>会话标题</label>
           <el-input
-            v-model=”createForm.title”
-            placeholder=”不填写则使用新对话”
+            v-model="createForm.title"
+            placeholder="不填写则使用新对话"
           />
         </div>
 
-        <div class=”dialog-field”>
+        <div class="dialog-field">
           <label>选择项目文件夹</label>
-          <div class=”create-path-input”>
+          <div class="create-path-input">
             <el-input
-              v-model=”createPathInput”
-              placeholder=”输入路径后按回车或点击 GO 浏览”
-              @keyup.enter=”handleCreatePathGo”
+              v-model="createPathInput"
+              placeholder="输入路径后按回车或点击 GO 浏览"
+              @keyup.enter="handleCreatePathGo"
             >
               <template #prefix>
-                <span style=”color:#9ca3af;font-size:12px”>📂</span>
+                <span style="color:#9ca3af;font-size:12px">📂</span>
               </template>
             </el-input>
-            <el-button type=”primary” @click=”handleCreatePathGo”>GO</el-button>
+            <el-button type="primary" @click="handleCreatePathGo">GO</el-button>
           </div>
         </div>
 
-        <div class=”dialog-field”>
-          <div v-if=”createBrowserError” class=”create-browser-state create-browser-state--error”>
+        <div class="dialog-field">
+          <div v-if="createBrowserError" class="create-browser-state create-browser-state--error">
             {{ createBrowserError }}
           </div>
-          <div v-else-if=”createBrowserLoading” class=”create-browser-state create-browser-state--loading”>
-            <el-icon class=”is-loading”><Loading /></el-icon>
+          <div v-else-if="createBrowserLoading" class="create-browser-state create-browser-state--loading">
+            <el-icon class="is-loading"><Loading /></el-icon>
             正在读取目录...
           </div>
-          <div v-else-if=”createBrowserListing” class=”create-browser”>
+          <div v-else-if="createBrowserListing" class="create-browser">
             <div
-              v-for=”entry in createDirectoryEntries”
-              :key=”entry.path”
-              class=”create-entry”
-              @click=”enterCreateDirectory(entry.path)”
+              v-for="entry in createDirectoryEntries"
+              :key="entry.path"
+              class="create-entry"
+              @click="enterCreateDirectory(entry.path)"
             >
-              <span class=”create-entry-icon”>📁</span>
-              <span class=”create-entry-name”>{{ entry.name }}</span>
-              <span class=”create-entry-arrow”>›</span>
+              <span class="create-entry-icon">📁</span>
+              <span class="create-entry-name">{{ entry.name }}</span>
+              <span class="create-entry-arrow">›</span>
             </div>
 
-            <div v-if=”createDirectoryEntries.length === 0” class=”create-browser-empty”>
+            <div v-if="createDirectoryEntries.length === 0" class="create-browser-empty">
               当前目录没有子文件夹
             </div>
           </div>
-          <div v-else class=”create-browser-state”>
+          <div v-else class="create-browser-state">
             输入路径后按回车或点击 GO 开始浏览
           </div>
         </div>
       </div>
 
       <template #footer>
-        <div class=”create-dialog-footer”>
-          <span class=”create-dialog-path”>{{ createCurrentDirectory || '未选择目录' }}</span>
-          <div class=”create-dialog-actions”>
-            <el-button @click=”createDialogVisible = false”>取消</el-button>
-            <el-button type=”primary” :loading=”creatingSession” :disabled=”!createCurrentDirectory” @click=”confirmCreateSession”>选择此文件夹</el-button>
+        <div class="create-dialog-footer">
+          <span class="create-dialog-path">{{ createCurrentDirectory || '未选择目录' }}</span>
+          <div class="create-dialog-actions">
+            <el-button @click="createDialogVisible = false">取消</el-button>
+            <el-button type="primary" :loading="creatingSession" :disabled="!createCurrentDirectory" @click="confirmCreateSession">选择此文件夹</el-button>
           </div>
         </div>
       </template>
