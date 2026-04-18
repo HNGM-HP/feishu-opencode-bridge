@@ -8,6 +8,28 @@
         </div>
       </template>
 
+      <!-- 语言设置 -->
+      <div class="section">
+        <h3>界面语言</h3>
+        <div class="status-row">
+          <span>当前语言：</span>
+          <el-select v-model="selectedLocale" style="width: 180px" @change="handleLanguageChange">
+            <el-option label="中文（默认）" value="zh-CN" />
+            <el-option label="English" value="en-US" />
+          </el-select>
+        </div>
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          class="timeout-tip"
+        >
+          英文翻译通过外挂语言包覆盖，切换后立即生效。
+        </el-alert>
+      </div>
+
+      <el-divider />
+
       <!-- Bridge 服务控制 -->
       <div class="section">
         <h3>Bridge 服务</h3>
@@ -227,12 +249,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Setting } from '@element-plus/icons-vue'
 import { configApi } from '../api/index'
 import type { ServiceStatus, BridgeStatus, OpenCodeStatus, OpenCodeUpdateCheck } from '../api/index'
 import { useConfigStore } from '../stores/config'
+import { appLocale, setAppLocale } from '../i18n/runtime'
 
 const store = useConfigStore()
 const status = ref<ServiceStatus | null>(null)
@@ -254,6 +277,7 @@ const checkingOpenCodeUpdate = ref(false)
 const checkingBridgeUpdate = ref(false)
 const savingTimeout = ref(false)
 const startMode = ref<'visual' | 'headless'>('headless')
+const selectedLocale = ref<'zh-CN' | 'en-US'>(appLocale.value)
 
 // 判断是否有 OpenCode 更新
 const hasOpenCodeUpdate = computed(() => {
@@ -276,6 +300,16 @@ async function loadStatus() {
     console.error('加载状态失败:', e)
   }
 }
+
+function handleLanguageChange(value: 'zh-CN' | 'en-US'): void {
+  setAppLocale(value)
+  selectedLocale.value = value
+  ElMessage.success(value === 'en-US' ? 'Interface language switched to English' : '界面语言已切换为中文')
+}
+
+watch(appLocale, value => {
+  selectedLocale.value = value
+})
 
 async function checkOpenCodeUpdate() {
   checkingOpenCodeUpdate.value = true
@@ -457,6 +491,7 @@ async function handleUpgrade() {
 }
 
 onMounted(async () => {
+  selectedLocale.value = appLocale.value
   await loadStatus()
   await checkOpenCodeUpdate()
   await checkBridgeUpdate()

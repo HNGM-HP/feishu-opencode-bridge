@@ -123,6 +123,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Download, Delete, Search } from '@element-plus/icons-vue'
 import { configApi, type LogEntry, type LogStats, type LogLevel } from '../api/index'
+import { getActiveDateLocale } from '../i18n/runtime'
 
 const loading = ref(false)
 const logs = ref<LogEntry[]>([])
@@ -227,7 +228,7 @@ function handleExport() {
 
 function formatTime(iso: string): string {
   const d = new Date(iso)
-  return d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  return d.toLocaleTimeString(getActiveDateLocale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
 function getLevelType(level: LogLevel): 'danger' | 'warning' | 'primary' | 'info' {

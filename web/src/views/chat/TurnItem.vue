@@ -91,6 +91,7 @@ import AssistantTracePanel from './AssistantTracePanel.vue'
 import StreamingMessage from './StreamingMessage.vue'
 import type { ChatMessageVm, ChatToolCallVm } from '../../composables/chat-model'
 import type { ChatTokenUsage } from '../../api'
+import { getActiveDateLocale } from '../../i18n/runtime'
 
 const CodeBlock = defineAsyncComponent(() => import('../../components/ai-elements/CodeBlock.vue'))
 const Markdown = defineAsyncComponent(() => import('../../components/ai-elements/Markdown.vue'))
@@ -220,7 +221,7 @@ function compactText(value: string): string {
 }
 
 function formatTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  return new Date(timestamp).toLocaleTimeString(getActiveDateLocale(), { hour: '2-digit', minute: '2-digit' })
 }
 
 async function copyTurn(): Promise<void> {

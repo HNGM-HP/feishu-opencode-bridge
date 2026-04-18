@@ -91,6 +91,7 @@ import { computed } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Folder, FolderOpened } from '@element-plus/icons-vue'
 import type { SessionTreeNodeData } from './session-tree'
+import { getActiveDateLocale, isEnglishLocale } from '../../i18n/runtime'
 
 defineOptions({
   name: 'SessionTreeNode',
@@ -122,20 +123,20 @@ const relativeTime = computed(() => {
   const now = Date.now()
   const diff = now - props.node.updatedAt
   const minutes = Math.floor(diff / 60000)
-  if (minutes < 1) return '刚刚'
+  if (minutes < 1) return isEnglishLocale() ? 'just now' : '刚刚'
   if (minutes < 60) return `${minutes}min`
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h`
   const days = Math.floor(hours / 24)
-  if (days < 30) return `${days}天`
+  if (days < 30) return isEnglishLocale() ? `${days}d` : `${days}天`
   const months = Math.floor(days / 30)
-  if (months < 12) return `${months}月`
-  return `${Math.floor(months / 12)}年`
+  if (months < 12) return isEnglishLocale() ? `${months}mo` : `${months}月`
+  return isEnglishLocale() ? `${Math.floor(months / 12)}y` : `${Math.floor(months / 12)}年`
 })
 
 const fullTime = computed(() => {
   if (!props.node.updatedAt) return ''
-  return new Date(props.node.updatedAt).toLocaleString('zh-CN', {
+  return new Date(props.node.updatedAt).toLocaleString(getActiveDateLocale(), {
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',

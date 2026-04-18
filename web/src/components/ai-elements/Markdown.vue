@@ -2,6 +2,7 @@
   <div
     v-if="renderedHtml"
     class="markdown-body"
+    data-i18n-skip
     v-html="renderedHtml"
   />
 </template>

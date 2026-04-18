@@ -441,6 +441,7 @@
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import CodeBlock from '../../../components/ai-elements/CodeBlock.vue'
+import { getActiveDateLocale, isEnglishLocale } from '../../../i18n/runtime'
 import {
   workspaceApi,
   type WorkspaceGitCommitDetail,
@@ -919,7 +920,7 @@ function formatCommitDate(raw: string): string {
   const value = new Date(raw)
   return Number.isNaN(value.getTime())
     ? raw
-    : value.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+    : value.toLocaleString(getActiveDateLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
 function formatRelativeTime(raw: string): string {
@@ -931,11 +932,20 @@ function formatRelativeTime(raw: string): string {
   const hour = 60 * minute
   const day = 24 * hour
 
-  if (diff < minute) return '刚刚'
-  if (diff < hour) return `${Math.floor(diff / minute)} 分钟前`
-  if (diff < day) return `${Math.floor(diff / hour)} 小时前`
-  if (diff < 30 * day) return `${Math.floor(diff / day)} 天前`
-  return value.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' })
+  if (diff < minute) return isEnglishLocale() ? 'just now' : '刚刚'
+  if (diff < hour) {
+    const minutes = Math.floor(diff / minute)
+    return isEnglishLocale() ? `${minutes} min ago` : `${minutes} 分钟前`
+  }
+  if (diff < day) {
+    const hours = Math.floor(diff / hour)
+    return isEnglishLocale() ? `${hours} hr ago` : `${hours} 小时前`
+  }
+  if (diff < 30 * day) {
+    const days = Math.floor(diff / day)
+    return isEnglishLocale() ? `${days} d ago` : `${days} 天前`
+  }
+  return value.toLocaleDateString(getActiveDateLocale(), { month: '2-digit', day: '2-digit' })
 }
 </script>
 

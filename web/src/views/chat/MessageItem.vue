@@ -59,6 +59,7 @@ import { splitMarkdownSegments } from '../../components/ai-elements/markdown-uti
 import AssistantTracePanel from './AssistantTracePanel.vue'
 import StreamingMessage from './StreamingMessage.vue'
 import type { ChatMessageVm } from '../../composables/chat-model'
+import { getActiveDateLocale } from '../../i18n/runtime'
 
 const CodeBlock = defineAsyncComponent(() => import('../../components/ai-elements/CodeBlock.vue'))
 const Markdown = defineAsyncComponent(() => import('../../components/ai-elements/Markdown.vue'))
@@ -102,7 +103,7 @@ function compactText(value: string): string {
 }
 
 function formatTime(timestamp: number): string {
-  return new Date(timestamp).toLocaleTimeString('zh-CN', {
+  return new Date(timestamp).toLocaleTimeString(getActiveDateLocale(), {
     hour: '2-digit',
     minute: '2-digit',
   })

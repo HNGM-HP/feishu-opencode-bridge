@@ -1,5 +1,6 @@
 <template>
-  <el-container class="app-container">
+  <el-config-provider :locale="elementPlusLocale">
+    <el-container class="app-container">
     <!-- 侧边栏 -->
     <el-aside width="220px" class="sidebar">
       <div class="logo">
@@ -105,17 +106,18 @@
         <el-icon class="is-loading" size="40"><Loading /></el-icon>
       </div>
     </el-main>
-  </el-container>
+    </el-container>
 
-  <!-- 重启确认弹窗 -->
-  <el-dialog v-model="restartDialogVisible" title="确认重启服务" width="420px">
-    <p>重启将中断当前所有连接，服务将在 1 秒后退出（需配合 PM2/systemd 自动拉起）。</p>
-    <p v-if="store.pendingRestartKeys.length">待生效配置：<strong>{{ store.pendingRestartKeys.join('、') }}</strong></p>
-    <template #footer>
-      <el-button @click="restartDialogVisible = false">取消</el-button>
-      <el-button type="warning" :loading="restarting" @click="confirmRestart">确认重启</el-button>
-    </template>
-  </el-dialog>
+    <!-- 重启确认弹窗 -->
+    <el-dialog v-model="restartDialogVisible" title="确认重启服务" width="420px">
+      <p>重启将中断当前所有连接，服务将在 1 秒后退出（需配合 PM2/systemd 自动拉起）。</p>
+      <p v-if="store.pendingRestartKeys.length">待生效配置：<strong>{{ store.pendingRestartKeys.join('、') }}</strong></p>
+      <template #footer>
+        <el-button @click="restartDialogVisible = false">取消</el-button>
+        <el-button type="warning" :loading="restarting" @click="confirmRestart">确认重启</el-button>
+      </template>
+    </el-dialog>
+  </el-config-provider>
 </template>
 
 <script setup lang="ts">
@@ -126,6 +128,7 @@ import { DataAnalysis, Loading, Document, SwitchButton, Key, Link, ChatLineSquar
 import { useConfigStore } from './stores/config'
 import { configApi } from './api/index'
 import type { ServiceStatus } from './api/index'
+import { appLocale, elementPlusLocale, isEnglishLocale, translateUiText } from './i18n/runtime'
 
 const route = useRoute()
 const router = useRouter()
@@ -215,7 +218,24 @@ watch(() => route.path, (newPath, oldPath) => {
   }
 })
 
+watch(
+  [() => route.meta.title, appLocale],
+  ([title]) => {
+    const pageTitle = typeof title === 'string' && title.trim()
+      ? `${translateUiText(title)} · OpenCode Bridge`
+      : 'OpenCode Bridge'
+    document.title = pageTitle
+  },
+  { immediate: true }
+)
+
 function formatUptime(seconds: number): string {
+  if (isEnglishLocale()) {
+    if (seconds < 60) return `${seconds} sec`
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} min`
+    return `${Math.floor(seconds / 3600)} hr`
+  }
+
   if (seconds < 60) return `${seconds}秒`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`
   return `${Math.floor(seconds / 3600)}小时`

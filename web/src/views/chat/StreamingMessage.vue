@@ -1,5 +1,5 @@
 <template>
-  <div class="streaming-message">
+  <div class="streaming-message" data-i18n-skip>
     <template v-if="text">
       <template v-for="segment in debouncedSegments" :key="segment.id">
         <Markdown v-if="segment.type === 'markdown'" :source="segment.content" />

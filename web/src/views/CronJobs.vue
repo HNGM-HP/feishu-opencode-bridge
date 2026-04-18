@@ -179,6 +179,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Plus } from '@element-plus/icons-vue'
 import { useConfigStore } from '../stores/config'
 import type { CronJob, CreateCronJobInput } from '../api/index'
+import { getActiveDateLocale, isEnglishLocale } from '../i18n/runtime'
 
 const store = useConfigStore()
 const refreshing = ref(false)
@@ -293,11 +294,21 @@ function formatTime(iso: string): string {
   const now = new Date()
   const diffMs = d.getTime() - now.getTime()
   const diffMin = Math.round(Math.abs(diffMs) / 60000)
-  if (diffMin < 1) return '刚刚'
-  if (diffMin < 60) return diffMs < 0 ? `${diffMin}分钟前` : `${diffMin}分钟后`
+  if (diffMin < 1) return isEnglishLocale() ? 'just now' : '刚刚'
+  if (diffMin < 60) {
+    return isEnglishLocale()
+      ? (diffMs < 0 ? `${diffMin} min ago` : `in ${diffMin} min`)
+      : (diffMs < 0 ? `${diffMin}分钟前` : `${diffMin}分钟后`)
+  }
+
   const diffHr = Math.round(diffMin / 60)
-  if (diffHr < 24) return diffMs < 0 ? `${diffHr}小时前` : `${diffHr}小时后`
-  return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  if (diffHr < 24) {
+    return isEnglishLocale()
+      ? (diffMs < 0 ? `${diffHr} hr ago` : `in ${diffHr} hr`)
+      : (diffMs < 0 ? `${diffHr}小时前` : `${diffHr}小时后`)
+  }
+
+  return d.toLocaleString(getActiveDateLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
 function isSoon(iso: string): boolean {

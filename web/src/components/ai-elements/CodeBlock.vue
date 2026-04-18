@@ -1,5 +1,5 @@
 <template>
-  <section class="code-block">
+  <section class="code-block" data-i18n-skip>
     <header class="code-toolbar">
       <span class="code-language">{{ title || displayLanguage }}</span>
       <button type="button" class="copy-button" @click="handleCopy">
