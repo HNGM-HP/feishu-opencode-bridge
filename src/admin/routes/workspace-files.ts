@@ -67,15 +67,36 @@ export function registerWorkspaceFilesRoutes(api: express.Router): void {
       const entries = await Promise.all(
         selectedItems.map(async item => {
           const absoluteChildPath = path.join(resolvedPath.absolutePath, item.name);
-          const childStats = await fs.stat(absoluteChildPath);
           const relativeChildPath = path.relative(resolvedDirectory.directory, absoluteChildPath).split(path.sep).join('/');
+          // 直接使用 Dirent 判定目录/文件：
+          // - 避免 Windows 上 junction/reparse point 的 stat 解析问题；
+          // - stat 仅用于取 size / mtimeMs，失败时降级，不影响整体列表。
+          const isDirectory = item.isDirectory();
+
+          let size = 0;
+          let mtimeMs = 0;
+          let inaccessible = false;
+          try {
+            const childStats = await fs.stat(absoluteChildPath);
+            size = childStats.isDirectory() ? 0 : childStats.size;
+            mtimeMs = childStats.mtimeMs;
+          } catch (statError) {
+            // Windows 下 C:\PerfLogs、C:\System Volume Information、C:\$Recycle.Bin 等
+            // 系统目录对普通进程会抛 EPERM；Linux 下也可能遇到受限目录。
+            // 这里降级处理：保留条目，元数据置 0，打印一条 debug 级日志，
+            // 防止单项失败让整个目录列表 502。
+            inaccessible = true;
+            const reason = statError instanceof Error ? statError.message : String(statError);
+            console.debug('[Workspace Files] stat 失败已降级:', absoluteChildPath, reason);
+          }
 
           return {
             name: item.name,
             path: relativeChildPath,
-            type: childStats.isDirectory() ? 'directory' : 'file',
-            size: childStats.isDirectory() ? 0 : childStats.size,
-            mtimeMs: childStats.mtimeMs,
+            type: isDirectory ? 'directory' : 'file',
+            size,
+            mtimeMs,
+            inaccessible,
           };
         })
       );

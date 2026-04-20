@@ -636,6 +636,12 @@ export interface WorkspaceFileEntry {
   type: 'directory' | 'file'
   size: number
   mtimeMs: number
+  /**
+   * 条目存在于目录列表中，但 stat 调用失败（Windows 下常见于
+   * C:\PerfLogs、C:\System Volume Information 等受限系统目录）。
+   * 前端可据此灰显或禁止点入。
+   */
+  inaccessible?: boolean
 }
 
 export interface WorkspaceFileTree {

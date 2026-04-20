@@ -74,8 +74,13 @@
               v-for="entry in listing?.entries || []"
               :key="entry.path"
               type="button"
-              :class="['entry-item', { 'entry-item--active': selectedFilePath === entry.path }]"
-              @click="entry.type === 'directory' ? openDirectory(entry.path) : openFile(entry)"
+              :class="['entry-item', {
+                'entry-item--active': selectedFilePath === entry.path,
+                'entry-item--inaccessible': entry.inaccessible,
+              }]"
+              :disabled="entry.inaccessible"
+              :title="entry.inaccessible ? '无权访问（系统受保护目录）' : undefined"
+              @click="entry.inaccessible ? undefined : (entry.type === 'directory' ? openDirectory(entry.path) : openFile(entry))"
             >
               <span class="entry-type">{{ entry.type === 'directory' ? 'DIR' : 'FILE' }}</span>
               <span class="entry-name">{{ entry.name }}</span>
@@ -286,6 +291,10 @@ async function jumpTo(index: number): Promise<void> {
 }
 
 function formatEntryMeta(entry: WorkspaceFileEntry): string {
+  if (entry.inaccessible) {
+    return '无权访问'
+  }
+
   if (entry.type === 'directory') {
     return '目录'
   }

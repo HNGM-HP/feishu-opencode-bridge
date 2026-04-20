@@ -13,6 +13,7 @@
 
 import { app, Tray, Menu, nativeImage, shell, dialog } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { spawn, spawnSync, ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
@@ -24,6 +25,80 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let backendProcess: ChildProcess | null = null;
 // 托盘图标
 let tray: Tray | null = null;
+
+// ---------------------------------------------------------------------------
+// 日志落盘（修复：GUI 启动时 stdout/stderr 没地方看的问题）
+// ---------------------------------------------------------------------------
+// 所有 [Electron] / [Backend] / [Backend Error] / [Admin] 输出都会写入
+// <userData>/logs/electron-main.log，并在进程崩溃、启动失败时保留足够上下文，
+// 让用户无需命令行运行 exe 即可定位问题。
+let logStream: fs.WriteStream | null = null;
+let logFilePath = '';
+// 保留最近的后端输出，弹窗时直接显示最后几行，省去翻日志的步骤
+const recentBackendOutput: string[] = [];
+const MAX_RECENT_LINES = 40;
+
+function initFileLogger(): void {
+  try {
+    const logsDir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(logsDir, { recursive: true });
+    logFilePath = path.join(logsDir, 'electron-main.log');
+
+    // 滚动：文件超过 2MB 时重命名为 .1，保留一份历史
+    try {
+      const st = fs.statSync(logFilePath);
+      if (st.size > 2 * 1024 * 1024) {
+        fs.renameSync(logFilePath, logFilePath + '.1');
+      }
+    } catch {
+      // 文件不存在，忽略
+    }
+
+    logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+
+    const header = `\n===== OpenCode Bridge started at ${new Date().toISOString()} =====\n` +
+      `pid=${process.pid} platform=${process.platform} electron=${process.versions.electron}\n` +
+      `userData=${app.getPath('userData')}\n` +
+      `execPath=${process.execPath}\n`;
+    logStream.write(header);
+
+    // 劫持 console 的四个常用方法，让任何 console.log/error 同时落盘
+    const origLog = console.log.bind(console);
+    const origErr = console.error.bind(console);
+    const origWarn = console.warn.bind(console);
+    const origInfo = console.info.bind(console);
+
+    const writeLine = (level: string, args: unknown[]) => {
+      const line = `[${new Date().toISOString()}] [${level}] ` +
+        args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n';
+      try { logStream?.write(line); } catch { /* ignore */ }
+    };
+
+    console.log = (...args: unknown[]) => { writeLine('log', args); origLog(...args); };
+    console.error = (...args: unknown[]) => { writeLine('error', args); origErr(...args); };
+    console.warn = (...args: unknown[]) => { writeLine('warn', args); origWarn(...args); };
+    console.info = (...args: unknown[]) => { writeLine('info', args); origInfo(...args); };
+
+    // 捕获未处理异常，否则主进程崩溃时用户只看到弹窗没有线索
+    process.on('uncaughtException', (err) => {
+      console.error('[Electron] uncaughtException:', err?.stack || err);
+    });
+    process.on('unhandledRejection', (reason) => {
+      console.error('[Electron] unhandledRejection:', reason);
+    });
+  } catch (err) {
+    // 日志系统自身失败不应该阻止主程序启动
+    // eslint-disable-next-line no-console
+    console.error('[Electron] Failed to init file logger:', err);
+  }
+}
+
+function rememberBackendLine(line: string): void {
+  recentBackendOutput.push(line);
+  if (recentBackendOutput.length > MAX_RECENT_LINES) {
+    recentBackendOutput.shift();
+  }
+}
 
 // 开发模式检测
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
@@ -76,15 +151,36 @@ function startBackend() {
   });
 
   backendProcess.stdout?.on('data', (data) => {
-    console.log(`[Backend] ${data.toString().trim()}`);
+    const text = data.toString();
+    for (const line of text.split(/\r?\n/)) {
+      if (!line) continue;
+      const formatted = `[Backend] ${line}`;
+      rememberBackendLine(formatted);
+      console.log(formatted);
+    }
   });
 
   backendProcess.stderr?.on('data', (data) => {
-    console.error(`[Backend Error] ${data.toString().trim()}`);
+    const text = data.toString();
+    for (const line of text.split(/\r?\n/)) {
+      if (!line) continue;
+      const formatted = `[Backend Error] ${line}`;
+      rememberBackendLine(formatted);
+      console.error(formatted);
+    }
   });
 
-  backendProcess.on('exit', (code) => {
-    console.log(`[Backend] Exited with code ${code}`);
+  // 关键：监听 spawn 自身的失败（exe 找不到、权限不足等），原代码会静默
+  backendProcess.on('error', (err) => {
+    const msg = `[Backend] spawn error: ${err?.stack || err}`;
+    rememberBackendLine(msg);
+    console.error(msg);
+  });
+
+  backendProcess.on('exit', (code, signal) => {
+    const msg = `[Backend] Exited with code=${code} signal=${signal ?? 'null'}`;
+    rememberBackendLine(msg);
+    console.log(msg);
     backendProcess = null;
   });
 }
@@ -493,6 +589,9 @@ async function handleSingleInstanceLockFailure() {
 
 // 应用就绪后处理初始化逻辑
 app.whenReady().then(async () => {
+  // 先初始化文件日志，这样下面任何输出都会落盘
+  initFileLogger();
+
   // 检查单实例锁
   if (!gotTheLock) {
     // 检测到另一个实例正在运行，在 app ready 后弹窗提示
@@ -515,13 +614,34 @@ app.whenReady().then(async () => {
 
   if (!isReady) {
     console.error('[Electron] Admin Server failed to start');
-    // 服务启动失败时弹窗提示
-    dialog.showMessageBox(null, {
+
+    // 把最后几行后端输出拼进 detail，用户不用命令行也能看到原因
+    const tail = recentBackendOutput.slice(-20).join('\n') || '(子进程没有任何输出，可能 spawn 本身就失败了)';
+    const detail =
+      `端口: ${ADMIN_PORT}\n` +
+      `日志文件: ${logFilePath || '(未初始化)'}\n` +
+      `数据目录: ${getUserDataPath()}\n` +
+      `\n最近的后端输出：\n${tail}`;
+
+    const result = await dialog.showMessageBox(null, {
       type: 'error',
       title: '服务启动失败',
-      message: '管理面板服务未能正常启动，请检查日志。',
-      buttons: ['确定'],
+      message: '管理面板服务未能正常启动。',
+      detail,
+      buttons: ['打开日志文件', '打开日志目录', '退出'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
     });
+
+    if (result.response === 0 && logFilePath) {
+      shell.openPath(logFilePath);
+    } else if (result.response === 1) {
+      shell.openPath(path.join(getUserDataPath(), 'logs'));
+    } else {
+      app.exit(1);
+      return;
+    }
   }
 
   // 创建托盘（始终创建，作为主要交互入口）
@@ -539,4 +659,9 @@ app.whenReady().then(async () => {
 app.on('before-quit', () => {
   (app as any).isQuitting = true;
   stopBackend();
+  try {
+    logStream?.end(`===== OpenCode Bridge exited at ${new Date().toISOString()} =====\n`);
+  } catch {
+    // ignore
+  }
 });

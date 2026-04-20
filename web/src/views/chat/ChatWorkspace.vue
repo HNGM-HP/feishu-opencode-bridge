@@ -367,7 +367,11 @@ const selectedModelLabel = computed(() => {
 const selectedEffortLabel = computed(() => formatVariantLabel(activePreference.value.variant))
 const selectedAgentLabel = computed(() => activePreference.value.agentName || '默认')
 const createDirectoryEntries = computed(() => {
-  return (createBrowserListing.value?.entries || []).filter((entry: WorkspaceFileEntry) => entry.type === 'directory')
+  // 过滤掉无权访问的系统目录（如 Windows 下 C:\PerfLogs、
+  // C:\System Volume Information、C:\$Recycle.Bin），避免用户点进去再 502。
+  return (createBrowserListing.value?.entries || []).filter(
+    (entry: WorkspaceFileEntry) => entry.type === 'directory' && !entry.inaccessible
+  )
 })
 const createCurrentDirectory = computed(() => {
   const root = normalizePath(createBrowserRoot.value)
