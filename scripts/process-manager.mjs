@@ -537,6 +537,8 @@ function resolveOpenCodeExecutable() {
       windowsHide: true,
       shell: true,  // npm 在 Windows 是 npm.cmd，需要 shell
       timeout: 8000,
+      // 防止 shell 命令弹窗，重定向输出
+      stdio: 'pipe',
     });
     if (!npmRootResult.error && npmRootResult.status === 0) {
       const globalRoot = npmRootResult.stdout.trim();
@@ -560,7 +562,9 @@ function resolveOpenCodeExecutable() {
     const whereResult = spawnSync('where', ['opencode'], {
       encoding: 'utf-8',
       windowsHide: true,
+      shell: true,  // where 是内置命令，需要 shell
       timeout: 5000,
+      stdio: 'pipe',
     });
     if (!whereResult.error && whereResult.status === 0) {
       const lines = whereResult.stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
@@ -686,10 +690,12 @@ function startOpenCodeServe(options = {}) {
       });
     } else {
       // Unix / 回退: opencode serve
-      child = spawn(exe.cmd, ['serve'], {
+      // Windows 下使用 cmd /c 来避免弹窗，并确保在后台运行
+      const cmdLine = isWindows() ? `cmd /c opencode serve` : `${exe.cmd} serve`;
+      child = spawn(cmdLine, {
         detached: true,
         stdio: ['ignore', stdoutFd, stderrFd],
-        shell: isWindows(),    // Windows 回退才用 shell
+        shell: isWindows(),
         windowsHide: isWindows(),
       });
     }

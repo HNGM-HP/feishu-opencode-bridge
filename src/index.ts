@@ -524,31 +524,50 @@ async function main() {
   // 1. 如果启用了 OpenCode 自动启动，通过 process-manager 幂等启动后台服务
   if (opencodeConfig.autoStart) {
     try {
+      console.log('[Index] 正在启动 OpenCode serve（后台模式）...');
       const { spawnSync, spawn } = await import('node:child_process');
       const { fileURLToPath } = await import('node:url');
       const pathMod = await import('node:path');
       const isWindows = process.platform === 'win32';
 
       // 确定 process-manager 路径（兼容开发/打包两种环境）
-      const selfDir = pathMod.dirname(fileURLToPath(import.meta.url));
-      const processManagerPath = pathMod.resolve(selfDir, '../../scripts/process-manager.mjs');
+      // 开发模式检测（process.resourcesPath 是 Electron 特有属性）
+      const isDev = process.env.NODE_ENV === 'development' || !(process as any).resourcesPath;
+      let processManagerPath: string;
+      if ((process as any).resourcesPath && !isDev) {
+        // Electron 打包后：scripts 在 resources/app/scripts/
+        processManagerPath = pathMod.join((process as any).resourcesPath, 'app', 'scripts', 'process-manager.mjs');
+      } else {
+        // 开发环境或非 Electron 环境：从 dist/ 向上找项目根的 scripts/
+        const selfDir = pathMod.dirname(fileURLToPath(import.meta.url));
+        processManagerPath = pathMod.resolve(selfDir, '../../scripts/process-manager.mjs');
+      }
+
+      // 检查 process-manager 是否存在
+      console.log(`[Index] process-manager 路径: ${processManagerPath}`);
 
       // 使用 start-opencode（幂等：已在运行则跳过）
       const startResult = spawnSync(process.execPath, [processManagerPath, 'start-opencode'], {
         encoding: 'utf-8',
         windowsHide: isWindows,
         timeout: 15000,
+        stdio: 'pipe',
       });
 
       if (startResult.stdout?.trim()) {
-        console.log('[Index]', startResult.stdout.trim());
+        console.log('[Index] OpenCode 启动输出:', startResult.stdout.trim());
       }
       if (startResult.stderr?.trim()) {
-        console.warn('[Index]', startResult.stderr.trim());
+        console.warn('[Index] OpenCode 启动错误:', startResult.stderr.trim());
       }
 
       if (startResult.status !== 0) {
-        console.warn('[Index] OpenCode 自动启动失败（将继续启动 Bridge）');
+        console.error(`[Index] OpenCode 自动启动失败，退出码: ${startResult.status}（将继续启动 Bridge）`);
+        if (startResult.error) {
+          console.error('[Index] 错误详情:', startResult.error.message);
+        }
+      } else {
+        console.log('[Index] OpenCode serve 启动成功');
       }
 
       // 如果开启了前台模式，等待 2 秒后弹出 attach 窗口（Windows 专用）
