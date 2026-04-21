@@ -1,11 +1,18 @@
 /**
  * 读取本项目 package.json 中的 version 字段。
  *
- * 为什么用 fs.readFileSync 而不是 `import pkg from '../../package.json' with { type: 'json' }`：
- * - ESM 的 JSON 导入需要文件在模块解析路径上真实存在。
- * - Electron 打包后，Admin/Bridge 子进程以 ELECTRON_RUN_AS_NODE=1 启动（不走 asar 加载器），
- *   若 package.json 没被 extraResources 复制到 resources/app/，就会抛 ERR_MODULE_NOT_FOUND。
- * - 用 fs.readFileSync 逐路径试探，任一命中即可；全部失败也只是降级到 'unknown'，不会崩溃。
+ * 取值优先级：
+ * 1. `process.env.APP_VERSION`
+ *    - Electron 打包后，Admin / Bridge 以 ELECTRON_RUN_AS_NODE=1 启动，无法读 asar 内的
+ *      package.json；因此由 Electron 主进程在 spawn 时通过环境变量传入（见 electron/main.ts）。
+ * 2. fs.readFileSync 多路径试探
+ *    - dist/utils/ → ../../package.json（开发 / 源码部署）
+ *    - dist-electron/utils/ → ../../package.json（兜底）
+ *    - resourcesPath/app/package.json、resourcesPath/package.json（Electron 打包场景的兜底）
+ * 3. 全部失败 → 'unknown'，不崩溃
+ *
+ * 绝不要改回 `import pkg from '../../package.json' with { type: 'json' }` —— ESM JSON 导入
+ * 要求文件在解析路径上真实存在，这与 Electron asar 打包策略冲突。
  */
 import fs from 'node:fs';
 import path from 'node:path';
@@ -14,10 +21,13 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function readVersion(): string {
-  // 候选路径：
-  // 1. dist/utils/ → ../../package.json  （开发 / 源码部署 / Electron unpacked dist）
-  // 2. dist-electron/utils/ → ../../package.json  （理论上不会走这条，但留作兜底）
-  // 3. process.resourcesPath/app/package.json  （Electron 打包，若 extraResources 已配置）
+  // 1) 环境变量（Electron 主进程注入）
+  const envVersion = process.env.APP_VERSION;
+  if (envVersion && envVersion.trim()) {
+    return envVersion.trim();
+  }
+
+  // 2) 磁盘多路径试探
   const candidates: string[] = [
     path.resolve(__dirname, '../../package.json'),
     path.resolve(__dirname, '../../../package.json'),

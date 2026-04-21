@@ -189,6 +189,9 @@ function startBackend() {
       OPENCODE_BRIDGE_CONFIG_DIR: dataPath,
       // 设置工作目录
       NODE_ENV: isDev ? 'development' : 'production',
+      // 把版本号通过 env 传给 backend（打包后 backend 跑在 ELECTRON_RUN_AS_NODE 模式，
+      // 读不到 asar 内的 package.json；由主进程用 app.getVersion() 读取后注入）
+      APP_VERSION: app.getVersion(),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: dataPath, // 设置工作目录
