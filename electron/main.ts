@@ -160,13 +160,23 @@ function startBackend() {
   }
 
   // 获取应用根目录
-  const appPath = isDev ? path.resolve(__dirname, '..') : app.getAppPath();
-  // 启动 Admin 独立进程，它会管理 Bridge 子进程
-  const backendPath = path.join(appPath, 'dist/admin/index.js');
+  // 打包后，extraResources 将 dist 复制到 app.asar 外的 app/dist/ 目录
+  // 需要使用 process.resourcesPath 访问这些文件
+  let backendPath: string;
+  if (isDev) {
+    backendPath = path.resolve(__dirname, '../dist/admin/index.js');
+  } else {
+    // macOS: /Applications/OpenCode Bridge.app/Contents/Resources/app/dist/admin/index.js
+    // Windows: C:\Program Files\OpenCode Bridge\resources\app\dist\admin\index.js
+    // Linux: /opt/opencode-bridge/resources/app/dist/admin/index.js
+    backendPath = path.join(process.resourcesPath, 'app', 'dist', 'admin', 'index.js');
+  }
 
   const dataPath = getUserDataPath();
   console.log('[Electron] __dirname:', __dirname);
-  console.log('[Electron] App path:', appPath);
+  console.log('[Electron] isDev:', isDev);
+  console.log('[Electron] process.resourcesPath:', process.resourcesPath);
+  console.log('[Electron] App path:', app.getAppPath());
   console.log('[Electron] Data directory:', dataPath);
   console.log('[Electron] Starting backend from:', backendPath);
 
