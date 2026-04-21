@@ -39,6 +39,19 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 // 开发模式检测（process.resourcesPath 是 Electron 特有属性）
 const isDev = process.env.NODE_ENV === 'development' || !(process as any).resourcesPath;
 
+/**
+ * 获取 process-manager.mjs 的绝对路径
+ * 兼容：开发环境 / 源码部署 / Electron 打包后
+ */
+function resolveProcessManagerPath(): string {
+  if ((process as any).resourcesPath && !isDev) {
+    // Electron 打包：scripts 在 resources/app/scripts/
+    return path.join((process as any).resourcesPath, 'app', 'scripts', 'process-manager.mjs');
+  }
+  // 开发 / 源码部署：从 dist/admin/ 向上两级到项目根
+  return path.resolve(__dirname, '../../scripts/process-manager.mjs');
+}
+
 // ──────────────────────────────────────────────
 // 需要重启才能生效的敏感配置项
 // ──────────────────────────────────────────────
@@ -75,7 +88,7 @@ const RESTART_REQUIRED_KEYS: (keyof BridgeSettings)[] = [
   'OPENCODE_SERVER_USERNAME',
   'OPENCODE_SERVER_PASSWORD',
   'OPENCODE_AUTO_START',
-  'OPENCODE_AUTO_START_CMD',
+  'OPENCODE_AUTO_START_FOREGROUND',
   'RELIABILITY_CRON_ENABLED',
   'RELIABILITY_CRON_API_ENABLED',
   'RELIABILITY_CRON_API_HOST',
@@ -643,69 +656,66 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
   });
 
   // ── POST /api/opencode/start
-  api.post('/opencode/start', async (req, res) => {
+  // 始终使用后台无窗口模式（通过 process-manager start-opencode，幂等）
+  api.post('/opencode/start', async (_req, res) => {
     try {
-      const { visual = false } = req.body || {};
-
-      // 写入 server 配置
-      const opencodeConfigDir = path.join(os.homedir(), '.config', 'opencode');
-      fs.mkdirSync(opencodeConfigDir, { recursive: true });
-
-      const configPath = path.join(opencodeConfigDir, 'opencode.json');
-      let config: any = {};
-      if (fs.existsSync(configPath)) {
-        try {
-          config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        } catch {
-          // 忽略解析错误
-        }
-      }
-
-      config.server = {
-        port: 4096,
-        hostname: '0.0.0.0',
-        cors: ['*'],
-      };
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-
-      // 启动 OpenCode
-      // visual: true -> opencode (前台模式，显示 CLI 窗口 + web)
-      // visual: false -> opencode serve (后台模式，headless)
+      const { spawnSync: spawnSyncLocal } = await import('node:child_process');
+      const scriptPath = resolveProcessManagerPath();
       const isWindows = process.platform === 'win32';
 
-      if (isWindows) {
-        if (visual) {
-          // 前台模式：直接启动 opencode，显示 CLI 窗口
-          spawn('opencode', [], {
-            detached: true,
-            stdio: 'ignore',
-            shell: true,
-          });
-        } else {
-          // 后台模式：使用 VBS 静默启动，不显示窗口
-          const vbsContent = `
-Set objShell = CreateObject("WScript.Shell")
-objShell.Run "cmd /c opencode serve", 0, False
-`.trim();
-          const vbsPath = path.join(os.tmpdir(), 'opencode-start.vbs');
-          fs.writeFileSync(vbsPath, vbsContent, 'utf-8');
-          spawn('wscript', [vbsPath], {
-            detached: true,
-            stdio: 'ignore',
-            windowsHide: true,
-          });
-        }
-      } else {
-        const args = visual ? [] : ['serve'];
-        spawn('opencode', args, {
-          detached: true,
-          stdio: 'ignore',
-        });
+      const result = spawnSyncLocal(process.execPath, [scriptPath, 'start-opencode'], {
+        encoding: 'utf-8',
+        timeout: 20000,
+        windowsHide: isWindows,
+      });
+
+      const stdout = (result.stdout || '').trim();
+      const stderr = (result.stderr || '').trim();
+      if (stdout) console.log('[Admin] opencode start:', stdout);
+      if (stderr) console.warn('[Admin] opencode start stderr:', stderr);
+
+      if (result.status !== 0 || result.error) {
+        const msg = result.error?.message || stderr || '启动失败';
+        res.status(500).json({ error: msg });
+        return;
       }
 
-      res.json({ ok: true, message: visual ? 'OpenCode 已启动（可视化模式）' : 'OpenCode 已启动（后台模式）' });
+      // 判断是"已运行"还是"新启动"
+      const skipped = stdout.includes('已在运行');
+      res.json({
+        ok: true,
+        message: skipped ? 'OpenCode 已在后台运行（无需重复启动）' : 'OpenCode 已后台启动',
+      });
     } catch (error: any) {
       res.status(500).json({ error: '启动失败：' + error.message });
+    }
+  });
+
+  // ── POST /api/opencode/attach
+  // 在前台弹出 CMD 窗口执行 opencode attach <url>（Windows 专用）
+  api.post('/opencode/attach', (req, res) => {
+    const isWindows = process.platform === 'win32';
+    if (!isWindows) {
+      res.status(400).json({ error: '前台 attach 窗口仅支持 Windows 平台' });
+      return;
+    }
+
+    try {
+      const { port = 4096, host = 'localhost' } = req.body || {};
+      const attachUrl = `http://${host}:${port}`;
+
+      // 使用 cmd /c start 弹出新的可见 CMD 窗口
+      // 外层 cmd.exe 隐藏（windowsHide: true），start 命令会创建新的可见窗口
+      spawn('cmd', ['/c', `start "OpenCode" cmd /k opencode attach ${attachUrl}`], {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      }).unref();
+
+      console.log(`[Admin] OpenCode attach 窗口已拉起（${attachUrl}）`);
+      res.json({ ok: true, message: `OpenCode 前台窗口已打开（${attachUrl}）` });
+    } catch (error: any) {
+      res.status(500).json({ error: '打开前台窗口失败：' + error.message });
     }
   });
 
@@ -716,15 +726,7 @@ objShell.Run "cmd /c opencode serve", 0, False
     // 异步终止 OpenCode 进程
     setTimeout(() => {
       try {
-        // 获取脚本路径（兼容开发环境和 Electron 打包环境）
-        let scriptPath: string;
-        if ((process as any).resourcesPath && !isDev) {
-          // Electron 打包后：scripts 在 resources/app/scripts/
-          scriptPath = path.join((process as any).resourcesPath, 'app', 'scripts', 'process-manager.mjs');
-        } else {
-          // 开发环境或非 Electron 环境
-          scriptPath = path.resolve(__dirname, '../../scripts/process-manager.mjs');
-        }
+        const scriptPath = resolveProcessManagerPath();
         console.log('[Admin] 终止脚本路径:', scriptPath);
         console.log('[Admin] Node 路径:', process.execPath);
 
@@ -1041,8 +1043,7 @@ objShell.Run "cmd /c opencode serve", 0, False
         // 2. 终止 OpenCode 进程
         try {
           const { spawnSync } = await import('node:child_process');
-          const processManagerPath = path.resolve(__dirname, '../../scripts/process-manager.mjs');
-          spawnSync(process.execPath, [processManagerPath, 'kill-opencode'], {
+          spawnSync(process.execPath, [resolveProcessManagerPath(), 'kill-opencode'], {
             stdio: 'inherit',
             windowsHide: true,
           });

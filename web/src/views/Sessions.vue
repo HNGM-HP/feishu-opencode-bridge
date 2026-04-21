@@ -87,6 +87,7 @@
       <el-table
         :data="pagedSessions"
         stripe
+        border
         v-loading="loading"
         empty-text="暂无会话数据"
         row-key="id"
@@ -94,7 +95,7 @@
       >
         <el-table-column type="selection" width="50" />
 
-        <el-table-column label="Session ID" min-width="180">
+        <el-table-column label="Session ID" min-width="180" resizable>
           <template #default="{ row }">
             <div class="session-id" :title="row.id">
               {{ row.id.slice(0, 12) }}...
@@ -102,19 +103,19 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="标题" min-width="150">
+        <el-table-column label="标题" min-width="150" resizable show-overflow-tooltip>
           <template #default="{ row }">
             <span class="title-text">{{ row.title || '未命名会话' }}</span>
           </template>
         </el-table-column>
 
-        <el-table-column label="工作目录" min-width="180">
+        <el-table-column label="工作目录" min-width="180" resizable show-overflow-tooltip>
           <template #default="{ row }">
             <span class="dir-text">{{ row.directory || row.projectPath || '-' }}</span>
           </template>
         </el-table-column>
 
-        <el-table-column label="绑定状态" width="120" align="center">
+        <el-table-column label="绑定状态" width="120" min-width="90" align="center" resizable>
           <template #default="{ row }">
             <el-tag v-if="row.localOnly" type="warning" size="small">仅本地</el-tag>
             <el-tag v-else :type="row.isBound ? 'success' : 'info'" size="small">
@@ -123,7 +124,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="绑定详情" min-width="200">
+        <el-table-column label="绑定详情" min-width="200" resizable>
           <template #default="{ row }">
             <div v-if="row.bindings.length > 0" class="bindings-list">
               <div v-for="(b, idx) in row.bindings" :key="idx" class="binding-item">
@@ -138,7 +139,7 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="200" min-width="160" fixed="right" resizable>
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="openBindDialog(undefined, row.id)">
               {{ row.isBound ? '更改' : '绑定' }}

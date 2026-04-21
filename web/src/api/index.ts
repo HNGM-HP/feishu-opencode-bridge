@@ -72,7 +72,9 @@ export interface BridgeSettings {
   OPENCODE_HOST?: string
   OPENCODE_PORT?: string
   OPENCODE_AUTO_START?: string
+  /** @deprecated 不再使用，保留供旧配置兼容 */
   OPENCODE_AUTO_START_CMD?: string
+  OPENCODE_AUTO_START_FOREGROUND?: string
   OPENCODE_SERVER_USERNAME?: string
   OPENCODE_SERVER_PASSWORD?: string
   OPENCODE_CONFIG_FILE?: string
@@ -898,8 +900,13 @@ export const configApi = {
     return res.data
   },
 
-  async startOpenCode(visual?: boolean): Promise<{ ok: boolean; message: string }> {
-    const res = await http.post('/opencode/start', { visual })
+  async startOpenCode(): Promise<{ ok: boolean; message: string }> {
+    const res = await http.post('/opencode/start')
+    return res.data
+  },
+
+  async attachOpenCode(host?: string, port?: number): Promise<{ ok: boolean; message: string }> {
+    const res = await http.post('/opencode/attach', { host: host ?? 'localhost', port: port ?? 4096 })
     return res.data
   },
 

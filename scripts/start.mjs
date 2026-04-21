@@ -25,6 +25,9 @@ const errLog = path.join(logsDir, 'service.err');
 const adminEntryFile = path.join(rootDir, 'dist', 'admin', 'index.js');
 const processManagerPath = path.join(rootDir, 'scripts', 'process-manager.mjs');
 
+// 是否跳过 opencode serve 启动（用于已由外部管理 opencode 的场景）
+const skipOpencodeStart = process.argv.includes('--no-opencode');
+
 function isWindows() {
   return process.platform === 'win32';
 }
@@ -144,23 +147,35 @@ function sleep(ms) {
   }
 }
 
-function main() {
-  ensureLogDir();
-
-  // 1. 调用进程管理工具清理旧进程（不传递 --exclude-self，因为这是独立调用）
-  console.log('[start] 清理旧进程...');
-  const cleanupResult = spawnSync(process.execPath, [processManagerPath, 'kill-bridge'], {
+function runProcessManager(args, options = {}) {
+  const result = spawnSync(process.execPath, [processManagerPath, ...args], {
     stdio: 'pipe',
     encoding: 'utf-8',
     windowsHide: isWindows(),
+    ...options,
   });
+  if (result.stdout?.trim()) console.log(result.stdout.trim());
+  if (result.stderr?.trim()) console.error(result.stderr.trim());
+  return result;
+}
 
-  if (cleanupResult.stdout) {
-    console.log(cleanupResult.stdout.trim());
+function main() {
+  ensureLogDir();
+
+  // 0. 启动 opencode serve（幂等 - 如果已在运行则跳过）
+  if (skipOpencodeStart) {
+    console.log('[start] 跳过 opencode serve 启动（--no-opencode）');
+  } else {
+    console.log('[start] 启动 opencode serve...');
+    const opencodeResult = runProcessManager(['start-opencode']);
+    if (opencodeResult.status !== 0) {
+      console.warn('[start] 警告：opencode serve 启动失败，继续启动 Bridge（可稍后手动启动 opencode）');
+    }
   }
-  if (cleanupResult.stderr) {
-    console.error(cleanupResult.stderr.trim());
-  }
+
+  // 1. 调用进程管理工具清理旧 Bridge 进程（不传递 --exclude-self，因为这是独立调用）
+  console.log('[start] 清理旧 Bridge 进程...');
+  runProcessManager(['kill-bridge']);
 
   // 2. 等待 3 秒，确保旧进程完全退出
   console.log('[start] 等待进程退出...');

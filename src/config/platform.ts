@@ -168,7 +168,10 @@ export const opencodeConfig = {
   get serverUsername() { return process.env.OPENCODE_SERVER_USERNAME?.trim() || 'opencode'; },
   get serverPassword() { return process.env.OPENCODE_SERVER_PASSWORD?.trim() || undefined; },
   get autoStart() { return parseBooleanEnv(process.env.OPENCODE_AUTO_START, true); },
+  /** @deprecated 不再使用，保留仅供旧配置读取迁移 */
   get autoStartCmd() { return process.env.OPENCODE_AUTO_START_CMD?.trim() || 'opencode serve'; },
+  /** 后台启动成功后是否同时弹出前台 attach 窗口（Windows 专用） */
+  get autoStartForeground() { return parseBooleanEnv(process.env.OPENCODE_AUTO_START_FOREGROUND, false); },
   get baseUrl() {
     return `http://${this.host}:${this.port}`;
   },

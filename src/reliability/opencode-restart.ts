@@ -1,5 +1,7 @@
 import fs from 'node:fs/promises';
-import { spawn } from 'node:child_process';
+import fsSync from 'node:fs';
+import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
 import { opencodeConfig, reliabilityConfig } from '../config.js';
 import { probeOpenCodeHealth } from './opencode-probe.js';
 import { checkOpenCodeSingleInstance, type ProcessGuardResult } from './process-guard.js';
@@ -184,21 +186,83 @@ function isNoSuchProcessError(error: unknown): boolean {
   return code === 'ESRCH';
 }
 
-async function defaultStartProcess(): Promise<void> {
+async function defaultStartProcess(pidFilePath = './logs/opencode.pid'): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     try {
       const isWindows = process.platform === 'win32';
-      const child = spawn('opencode', [], {
-        detached: true,
-        stdio: 'ignore',
-        shell: isWindows,
-        windowsHide: isWindows,
-      });
+
+      // Windows 下优先通过 node.exe 直接启动 opencode 脚本，
+      // 避免 .cmd 包装层在隐藏窗口模式下行为不稳定
+      let child: ReturnType<typeof spawn>;
+      if (isWindows) {
+        child = spawnOpencodeWindows();
+      } else {
+        child = spawn('opencode', ['serve'], {
+          detached: true,
+          stdio: 'ignore',
+        });
+      }
+
       child.unref();
+
+      // 写入 PID 文件，供 process-guard 和 kill-opencode 使用
+      if (child.pid) {
+        try {
+          const dir = path.dirname(pidFilePath);
+          fsSync.mkdirSync(dir, { recursive: true });
+          fsSync.writeFileSync(pidFilePath, String(child.pid), 'utf-8');
+        } catch {
+          // PID 文件写入失败不影响启动
+        }
+      }
+
       setTimeout(() => resolve(), 500);
     } catch (error) {
       reject(error);
     }
+  });
+}
+
+/**
+ * Windows 专用：优先用 node.exe 直接执行 opencode JS 脚本（windowsHide 稳定）
+ * 若找不到脚本则回退到 shell 方式
+ */
+function spawnOpencodeWindows(): ReturnType<typeof spawn> {
+  // 尝试通过 npm root -g 找到真实 JS 入口
+  try {
+    const npmRoot = spawnSync('npm', ['root', '-g'], {
+      encoding: 'utf-8',
+      windowsHide: true,
+      shell: true,
+      timeout: 8000,
+    });
+    if (!npmRoot.error && npmRoot.status === 0) {
+      const globalRoot = (npmRoot.stdout as string).trim();
+      const candidates = [
+        path.join(globalRoot, 'opencode-ai', 'bin', 'opencode'),
+        path.join(globalRoot, '@opencode-ai', 'opencode', 'bin', 'opencode'),
+        path.join(globalRoot, 'opencode', 'bin', 'opencode'),
+      ];
+      for (const candidate of candidates) {
+        if (fsSync.existsSync(candidate)) {
+          return spawn(process.execPath, [candidate, 'serve'], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+          });
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 回退：shell 方式（可能出现短暂黑窗，但功能正常）
+  return spawn('opencode', ['serve'], {
+    detached: true,
+    stdio: 'ignore',
+    shell: true,
+    windowsHide: true,
   });
 }
 

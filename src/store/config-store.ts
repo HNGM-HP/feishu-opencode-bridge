@@ -74,7 +74,9 @@ export interface BridgeSettings {
   OPENCODE_HOST?: string;
   OPENCODE_PORT?: string;
   OPENCODE_AUTO_START?: string;
+  /** @deprecated 不再使用，保留供旧配置读取 */
   OPENCODE_AUTO_START_CMD?: string;
+  OPENCODE_AUTO_START_FOREGROUND?: string;
   OPENCODE_SERVER_USERNAME?: string;
   OPENCODE_SERVER_PASSWORD?: string;
   OPENCODE_CONFIG_FILE?: string;

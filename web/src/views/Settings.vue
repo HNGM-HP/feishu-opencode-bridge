@@ -98,6 +98,8 @@
             刷新
           </el-button>
         </div>
+
+        <!-- 安装 / 升级 -->
         <div class="button-row">
           <el-button
             :loading="installingOpenCode"
@@ -113,19 +115,18 @@
           >
             升级 OpenCode
           </el-button>
-          <template v-if="!opencodeStatus?.portOpen">
-            <el-select v-model="startMode" style="width: 140px" placeholder="启动方式">
-              <el-option label="可视化启动" value="visual" />
-              <el-option label="后台启动" value="headless" />
-            </el-select>
-            <el-button
-              type="success"
-              :loading="startingOpenCode"
-              @click="handleStartOpenCode"
-            >
-              启动 OpenCode
-            </el-button>
-          </template>
+        </div>
+
+        <!-- 启动 / 停止 + 前台窗口 -->
+        <div class="button-row" style="margin-top: 8px;">
+          <el-button
+            v-if="!opencodeStatus?.portOpen"
+            type="success"
+            :loading="startingOpenCode"
+            @click="handleStartOpenCode"
+          >
+            后台启动
+          </el-button>
           <el-button
             v-else
             type="danger"
@@ -134,6 +135,18 @@
           >
             终止 OpenCode
           </el-button>
+          <!-- 打开前台窗口按钮（Windows 专用，始终可点） -->
+          <el-button
+            :loading="attachingOpenCode"
+            :disabled="!opencodeStatus?.portOpen"
+            @click="handleAttachOpenCode"
+          >
+            <el-icon style="margin-right:4px"><Monitor /></el-icon>
+            打开前台窗口
+          </el-button>
+        </div>
+        <div class="field-tip" style="margin-top:6px">
+          「打开前台窗口」将在新 CMD 窗口中执行 <code>opencode attach http://localhost:4096</code>（Windows 专用）
         </div>
       </div>
 
@@ -251,7 +264,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Setting } from '@element-plus/icons-vue'
+import { Setting, Monitor } from '@element-plus/icons-vue'
 import { configApi } from '../api/index'
 import type { ServiceStatus, BridgeStatus, OpenCodeStatus, OpenCodeUpdateCheck } from '../api/index'
 import { useConfigStore } from '../stores/config'
@@ -272,11 +285,11 @@ const installingOpenCode = ref(false)
 const upgradingOpenCode = ref(false)
 const startingOpenCode = ref(false)
 const stoppingOpenCode = ref(false)
+const attachingOpenCode = ref(false)
 const upgrading = ref(false)
 const checkingOpenCodeUpdate = ref(false)
 const checkingBridgeUpdate = ref(false)
 const savingTimeout = ref(false)
-const startMode = ref<'visual' | 'headless'>('headless')
 const selectedLocale = ref<'zh-CN' | 'en-US'>(appLocale.value)
 
 // 判断是否有 OpenCode 更新
@@ -434,14 +447,26 @@ async function handleUpgradeOpenCode() {
 async function handleStartOpenCode() {
   startingOpenCode.value = true
   try {
-    const visual = startMode.value === 'visual'
-    const result = await configApi.startOpenCode(visual)
+    const result = await configApi.startOpenCode()
     ElMessage.success(result.message)
     setTimeout(refreshOpenCodeStatus, 2000)
   } catch (e: any) {
     ElMessage.error('启动失败: ' + (e.response?.data?.error || e.message))
   } finally {
     startingOpenCode.value = false
+  }
+}
+
+async function handleAttachOpenCode() {
+  attachingOpenCode.value = true
+  try {
+    const result = await configApi.attachOpenCode()
+    ElMessage.success(result.message)
+  } catch (e: any) {
+    const errMsg = e.response?.data?.error || e.message
+    ElMessage.error('打开前台窗口失败: ' + errMsg)
+  } finally {
+    attachingOpenCode.value = false
   }
 }
 
@@ -543,6 +568,19 @@ onMounted(async () => {
 
 .upgrade-tip, .timeout-tip {
   margin-top: 12px;
+}
+
+.field-tip {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+}
+
+.field-tip code {
+  background: #f0f0f0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
 }
 
 .dialog-footer {

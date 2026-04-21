@@ -66,18 +66,24 @@
               @change="form.OPENCODE_AUTO_START = autoStart ? 'true' : 'false'" />
           </div>
         </template>
-        <el-alert type="warning" :closable="false" show-icon style="margin-bottom:16px">
-          开启后，Bridge 启动时会自动执行下方命令拉起 OpenCode 后台进程
+        <el-alert type="info" :closable="false" show-icon style="margin-bottom:16px">
+          开启后，Bridge 启动时会自动以<strong>后台无窗口模式</strong>拉起 <code>opencode serve</code>
+          （幂等：已运行则跳过）
         </el-alert>
-        <el-row :gutter="24">
-          <el-col :span="24">
-            <el-form-item label="OpenCode 启动命令（OPENCODE_AUTO_START_CMD）">
-              <el-input v-model="form.OPENCODE_AUTO_START_CMD" placeholder="opencode serve"
-                :disabled="!autoStart" />
-              <div class="field-tip">默认为 <code>opencode serve</code>（headless 后台模式），可自定义完整命令</div>
-            </el-form-item>
-          </el-col>
-        </el-row>
+
+        <!-- 前台模式开关 -->
+        <div class="switch-row" :class="{ disabled: !autoStart }">
+          <div class="switch-label">
+            <span class="switch-title">同时打开前台窗口</span>
+            <span class="switch-desc">后台启动成功后额外弹出 CMD 窗口执行 <code>opencode attach http://localhost:{{ portNum }}</code>（仅 Windows）</span>
+          </div>
+          <el-switch
+            v-model="autoStartForeground"
+            :disabled="!autoStart"
+            active-text="启用" inactive-text="关闭"
+            @change="form.OPENCODE_AUTO_START_FOREGROUND = autoStartForeground ? 'true' : 'false'"
+          />
+        </div>
       </el-card>
 
       <el-card class="config-card">
@@ -131,6 +137,7 @@ import ConfigActionBar from '../components/ConfigActionBar.vue'
 const store = useConfigStore()
 const saving = ref(false)
 const autoStart = ref(true)
+const autoStartForeground = ref(false)
 const portNum = ref(4096)
 const selectedProvider = ref('')
 const currentModels = ref<string[]>([])
@@ -142,7 +149,7 @@ const form = reactive({
   OPENCODE_HOST: 'localhost',
   OPENCODE_PORT: '4096',
   OPENCODE_AUTO_START: 'true',
-  OPENCODE_AUTO_START_CMD: 'opencode serve',
+  OPENCODE_AUTO_START_FOREGROUND: 'false',
   OPENCODE_SERVER_USERNAME: 'opencode',
   OPENCODE_SERVER_PASSWORD: '',
   OPENCODE_CONFIG_FILE: '',
@@ -180,7 +187,7 @@ function syncFromStore() {
     OPENCODE_HOST: s.OPENCODE_HOST || 'localhost',
     OPENCODE_PORT: s.OPENCODE_PORT || '4096',
     OPENCODE_AUTO_START: s.OPENCODE_AUTO_START || 'true',
-    OPENCODE_AUTO_START_CMD: s.OPENCODE_AUTO_START_CMD || 'opencode serve',
+    OPENCODE_AUTO_START_FOREGROUND: s.OPENCODE_AUTO_START_FOREGROUND || 'false',
     OPENCODE_SERVER_USERNAME: s.OPENCODE_SERVER_USERNAME || 'opencode',
     OPENCODE_SERVER_PASSWORD: s.OPENCODE_SERVER_PASSWORD || '',
     OPENCODE_CONFIG_FILE: s.OPENCODE_CONFIG_FILE || '',
@@ -189,6 +196,7 @@ function syncFromStore() {
   })
   portNum.value = parseInt(form.OPENCODE_PORT) || 4096
   autoStart.value = form.OPENCODE_AUTO_START === 'true'
+  autoStartForeground.value = form.OPENCODE_AUTO_START_FOREGROUND === 'true'
   initModelSelection()
 }
 
@@ -215,6 +223,7 @@ function handleImportConfig(config: BridgeSettings) {
   // 同步状态
   portNum.value = parseInt(form.OPENCODE_PORT) || 4096
   autoStart.value = form.OPENCODE_AUTO_START === 'true'
+  autoStartForeground.value = form.OPENCODE_AUTO_START_FOREGROUND === 'true'
   initModelSelection()
 }
 </script>
@@ -252,6 +261,35 @@ function handleImportConfig(config: BridgeSettings) {
 .card-header-row { display: flex; align-items: center; justify-content: space-between; }
 .field-tip { font-size: 12px; color: #999; margin-top: 4px; line-height: 1.4; }
 code { background: #f0f0f0; padding: 1px 4px; border-radius: 3px; font-size: 11px; }
+
+.switch-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 0 4px;
+  border-top: 1px solid #f0f0f0;
+  margin-top: 4px;
+}
+.switch-row.disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
+.switch-label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.switch-title {
+  font-size: 14px;
+  font-weight: 500;
+  color: #303133;
+}
+.switch-desc {
+  font-size: 12px;
+  color: #999;
+  line-height: 1.5;
+}
 
 @media (max-width: 900px) {
   .page-layout {

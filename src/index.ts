@@ -521,52 +521,63 @@ async function main() {
   console.log(`[Platform] 已配置的平台: ${configuredPlatforms.join(', ') || '无'}`);
   await loadAllConfigured();
 
-  // 1. 如果启用了 OpenCode 自动启动，先清理旧进程并启动
-  let opencodeChildProcess: import('node:child_process').ChildProcess | undefined;
+  // 1. 如果启用了 OpenCode 自动启动，通过 process-manager 幂等启动后台服务
   if (opencodeConfig.autoStart) {
     try {
-      const { cleanupOpenCodeProcesses } = await import('./utils/process-cleanup.js');
-      await cleanupOpenCodeProcesses();
-
-      // 等待 3 秒确保 OpenCode 进程完全退出
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
-      const { spawn } = await import('node:child_process');
-      // Windows 下需要 shell: true 才能正确执行带参数的命令
+      const { spawnSync, spawn } = await import('node:child_process');
+      const { fileURLToPath } = await import('node:url');
+      const pathMod = await import('node:path');
       const isWindows = process.platform === 'win32';
-      const cmdParts = opencodeConfig.autoStartCmd.split(' ');
-      opencodeChildProcess = spawn(cmdParts[0], cmdParts.slice(1), {
-        stdio: 'ignore',
-        detached: true,
-        shell: isWindows,
+
+      // 确定 process-manager 路径（兼容开发/打包两种环境）
+      const selfDir = pathMod.dirname(fileURLToPath(import.meta.url));
+      const processManagerPath = pathMod.resolve(selfDir, '../../scripts/process-manager.mjs');
+
+      // 使用 start-opencode（幂等：已在运行则跳过）
+      const startResult = spawnSync(process.execPath, [processManagerPath, 'start-opencode'], {
+        encoding: 'utf-8',
         windowsHide: isWindows,
+        timeout: 15000,
       });
 
-      opencodeChildProcess.on('error', (err) => {
-        console.error('[Index] OpenCode 子进程错误:', err);
-      });
+      if (startResult.stdout?.trim()) {
+        console.log('[Index]', startResult.stdout.trim());
+      }
+      if (startResult.stderr?.trim()) {
+        console.warn('[Index]', startResult.stderr.trim());
+      }
 
-      opencodeChildProcess.on('exit', (code) => {
-        console.log(`[Index] OpenCode 子进程已退出，code=${code}`);
-      });
+      if (startResult.status !== 0) {
+        console.warn('[Index] OpenCode 自动启动失败（将继续启动 Bridge）');
+      }
 
-      console.log(`[Index] OpenCode 已自动启动，PID=${opencodeChildProcess.pid}`);
+      // 如果开启了前台模式，等待 2 秒后弹出 attach 窗口（Windows 专用）
+      if (opencodeConfig.autoStartForeground && isWindows) {
+        setTimeout(() => {
+          try {
+            const port = opencodeConfig.port;
+            const attachUrl = `http://localhost:${port}`;
+            // cmd /c start "OpenCode" cmd /k opencode attach <url>
+            // 外层 cmd 隐藏，start 会弹出新的可见 CMD 窗口
+            spawn('cmd', ['/c', `start "OpenCode" cmd /k opencode attach ${attachUrl}`], {
+              detached: true,
+              stdio: 'ignore',
+              windowsHide: true,
+            }).unref();
+            console.log(`[Index] OpenCode 前台窗口已拉起（${attachUrl}）`);
+          } catch (err) {
+            console.warn('[Index] 拉起 OpenCode 前台窗口失败:', err);
+          }
+        }, 2000);
+      }
     } catch (error) {
       console.warn('[Index] 启动 OpenCode 失败:', error);
     }
   }
 
-  // 注册进程退出时的清理逻辑，确保子进程不会变成孤儿进程
+  // 注册进程退出时的清理逻辑（后台 opencode serve 由 process-manager 独立管理，不在此清理）
   const cleanupChildProcess = () => {
-    if (opencodeChildProcess && opencodeChildProcess.pid) {
-      try {
-        // 由于子进程是 detached，需要显式终止
-        process.kill(opencodeChildProcess.pid, 'SIGTERM');
-        console.log(`[Index] 已发送 SIGTERM 到 OpenCode 子进程 (PID=${opencodeChildProcess.pid})`);
-      } catch {
-        // 进程可能已经退出，忽略错误
-      }
-    }
+    // 已迁移到 process-manager 管理，此处保留钩子供将来扩展
   };
 
   // 监听主进程退出事件
@@ -1851,21 +1862,8 @@ async function main() {
 
     console.log(`\n[${signal}] 正在关闭服务...`);
 
-    // 1. 优先终止 OpenCode 子进程（如果由 Bridge 启动）
-    if (opencodeChildProcess) {
-      try {
-        console.log('[Shutdown] 正在终止 OpenCode 子进程...');
-        opencodeChildProcess.kill('SIGTERM');
-        // 等待子进程退出
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        if (!opencodeChildProcess.killed) {
-          opencodeChildProcess.kill('SIGKILL');
-          console.log('[Shutdown] 已强制终止 OpenCode 子进程');
-        }
-      } catch (e) {
-        console.error('[Shutdown] 终止 OpenCode 子进程失败:', e);
-      }
-    }
+    // 1. OpenCode serve 由 process-manager 独立管理，Bridge 关闭时不自动终止它
+    //    （如需完全关闭，可通过 Web 面板"终止服务"或 stop.mjs --with-opencode）
 
     // 2. 停止 reliability 调度和救援资源
     try {
