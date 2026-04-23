@@ -45,6 +45,7 @@
       :has-more="hasMoreMessages"
       :hidden-message-count="hiddenMessageCount"
       :undo-disabled="sending || aborting"
+      :running="running"
       @load-more="$emit('loadMore')"
       @revert="$emit('revert', $event)"
     />

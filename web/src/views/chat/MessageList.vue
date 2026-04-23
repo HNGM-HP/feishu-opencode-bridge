@@ -33,6 +33,7 @@
             :assistant-messages="turn.assistantMessages"
             :undo-disabled="undoDisabled"
             :auto-expand="turn.autoExpand"
+            :running="running"
             @revert="$emit('revert', $event)"
           />
           <!-- 无配对用户消息的 assistant 消息（历史加载不完整等）：用原始 MessageItem -->
@@ -43,6 +44,7 @@
             :message="msg"
             :undo-disabled="undoDisabled"
             :auto-expand="turn.autoExpand"
+            :running="running"
             @revert="$emit('revert', $event)"
           />
         </template>
@@ -67,6 +69,7 @@ const props = defineProps<{
   hasMore: boolean
   hiddenMessageCount: number
   undoDisabled?: boolean
+  running?: boolean
 }>()
 
 defineEmits<{

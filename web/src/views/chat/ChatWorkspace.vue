@@ -910,6 +910,7 @@ async function handleSubmit(payload: {
 
   const sessionId = await ensureSession()
   touchSession(sessionId)
+  void autoRenameSessionFromFirstPrompt(sessionId, payload.text)
   composerDraftAttachments.value = []
   composerDraftAttachmentsKey.value += 1
   await sendText({
@@ -1213,7 +1214,7 @@ function handleWorkspaceKeydown(event: KeyboardEvent): void {
   if (event.key !== 'Escape') return
   if (activePermission.value || aborting.value) return
   if (!activeSessionId.value) return
-  if (!running.value) return
+  if (!uiRunning.value) return
 
   event.preventDefault()
   void handleAbort()

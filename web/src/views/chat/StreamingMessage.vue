@@ -6,7 +6,7 @@
         <CodeBlock v-else :code="segment.code" :language="segment.language" />
       </template>
     </template>
-    <span v-if="text" class="caret" />
+    <span v-if="text && active" class="caret" />
   </div>
 </template>
 
@@ -19,6 +19,7 @@ const CodeBlock = defineAsyncComponent(() => import('../../components/ai-element
 
 const props = defineProps<{
   text: string
+  active?: boolean
 }>()
 
 /**

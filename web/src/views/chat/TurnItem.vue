@@ -66,6 +66,7 @@
               <StreamingMessage
                 v-if="block.streaming"
                 :text="block.text"
+                :active="running"
               />
               <template v-else>
                 <template v-for="segment in block.segments" :key="segment.id">
@@ -121,6 +122,7 @@ const props = defineProps<{
   assistantMessages: ChatMessageVm[]
   autoExpand?: boolean
   undoDisabled?: boolean
+  running?: boolean
 }>()
 
 defineEmits<{

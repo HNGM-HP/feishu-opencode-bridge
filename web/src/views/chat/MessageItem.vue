@@ -44,6 +44,7 @@
           <StreamingMessage
             v-if="message.role === 'assistant' && message.status === 'streaming'"
             :text="message.text"
+            :active="running"
           />
           <template v-else>
             <template v-for="segment in textSegments" :key="segment.id">
@@ -84,6 +85,7 @@ const props = defineProps<{
   message: ChatMessageVm
   autoExpand?: boolean
   undoDisabled?: boolean
+  running?: boolean
 }>()
 
 defineEmits<{
