@@ -298,6 +298,7 @@ const panelDefinitions = [
 const workspaceDirectory = computed(() => currentSession.value?.directory || configStore.settings.DEFAULT_WORK_DIRECTORY || '')
 const messageCount = computed(() => Math.max(messageTotal.value, messages.value.length))
 const hiddenMessageCount = computed(() => Math.max(totalTurns.value - buildConversationTurns(messages.value).length, 0))
+const uiRunning = computed(() => sending.value || running.value)
 const primaryAgents = computed(() => availableAgents.value.filter(agent => agent.hidden !== true && agent.mode !== 'subagent'))
 const fallbackModelProviders = computed<ChatModelProviderInfo[]>(() => {
   return configStore.modelProviders.map(provider => ({
@@ -886,6 +887,20 @@ async function handleDeleteSession(sessionId: string): Promise<void> {
     }
   } catch (error) {
     ElMessage.error(error instanceof Error ? error.message : '删除失败')
+  }
+}
+
+async function autoRenameSessionFromFirstPrompt(sessionId: string, text: string): Promise<void> {
+  const session = sessions.value.find(item => item.id === sessionId)
+  if (!session) return
+  const isDefaultTitle = !session.title || session.title === '新对话' || session.title.trim() === ''
+  if (!isDefaultTitle) return
+
+  const autoTitle = text.trim().slice(0, 24) || '新对话'
+  try {
+    await renameSession(sessionId, autoTitle)
+  } catch {
+    // 自动重命名失败不影响主流程
   }
 }
 
