@@ -16,6 +16,7 @@ export class CardStreamer {
   private chatId: string;
   private messageId: string | null = null;
   private finalMessageId: string | null = null;
+  private deletedStreamingMessageId: string | null = null;
   private state: StreamState = {
     text: '',
     thinking: '',
@@ -95,10 +96,17 @@ export class CardStreamer {
 
     if (this.state.status !== 'processing' && !this.finalMessageId && !this.finalDeliveryPromise) {
       this.finalDeliveryPromise = (async () => {
+        const streamingMessageId = this.messageId;
         try {
           const finalMessageId = await feishuClient.sendCard(this.chatId, card);
           if (finalMessageId) {
             this.finalMessageId = finalMessageId;
+            if (streamingMessageId && this.deletedStreamingMessageId !== streamingMessageId) {
+              const deleted = await feishuClient.deleteMessage(streamingMessageId);
+              if (deleted) {
+                this.deletedStreamingMessageId = streamingMessageId;
+              }
+            }
           }
         } finally {
           this.finalDeliveryPromise = null;
