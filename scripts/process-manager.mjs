@@ -683,6 +683,12 @@ function startOpenCodeServe(options = {}) {
       // 改用 PowerShell 的 Start-Process -WindowStyle Hidden（STARTF_USESHOWWINDOW + SW_HIDE），
       // 它会分配一个隐藏的 console，孙进程继承这个隐藏 console，不会弹窗。
       // 通过 -PassThru 拿到真实 node.exe / opencode.exe 的 PID。
+      //
+      // ⚠️ 绝对不能传 -RedirectStandardOutput/-RedirectStandardError 给 Start-Process！
+      // 那会让 PS 内部切到 UseShellExecute=false，子进程的 stdio 变成管道，
+      // 继而导致孙 opencode.exe 没有可继承的 console → 再次弹出黑窗。
+      // 因此这里不再落盘 opencode 的 stdout/stderr（无日志文件也比黑窗强；
+      // 排查时用 opencode attach 前台窗口即可看实时输出）。
       fs.closeSync(stdoutFd);
       fs.closeSync(stderrFd);
 
@@ -691,12 +697,7 @@ function startOpenCodeServe(options = {}) {
         ? [exe.script, 'serve']
         : ['serve'];
 
-      windowsHiddenPid = startHiddenOnWindows({
-        filePath,
-        argList,
-        stdoutFile: logFile,
-        stderrFile: errFile,
-      });
+      windowsHiddenPid = startHiddenOnWindows({ filePath, argList });
     } else if (exe.type === 'node-script') {
       // 非 Windows 不会走到这里，但保留以防万一
       child = spawn(exe.nodeExe, [exe.script, 'serve'], {
@@ -744,11 +745,17 @@ function startOpenCodeServe(options = {}) {
 
 /**
  * Windows 下用 PowerShell Start-Process -WindowStyle Hidden 启动进程，
- * 既能保证真正隐藏（父+子 console 程序都不弹窗），又能通过 -PassThru 拿到 PID。
- * @param {{ filePath: string, argList: string[], stdoutFile: string, stderrFile: string }} opts
+ * 既能保证真正隐藏（父+孙 console 程序都不弹窗），又能通过 -PassThru 拿到 PID。
+ *
+ * ⚠️ 此函数严格复刻用户已验证可工作的 PS 脚本模板：
+ *     Start-Process -WindowStyle Hidden -FilePath $nodeExe -ArgumentList ... -PassThru
+ * 不要在这里加 -RedirectStandardOutput / -RedirectStandardError —— 一旦加上，
+ * PS 会切到 UseShellExecute=false，SW_HIDE 对孙进程失效，opencode.exe 会弹出黑窗。
+ *
+ * @param {{ filePath: string, argList: string[] }} opts
  * @returns {number}
  */
-function startHiddenOnWindows({ filePath, argList, stdoutFile, stderrFile }) {
+function startHiddenOnWindows({ filePath, argList }) {
   // PowerShell 单引号字符串只需把 ' 转义成 ''
   const psEscape = (s) => String(s).replace(/'/g, "''");
   // ArgumentList 每个元素单独作为 PS 字符串
@@ -760,8 +767,6 @@ function startHiddenOnWindows({ filePath, argList, stdoutFile, stderrFile }) {
     `$ErrorActionPreference='Stop'`,
     `$p = Start-Process -WindowStyle Hidden -FilePath '${psEscape(filePath)}' `
       + `-ArgumentList ${argListLiteral} `
-      + `-RedirectStandardOutput '${psEscape(stdoutFile)}' `
-      + `-RedirectStandardError '${psEscape(stderrFile)}' `
       + `-PassThru`,
     `Write-Output $p.Id`,
   ].join('; ');
