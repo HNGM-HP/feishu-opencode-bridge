@@ -191,26 +191,27 @@ async function defaultStartProcess(pidFilePath = './logs/opencode.pid'): Promise
     try {
       const isWindows = process.platform === 'win32';
 
-      // Windows 下优先通过 node.exe 直接启动 opencode 脚本，
-      // 避免 .cmd 包装层在隐藏窗口模式下行为不稳定
-      let child: ReturnType<typeof spawn>;
+      let pid: number | null = null;
+
       if (isWindows) {
-        child = spawnOpencodeWindows();
+        // Windows: 走 PowerShell Start-Process -WindowStyle Hidden，
+        // 避免 Node 的 CREATE_NO_WINDOW 导致孙进程 opencode-windows-x64\bin\opencode.exe 弹黑窗。
+        pid = startOpencodeWindowsHidden();
       } else {
-        child = spawn('opencode', ['serve'], {
+        const child = spawn('opencode', ['serve'], {
           detached: true,
           stdio: 'ignore',
         });
+        child.unref();
+        pid = child.pid ?? null;
       }
 
-      child.unref();
-
       // 写入 PID 文件，供 process-guard 和 kill-opencode 使用
-      if (child.pid) {
+      if (pid) {
         try {
           const dir = path.dirname(pidFilePath);
           fsSync.mkdirSync(dir, { recursive: true });
-          fsSync.writeFileSync(pidFilePath, String(child.pid), 'utf-8');
+          fsSync.writeFileSync(pidFilePath, String(pid), 'utf-8');
         } catch {
           // PID 文件写入失败不影响启动
         }
@@ -224,11 +225,22 @@ async function defaultStartProcess(pidFilePath = './logs/opencode.pid'): Promise
 }
 
 /**
- * Windows 专用：优先用 node.exe 直接执行 opencode JS 脚本（windowsHide 稳定）
- * 若找不到脚本则回退到 shell 方式
+ * Windows 专用：通过 PowerShell Start-Process -WindowStyle Hidden 启动 opencode serve。
+ *
+ * 为什么不用 Node spawn({ windowsHide: true })？
+ *   - windowsHide 对应 CREATE_NO_WINDOW：node 进程完全不分配 console。
+ *   - 但 opencode-ai 的 JS 入口会再 spawn 平台二进制 opencode-windows-x64\bin\opencode.exe；
+ *     父进程没 console，Windows 会给这个孙进程**重新分配一个可见的黑窗**。
+ *   - PS 的 -WindowStyle Hidden 对应 STARTF_USESHOWWINDOW + SW_HIDE：分配 console 但隐藏，
+ *     孙进程继承这个隐藏 console，不弹窗。
+ *
+ * 返回真实 node.exe / opencode.exe 的 PID（通过 -PassThru 取得）。
  */
-function spawnOpencodeWindows(): ReturnType<typeof spawn> {
-  // 尝试通过 npm root -g 找到真实 JS 入口
+function startOpencodeWindowsHidden(): number | null {
+  // 1. 定位 opencode JS 入口（优先）或可执行文件
+  let filePath: string | null = null;
+  let argList: string[] = [];
+
   try {
     const npmRoot = spawnSync('npm', ['root', '-g'], {
       encoding: 'utf-8',
@@ -245,11 +257,9 @@ function spawnOpencodeWindows(): ReturnType<typeof spawn> {
       ];
       for (const candidate of candidates) {
         if (fsSync.existsSync(candidate)) {
-          return spawn(process.execPath, [candidate, 'serve'], {
-            detached: true,
-            stdio: 'ignore',
-            windowsHide: true,
-          });
+          filePath = process.execPath;
+          argList = [candidate, 'serve'];
+          break;
         }
       }
     }
@@ -257,13 +267,45 @@ function spawnOpencodeWindows(): ReturnType<typeof spawn> {
     // ignore
   }
 
-  // 回退：shell 方式（可能出现短暂黑窗，但功能正常）
-  return spawn('opencode', ['serve'], {
-    detached: true,
-    stdio: 'ignore',
-    shell: true,
+  // 2. 回退：让 PS 自己从 PATH 里找 opencode（通常是 opencode.cmd → node.exe script）
+  if (!filePath) {
+    filePath = 'opencode';
+    argList = ['serve'];
+  }
+
+  return invokeHiddenPowershell(filePath, argList);
+}
+
+function invokeHiddenPowershell(filePath: string, argList: string[]): number | null {
+  const psEscape = (s: string): string => String(s).replace(/'/g, "''");
+  const argListLiteral = argList.length === 0
+    ? '@()'
+    : argList.map(a => `'${psEscape(a)}'`).join(',');
+
+  const psCommand = [
+    `$ErrorActionPreference='Stop'`,
+    `$p = Start-Process -WindowStyle Hidden -FilePath '${psEscape(filePath)}' -ArgumentList ${argListLiteral} -PassThru`,
+    `Write-Output $p.Id`,
+  ].join('; ');
+
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-WindowStyle', 'Hidden',
+    '-Command', psCommand,
+  ], {
+    encoding: 'utf-8',
     windowsHide: true,
+    timeout: 15000,
   });
+
+  if (result.error || result.status !== 0) {
+    return null;
+  }
+  const pidStr = String(result.stdout || '').trim().split(/\s+/).pop() ?? '';
+  const pid = Number.parseInt(pidStr, 10);
+  return Number.isFinite(pid) && pid > 0 ? pid : null;
 }
 
 async function defaultSleep(ms: number): Promise<void> {

@@ -570,14 +570,35 @@ async function main() {
         console.log('[Index] OpenCode serve 启动成功');
       }
 
-      // 如果开启了前台模式，等待 2 秒后弹出 attach 窗口（Windows 专用）
+      // 如果开启了前台模式，等待 opencode serve 的端口就绪后再弹出 attach 窗口（Windows 专用）
+      // 做法：
+      //   1. 轮询 TCP（最多 15s），等待 http://localhost:<port> 可连接
+      //   2. 用 `cmd /c start "OpenCode" cmd /k opencode attach <url>` 弹出可见的新 CMD 窗口
+      //      外层 cmd 用 windowsHide:true 隐藏，start 会在新窗口里运行 attach TUI
       if (opencodeConfig.autoStartForeground && isWindows) {
-        setTimeout(() => {
+        void (async () => {
+          const { probeTcpPort } = await import('./reliability/process-guard.js');
+          const host = opencodeConfig.host;
+          const port = opencodeConfig.port;
+          const attachUrl = `http://${host}:${port}`;
+          const deadline = Date.now() + 15000;
+
+          let ready = false;
+          while (Date.now() < deadline) {
+            const probe = await probeTcpPort(host, port, 1000);
+            if (probe.isOpen) {
+              ready = true;
+              break;
+            }
+            await new Promise(r => setTimeout(r, 500));
+          }
+
+          if (!ready) {
+            console.warn(`[Index] OpenCode serve 端口未就绪（${attachUrl}），跳过前台 attach 窗口`);
+            return;
+          }
+
           try {
-            const port = opencodeConfig.port;
-            const attachUrl = `http://localhost:${port}`;
-            // cmd /c start "OpenCode" cmd /k opencode attach <url>
-            // 外层 cmd 隐藏，start 会弹出新的可见 CMD 窗口
             spawn('cmd', ['/c', `start "OpenCode" cmd /k opencode attach ${attachUrl}`], {
               detached: true,
               stdio: 'ignore',
@@ -587,7 +608,7 @@ async function main() {
           } catch (err) {
             console.warn('[Index] 拉起 OpenCode 前台窗口失败:', err);
           }
-        }, 2000);
+        })();
       }
     } catch (error) {
       console.warn('[Index] 启动 OpenCode 失败:', error);

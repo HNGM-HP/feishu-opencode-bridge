@@ -170,8 +170,16 @@ export const opencodeConfig = {
   get autoStart() { return parseBooleanEnv(process.env.OPENCODE_AUTO_START, true); },
   /** @deprecated 不再使用，保留仅供旧配置读取迁移 */
   get autoStartCmd() { return process.env.OPENCODE_AUTO_START_CMD?.trim() || 'opencode serve'; },
-  /** 后台启动成功后是否同时弹出前台 attach 窗口（Windows 专用） */
-  get autoStartForeground() { return parseBooleanEnv(process.env.OPENCODE_AUTO_START_FOREGROUND, false); },
+  /**
+   * 后台启动成功后是否同时弹出前台 attach 窗口（Windows 专用）
+   * Windows 默认开启：后台 serve 就绪后会自动弹出一个 CMD 窗口运行 `opencode attach http://localhost:<port>`，
+   * 方便在独立窗口里与 opencode CLI 交互。设置 OPENCODE_AUTO_START_FOREGROUND=false 可关闭。
+   * 非 Windows 平台始终关闭（attach 窗口功能依赖 Windows cmd /start 弹窗机制）。
+   */
+  get autoStartForeground() {
+    const defaultValue = process.platform === 'win32';
+    return parseBooleanEnv(process.env.OPENCODE_AUTO_START_FOREGROUND, defaultValue);
+  },
   get baseUrl() {
     return `http://${this.host}:${this.port}`;
   },

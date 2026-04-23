@@ -669,28 +669,55 @@ function startOpenCodeServe(options = {}) {
 
   const exe = resolveOpenCodeExecutable();
   let child;
+  let windowsHiddenPid = null;
 
   try {
     const stdoutFd = fs.openSync(logFile, 'a');
     const stderrFd = fs.openSync(errFile, 'a');
 
-    if (exe.type === 'node-script') {
-      // Windows: node.exe opencode_script serve
+    if (isWindows() && (exe.type === 'node-script' || exe.type === 'direct')) {
+      // Windows 关键修复：不能用 Node 的 windowsHide:true（CREATE_NO_WINDOW），
+      // 因为 opencode JS 脚本内部会再 spawn 平台二进制 opencode-windows-x64\bin\opencode.exe，
+      // 父进程没 console → Windows 会为这个孙进程重新分配一个可见的黑窗。
+      //
+      // 改用 PowerShell 的 Start-Process -WindowStyle Hidden（STARTF_USESHOWWINDOW + SW_HIDE），
+      // 它会分配一个隐藏的 console，孙进程继承这个隐藏 console，不会弹窗。
+      // 通过 -PassThru 拿到真实 node.exe / opencode.exe 的 PID。
+      fs.closeSync(stdoutFd);
+      fs.closeSync(stderrFd);
+
+      const filePath = exe.type === 'node-script' ? exe.nodeExe : exe.exe;
+      const argList = exe.type === 'node-script'
+        ? [exe.script, 'serve']
+        : ['serve'];
+
+      windowsHiddenPid = startHiddenOnWindows({
+        filePath,
+        argList,
+        stdoutFile: logFile,
+        stderrFile: errFile,
+      });
+    } else if (exe.type === 'node-script') {
+      // 非 Windows 不会走到这里，但保留以防万一
       child = spawn(exe.nodeExe, [exe.script, 'serve'], {
         detached: true,
         stdio: ['ignore', stdoutFd, stderrFd],
         windowsHide: true,
       });
+      child.unref();
+      fs.closeSync(stdoutFd);
+      fs.closeSync(stderrFd);
     } else if (exe.type === 'direct') {
-      // Windows: 直接调用 opencode.exe serve（若存在）
       child = spawn(exe.exe, ['serve'], {
         detached: true,
         stdio: ['ignore', stdoutFd, stderrFd],
         windowsHide: true,
       });
+      child.unref();
+      fs.closeSync(stdoutFd);
+      fs.closeSync(stderrFd);
     } else {
       // Unix / 回退: opencode serve
-      // 修复：将命令和参数分开传递，并使用 shell 解析 PATH
       const args = ['serve'];
       child = spawn(exe.cmd, args, {
         detached: true,
@@ -698,22 +725,71 @@ function startOpenCodeServe(options = {}) {
         shell: true,  // ← 使用 shell 以解析 PATH
         windowsHide: isWindows(),
       });
+      child.unref();
+      fs.closeSync(stdoutFd);
+      fs.closeSync(stderrFd);
     }
-
-    child.unref();
-    fs.closeSync(stdoutFd);
-    fs.closeSync(stderrFd);
   } catch (e) {
     return { started: false, pid: null, skipped: false, reason: `spawn_error: ${e.message}` };
   }
 
   // 保存 PID
-  const pid = child.pid ?? null;
+  const pid = windowsHiddenPid ?? child?.pid ?? null;
   if (pid) {
     fs.writeFileSync(pidFilePath, String(pid), 'utf-8');
   }
 
   return { started: true, pid, skipped: false, reason: 'launched' };
+}
+
+/**
+ * Windows 下用 PowerShell Start-Process -WindowStyle Hidden 启动进程，
+ * 既能保证真正隐藏（父+子 console 程序都不弹窗），又能通过 -PassThru 拿到 PID。
+ * @param {{ filePath: string, argList: string[], stdoutFile: string, stderrFile: string }} opts
+ * @returns {number}
+ */
+function startHiddenOnWindows({ filePath, argList, stdoutFile, stderrFile }) {
+  // PowerShell 单引号字符串只需把 ' 转义成 ''
+  const psEscape = (s) => String(s).replace(/'/g, "''");
+  // ArgumentList 每个元素单独作为 PS 字符串
+  const argListLiteral = argList.length === 0
+    ? "@()"
+    : argList.map((a) => `'${psEscape(a)}'`).join(',');
+
+  const psCommand = [
+    `$ErrorActionPreference='Stop'`,
+    `$p = Start-Process -WindowStyle Hidden -FilePath '${psEscape(filePath)}' `
+      + `-ArgumentList ${argListLiteral} `
+      + `-RedirectStandardOutput '${psEscape(stdoutFile)}' `
+      + `-RedirectStandardError '${psEscape(stderrFile)}' `
+      + `-PassThru`,
+    `Write-Output $p.Id`,
+  ].join('; ');
+
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-WindowStyle', 'Hidden',
+    '-Command', psCommand,
+  ], {
+    encoding: 'utf-8',
+    windowsHide: true,
+    timeout: 15000,
+  });
+
+  if (result.error) {
+    throw new Error(`powershell launch failed: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(`powershell exit ${result.status}: ${result.stderr || result.stdout}`);
+  }
+  const pidStr = String(result.stdout || '').trim().split(/\s+/).pop();
+  const pid = Number.parseInt(pidStr, 10);
+  if (!pid || Number.isNaN(pid)) {
+    throw new Error(`could not parse PID from powershell output: ${result.stdout}`);
+  }
+  return pid;
 }
 
 // 导出供其他模块使用
