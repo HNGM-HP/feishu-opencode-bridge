@@ -353,6 +353,13 @@ class ChatSessionStore {
       || this.inferChatTypeFromTitle(title)
       || this.inferChatTypeFromTitle(current?.title);
 
+    const preservedInteractionHistory = Array.isArray(current?.interactionHistory)
+      ? current.interactionHistory.map(record => ({
+          ...record,
+          botFeishuMsgIds: Array.isArray(record.botFeishuMsgIds) ? [...record.botFeishuMsgIds] : [],
+        }))
+      : [];
+
     const data: ChatSessionData = {
       chatId: conversationId,
       sessionId,
@@ -368,7 +375,9 @@ class ChatSessionStore {
       ...(current?.preferredModel ? { preferredModel: current.preferredModel } : {}),
       ...(current?.preferredAgent ? { preferredAgent: current.preferredAgent } : {}),
       ...(current?.preferredEffort ? { preferredEffort: current.preferredEffort } : {}),
-      interactionHistory: [],
+      ...(current?.lastFeishuUserMsgId ? { lastFeishuUserMsgId: current.lastFeishuUserMsgId } : {}),
+      ...(current?.lastFeishuAiMsgId ? { lastFeishuAiMsgId: current.lastFeishuAiMsgId } : {}),
+      interactionHistory: preservedInteractionHistory,
     };
 
     this.removeExistingBindingsForSession(sessionId, key);
@@ -410,6 +419,13 @@ class ChatSessionStore {
       || this.inferChatTypeFromTitle(title)
       || this.inferChatTypeFromTitle(current?.title);
 
+    const preservedInteractionHistory = Array.isArray(current?.interactionHistory)
+      ? current.interactionHistory.map(record => ({
+          ...record,
+          botFeishuMsgIds: Array.isArray(record.botFeishuMsgIds) ? [...record.botFeishuMsgIds] : [],
+        }))
+      : [];
+
     const data: ChatSessionData = {
       chatId,
       sessionId,
@@ -425,7 +441,9 @@ class ChatSessionStore {
       ...(current?.preferredModel ? { preferredModel: current.preferredModel } : {}),
       ...(current?.preferredAgent ? { preferredAgent: current.preferredAgent } : {}),
       ...(current?.preferredEffort ? { preferredEffort: current.preferredEffort } : {}),
-      interactionHistory: [],
+      ...(current?.lastFeishuUserMsgId ? { lastFeishuUserMsgId: current.lastFeishuUserMsgId } : {}),
+      ...(current?.lastFeishuAiMsgId ? { lastFeishuAiMsgId: current.lastFeishuAiMsgId } : {}),
+      interactionHistory: preservedInteractionHistory,
     };
 
     this.removeExistingBindingsForSession(sessionId, namespacedKey);
@@ -718,6 +736,36 @@ class ChatSessionStore {
       }
       this.save();
     }
+  }
+
+  ensureInteraction(chatId: string, record: InteractionRecord): void {
+    const session = this.getChatDataLegacyOrNamespaced(chatId);
+    if (!session) {
+      return;
+    }
+
+    if (!session.interactionHistory) {
+      session.interactionHistory = [];
+    }
+
+    const existing = session.interactionHistory.find(item => item.userFeishuMsgId === record.userFeishuMsgId);
+    if (existing) {
+      return;
+    }
+
+    session.interactionHistory.push({
+      ...record,
+      botFeishuMsgIds: Array.isArray(record.botFeishuMsgIds) ? [...record.botFeishuMsgIds] : [],
+    });
+
+    this.updateLegacyPointers(session);
+
+    if (session.interactionHistory.length > 20) {
+      session.interactionHistory.shift();
+      this.updateLegacyPointers(session);
+    }
+
+    this.save();
   }
 
   removeSession(chatId: string): void {
