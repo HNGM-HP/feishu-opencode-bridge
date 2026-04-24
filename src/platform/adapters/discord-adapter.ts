@@ -445,13 +445,16 @@ export class DiscordAdapter implements PlatformAdapter {
   }
 
   stop(): void {
-    if (!this.client) {
-      return;
+    if (this.client) {
+      this.client.destroy();
+      this.client = null;
     }
-    this.client.destroy();
-    this.client = null;
     this.isActive = false;
     this.messageConversationMap.clear();
+    this.messageCallbacks.length = 0;
+    this.interactionCallbacks.length = 0;
+    this.actionCallbacks.length = 0;
+    this.messageRecalledCallbacks.length = 0;
     console.log('[Discord] 适配器已停止');
   }
 

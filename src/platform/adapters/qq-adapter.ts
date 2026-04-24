@@ -1017,6 +1017,8 @@ export class QQAdapter implements PlatformAdapter {
     }
     this.isActive = false;
     this.messageConversationMap.clear();
+    this.messageCallbacks.length = 0;
+    this.actionCallbacks.length = 0;
     console.log('[QQ] 适配器已停止');
   }
 

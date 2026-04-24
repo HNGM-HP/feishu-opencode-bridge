@@ -244,9 +244,11 @@ export class WeComAdapter implements PlatformAdapter {
     if (this.wsClient) {
       this.wsClient.disconnect();
       this.wsClient = null;
-      this.isActive = false;
-      console.log('[企业微信] 适配器已停止');
     }
+    this.isActive = false;
+    this.messageCallbacks.length = 0;
+    this.actionCallbacks.length = 0;
+    console.log('[企业微信] 适配器已停止');
   }
 
   getSender(): PlatformSender {
