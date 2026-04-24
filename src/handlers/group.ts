@@ -8,7 +8,7 @@ import { parseCommand } from '../commands/parser.js';
 import { normalizeEffortLevel, KNOWN_EFFORT_LEVELS, type EffortLevel } from '../commands/effort.js';
 import { commandHandler } from './command.js';
 import { modelConfig, attachmentConfig } from '../config.js';
-import { visionPreprocessConfig } from '../config/platform.js';
+import { preprocessVisionParts, type VisionPart } from '../services/vision-ocr.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
 import { buildStreamCard } from '../feishu/cards-stream.js';
@@ -443,11 +443,7 @@ export class GroupHandler {
       }
 
       if (attachments && attachments.length > 0) {
-        const prepared = await this.prepareAttachmentParts(messageId, attachments, {
-          providerId,
-          modelId,
-          directory,
-        });
+        const prepared = await this.prepareAttachmentParts(messageId, attachments);
         if (prepared.warnings.length > 0) {
           await feishuClient.reply(messageId, `⚠️ 附件警告:\n${prepared.warnings.join('\n')}`);
         }
@@ -514,9 +510,16 @@ export class GroupHandler {
         }
       }
 
+      // ── 非多模态主模型图片回退：主模型不支持 image 时用 OCR 文本替换图片 part ──
+      const dispatchParts = await preprocessVisionParts(
+        parts as VisionPart[],
+        { providerId, modelId, directory },
+        '飞书',
+      ) as OpencodePartInput[];
+
       await opencodeClient.sendMessagePartsAsync(
         sessionId,
-        parts,
+        dispatchParts,
         {
           providerId,
           modelId,
@@ -547,32 +550,18 @@ export class GroupHandler {
   }
 
   // 处理附件
+  //
+  // 注意：图片 → 文本的 OCR 替换不在此函数内进行，统一由上层在发消息前调用
+  // `preprocessVisionParts(parts, {providerId, modelId, directory}, '飞书')` 完成。
+  // 这样可以保证飞书 / Chat API / 其它平台的图片回退行为一致，且嗅探只跑一次。
   private async prepareAttachmentParts(
     messageId: string,
     attachments: FeishuAttachment[],
-    ctx?: { providerId?: string; modelId?: string; directory?: string }
   ): Promise<{ parts: OpencodePartInput[]; warnings: string[] }> {
     const parts: OpencodePartInput[] = [];
     const warnings: string[] = [];
 
     await fs.mkdir(ATTACHMENT_BASE_DIR, { recursive: true }).catch(() => undefined);
-
-    // ── 能力嗅探：一次性查主模型是否支持 image 输入 ──
-    // 仅在满足"功能开关 ON + 知道 provider/model"时触发嗅探；
-    // 若嗅探返回 null（拉取失败或未找到），按用户要求采取"乐观假设支持图片"策略。
-    let mainModelSupportsImage = true;
-    if (
-      visionPreprocessConfig.enabled &&
-      ctx?.providerId &&
-      ctx?.modelId &&
-      visionPreprocessConfig.model // 也必须配置好了 OCR 副模型才有意义去嗅探
-    ) {
-      const caps = await opencodeClient.getModelCapabilities(ctx.providerId, ctx.modelId);
-      if (caps && caps.input && typeof caps.input.image === 'boolean') {
-        mainModelSupportsImage = caps.input.image;
-      }
-      // caps === null → 乐观保持 mainModelSupportsImage = true
-    }
 
     for (const attachment of attachments) {
         if (attachment.fileSize && attachment.fileSize > attachmentConfig.maxSize) {
@@ -618,39 +607,6 @@ export class GroupHandler {
             }
 
             const dataUrl = `data:${mime};base64,${base64}`;
-
-            // ── 图片 + 主模型不支持 image + 有 OCR 副模型 → 走预处理管道 ──
-            const isImage = attachment.type === 'image' || mime.startsWith('image/');
-            const shouldPreprocess =
-              isImage &&
-              !mainModelSupportsImage &&
-              visionPreprocessConfig.enabled &&
-              !!visionPreprocessConfig.model;
-
-            if (shouldPreprocess) {
-                try {
-                    const { ocrImageViaOpencode } = await import('../services/vision-ocr.js');
-                    const ocrText = await ocrImageViaOpencode({
-                        imageDataUrl: dataUrl,
-                        mime,
-                        filename: safeName,
-                        directory: ctx?.directory,
-                    });
-
-                    if (ocrText) {
-                        // 成功：把图片替换为描述文本，彻底避免把 file part 发给不支持图片的主模型
-                        parts.push({
-                            type: 'text',
-                            text: `[图片 ${safeName} 内容描述]\n${ocrText}`,
-                        });
-                        continue; // 跳过下面的 file part push
-                    }
-                    // OCR 失败 → 按用户要求降级为"直发原图"，让 opencode/模型自己报错
-                    console.warn(`[Group] 图片 ${safeName} OCR 失败，降级为直发原图`);
-                } catch (err) {
-                    console.warn(`[Group] 图片 ${safeName} OCR 异常，降级为直发原图:`, err instanceof Error ? err.message : err);
-                }
-            }
 
             parts.push({
                 type: 'file',

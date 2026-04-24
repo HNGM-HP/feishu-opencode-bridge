@@ -22,11 +22,14 @@ import express, { type Request, type Response, type Application } from 'express'
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { opencodeClient } from '../../opencode/client.js';
+import { preprocessVisionParts, type VisionPart } from '../../services/vision-ocr.js';
 import { chatAuthMiddleware } from './chat-auth.js';
+
+type ChatPart = VisionPart;
 
 interface PromptRequestBody {
   sessionId?: string;
-  parts?: Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; url: string; filename?: string }>;
+  parts?: ChatPart[];
   providerId?: string;
   modelId?: string;
   agent?: string;
@@ -79,10 +82,8 @@ function extractUploadFilename(rawUrl: string): string | null {
   return filename && filename !== '.' && filename !== '..' ? filename : null;
 }
 
-async function inlineUploadParts(
-  parts: NonNullable<PromptRequestBody['parts']>
-): Promise<NonNullable<PromptRequestBody['parts']>> {
-  const resolved = await Promise.all(parts.map(async part => {
+async function inlineUploadParts(parts: ChatPart[]): Promise<ChatPart[]> {
+  const resolved = await Promise.all(parts.map(async (part): Promise<ChatPart> => {
     if (part.type !== 'file') {
       return part;
     }
@@ -122,7 +123,16 @@ export function registerChatPromptRoutes(app: Application): void {
         return;
       }
 
-      const resolvedParts = await inlineUploadParts(body.parts!);
+      const inlinedParts = await inlineUploadParts(body.parts!);
+      const resolvedParts = await preprocessVisionParts(
+        inlinedParts,
+        {
+          providerId: body.providerId,
+          modelId: body.modelId,
+          directory: body.directory,
+        },
+        'Chat API',
+      );
 
       await opencodeClient.sendMessagePartsAsync(sessionId, resolvedParts, {
         providerId: body.providerId,

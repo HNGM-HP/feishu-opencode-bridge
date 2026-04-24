@@ -158,3 +158,83 @@ function withTimeout<T>(promise: Promise<T>, ms: number, reason: string): Promis
       });
   });
 }
+
+/* ─────────────────────────────── 共享预处理入口 ─────────────────────────────── */
+
+/**
+ * 聊天 / API 层共享的 Part 形态（文本 + 文件）。
+ *
+ * 所有平台 handler 已在用 `{type:'file'|'text', ...}` 的结构，这里做最小公共定义，
+ * 便于 `preprocessVisionParts` 在调度端（而非每个 handler）统一处理非多模态主模型的
+ * 图片回退。
+ */
+export type VisionPart =
+  | { type: 'text'; text: string }
+  | { type: 'file'; mime: string; url: string; filename?: string };
+
+/**
+ * 预处理 parts：主模型不支持 image 输入时，把每张图片交给 opencode 内配置的多模态
+ * model 做 OCR，用文本 part 替换原图片 file part；否则原样透传。
+ *
+ * 触发条件（全部满足才走 OCR）：
+ *   - parts 中至少一个 `file` part 的 `mime` 以 `image/` 开头
+ *   - `visionPreprocessConfig.enabled === true` 且已配置 OCR 副模型
+ *   - 传入了 providerId / modelId，且 `getModelCapabilities().input.image === false`
+ *     （能力嗅探返回 null / 未提供 ids → 乐观假设支持图片，不做 OCR）
+ *
+ * OCR 失败 / 异常：按议题 #54 约定降级为"直发原图"，保持与现有行为一致。
+ *
+ * @param parts  已构建好的 parts 数组（经过上传/下载/解码后的 file dataURL）
+ * @param ctx    主模型 + 会话工作区上下文
+ * @param tag    日志前缀（如 `'飞书'` / `'Chat API'`），便于排查
+ */
+export async function preprocessVisionParts(
+  parts: VisionPart[],
+  ctx: { providerId?: string; modelId?: string; directory?: string },
+  tag = 'vision-preprocess',
+): Promise<VisionPart[]> {
+  const hasImage = parts.some(p => p.type === 'file' && typeof p.mime === 'string' && p.mime.startsWith('image/'));
+  if (!hasImage) return parts;
+  if (!visionPreprocessConfig.enabled || !visionPreprocessConfig.model) return parts;
+
+  // 能力嗅探：只在 provider/model 都已知时嗅探；嗅探失败 / null → 乐观放行
+  let mainModelSupportsImage = true;
+  if (ctx.providerId && ctx.modelId) {
+    const caps = await opencodeClient.getModelCapabilities(ctx.providerId, ctx.modelId);
+    if (caps && caps.input && typeof caps.input.image === 'boolean') {
+      mainModelSupportsImage = caps.input.image;
+    }
+  }
+  if (mainModelSupportsImage) return parts;
+
+  const resolved: VisionPart[] = [];
+  for (const part of parts) {
+    if (part.type !== 'file' || !part.mime.startsWith('image/')) {
+      resolved.push(part);
+      continue;
+    }
+
+    const safeName = part.filename?.trim() || 'image';
+    try {
+      const ocrText = await ocrImageViaOpencode({
+        imageDataUrl: part.url,
+        mime: part.mime,
+        filename: safeName,
+        directory: ctx.directory,
+      });
+      if (ocrText) {
+        resolved.push({ type: 'text', text: `[图片 ${safeName} 内容描述]\n${ocrText}` });
+        continue;
+      }
+      console.warn(`[${tag}] 图片 ${safeName} OCR 失败，降级为直发原图`);
+    } catch (err) {
+      console.warn(
+        `[${tag}] 图片 ${safeName} OCR 异常，降级为直发原图:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+    resolved.push(part);
+  }
+
+  return resolved;
+}

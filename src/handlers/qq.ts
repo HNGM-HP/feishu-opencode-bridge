@@ -7,6 +7,7 @@
 
 import { modelConfig, attachmentConfig } from '../config.js';
 import { opencodeClient } from '../opencode/client.js';
+import { preprocessVisionParts, type VisionPart } from '../services/vision-ocr.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { parseCommand, type ParsedCommand } from '../commands/parser.js';
@@ -1105,9 +1106,16 @@ export class QQHandler {
         }
       }
 
+      // ── 非多模态主模型图片回退 ──
+      const dispatchParts = await preprocessVisionParts(
+        parts as VisionPart[],
+        { providerId, modelId, directory },
+        'QQ',
+      ) as OpencodePartInput[];
+
       await opencodeClient.sendMessagePartsAsync(
         sessionId,
-        parts,
+        dispatchParts,
         {
           providerId,
           modelId,
