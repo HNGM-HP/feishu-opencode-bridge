@@ -212,7 +212,7 @@ function buildSessionTree(sessions: ChatSessionSummary[]): SessionTreeNodeData[]
 function sortAndCount(nodes: SessionTreeNodeData[]): SessionTreeNodeData[] {
   nodes.sort((left, right) => {
     if (left.type !== right.type) {
-      return left.type === 'folder' ? -1 : 1
+      return left.type === 'session' ? -1 : 1
     }
 
     if (left.type === 'folder' && right.type === 'folder') {

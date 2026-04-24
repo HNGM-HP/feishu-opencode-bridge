@@ -552,6 +552,8 @@ export function createSessionRoutes(): express.Router {
 // ── 平台聊天获取函数
 
 async function fetchFeishuChats(chats: PlatformChat[], bindingMap: Map<string, ChatSessionData>): Promise<void> {
+  const appended = new Set<string>();
+
   try {
     const chatIds = await feishuClient.getUserChats();
     console.log(`[Session API] 获取飞书群列表: ${chatIds.length} 个`);
@@ -568,14 +570,25 @@ async function fetchFeishuChats(chats: PlatformChat[], bindingMap: Map<string, C
         boundSessionId: binding?.sessionId,
         boundSessionTitle: binding?.title,
       });
+      appended.add(chatId);
     }
   } catch (e) {
     console.warn('[Session API] 获取飞书聊天列表失败:', e);
   }
 
-  // 注意：飞书 API 不支持获取机器人的私聊列表
-  // 仅显示群聊
-  console.log('[Session API] 飞书 API 限制：无法获取私聊列表，仅显示群聊');
+  for (const [conversationId, session] of bindingMap) {
+    if (appended.has(conversationId)) continue;
+    chats.push({
+      id: conversationId,
+      name: session.title || conversationId,
+      type: session.chatType || 'group',
+      isBound: true,
+      boundSessionId: session.sessionId,
+      boundSessionTitle: session.title,
+    });
+  }
+
+  console.log('[Session API] 飞书 API 无法自动枚举私聊，额外返回已有绑定的私聊/群聊会话');
 }
 
 async function fetchDiscordChats(chats: PlatformChat[], bindingMap: Map<string, ChatSessionData>): Promise<void> {

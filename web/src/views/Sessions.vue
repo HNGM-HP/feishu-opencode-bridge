@@ -199,7 +199,7 @@
             <el-option v-for="p in platforms" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>
           <div class="form-hint" v-if="bindForm.platform === 'feishu'">
-            飞书 API 限制：仅支持扫描群聊，无法获取私聊列表
+            飞书 API 无法自动枚举私聊；群聊可直接选择，私聊请手动输入会话 ID 并指定类型。
           </div>
         </el-form-item>
 
@@ -232,7 +232,7 @@
           </el-select>
           <div class="form-hint">
             <template v-if="!bindForm.platform">请先选择平台，系统将自动加载该平台的聊天列表</template>
-            <template v-else-if="bindForm.platform === 'feishu'">飞书 API 限制：仅支持扫描群聊，无法获取私聊列表</template>
+            <template v-else-if="bindForm.platform === 'feishu'">飞书 API 无法自动枚举私聊；群聊可直接选择，私聊请手动输入会话 ID 并指定类型</template>
             <template v-else-if="platformChats.length === 0 && !loadingPlatformChats">该平台暂无可用聊天，请手动输入会话 ID</template>
             <template v-else>选择平台聊天或手动输入会话 ID</template>
           </div>
@@ -243,13 +243,13 @@
         </el-form-item>
 
         <el-form-item label="会话类型">
-          <el-input v-model="bindForm.chatType" disabled placeholder="选择聊天后自动识别">
-            <template #append>
-              <el-tag :type="bindForm.chatType === 'p2p' ? 'success' : bindForm.chatType === 'group' ? 'info' : 'info'" size="small">
-                {{ bindForm.chatType === 'p2p' ? '私聊' : bindForm.chatType === 'group' ? '群聊' : '未指定' }}
-              </el-tag>
-            </template>
-          </el-input>
+          <el-select v-model="bindForm.chatType" placeholder="选择会话类型" clearable style="width:100%">
+            <el-option label="私聊" value="p2p" />
+            <el-option label="群聊" value="group" />
+          </el-select>
+          <div class="form-hint">
+            选择聊天时会自动带出类型；如果是手动输入会话 ID，尤其飞书私聊，请在这里手动指定。
+          </div>
         </el-form-item>
 
         <el-form-item label="工作目录">

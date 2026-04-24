@@ -7,7 +7,7 @@
  * 用法: node scripts/setup-mirror.mjs
  */
 
-import { writeFileSync, existsSync, appendFileSync } from 'fs';
+import { writeFileSync, existsSync, appendFileSync, readFileSync } from 'fs';
 import { execSync } from 'child_process';
 
 // 镜像源配置 (主1备2兜底1)
@@ -147,7 +147,7 @@ async function main() {
   const npmrcPath = '.npmrc';
   if (existsSync(npmrcPath)) {
     // 读取现有配置，移除自动生成的部分
-    const existing = require('fs').readFileSync(npmrcPath, 'utf-8');
+    const existing = readFileSync(npmrcPath, 'utf-8');
     const lines = existing.split('\n').filter(line =>
       !line.includes('# 自动生成的镜像配置') &&
       !line.includes('# 生成时间:') &&
