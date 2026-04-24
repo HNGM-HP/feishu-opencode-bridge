@@ -216,13 +216,6 @@ export class GroupHandler {
     // 4. 处理 Prompt
     // 记录用户消息ID
     chatSessionStore.updateLastInteraction(chatId, messageId);
-    chatSessionStore.ensureInteraction(chatId, {
-      userFeishuMsgId: messageId,
-      openCodeMsgId: '',
-      botFeishuMsgIds: [],
-      type: 'normal',
-      timestamp: Date.now(),
-    });
     
     // 获取当前会话配置
     const sessionConfig = chatSessionStore.getSession(chatId);
