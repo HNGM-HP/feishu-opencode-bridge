@@ -527,7 +527,7 @@ async function handleSubmitBind() {
     })
     ElMessage.success('绑定已创建')
     bindDialogVisible.value = false
-    loadData()
+    loadData(true)
   } catch (e: any) {
     ElMessage.error('创建失败: ' + (e.response?.data?.error || e.message))
   } finally {
@@ -554,7 +554,7 @@ async function handleUnbindAll(row: OpenCodeSession) {
       row.bindings.map(b => ({ platform: b.platform, conversationId: b.conversationId }))
     )
     ElMessage.success(`已解除 ${result.successCount} 个绑定`)
-    loadData()
+    loadData(true)
   } catch (e: any) {
     ElMessage.error('解除绑定失败: ' + e.message)
   }
@@ -592,7 +592,7 @@ async function handleDeleteSession(row: OpenCodeSession) {
     }
 
     ElMessage.success('Session 已删除')
-    loadData()
+    loadData(true)
   } catch (e: any) {
     ElMessage.error('删除失败: ' + e.message)
   }
@@ -622,7 +622,7 @@ async function handleBatchUnbind() {
     const result = await sessionApi.batchOperation('unbind', bindingsToDelete)
     ElMessage.success(`已解除 ${result.successCount} 个绑定`)
     selectedRows.value = []
-    loadData()
+    loadData(true)
   } catch (e: any) {
     ElMessage.error('批量解绑失败: ' + e.message)
   }
@@ -662,7 +662,7 @@ async function handleBatchDelete() {
 
     ElMessage.success(`已删除 ${selectedCount} 个 Session`)
     selectedRows.value = []
-    loadData()
+    loadData(true)
   } catch (e: any) {
     ElMessage.error('批量删除失败: ' + e.message)
   }

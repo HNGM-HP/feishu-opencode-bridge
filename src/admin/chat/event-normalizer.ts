@@ -356,7 +356,21 @@ export class ChatEventNormalizer {
           });
         }
 
-        // 完成 / 错误 → tool_end（+ 若是 todowrite 再补 task_update）
+        // TodoWrite 的 todos 在 running 阶段就已经写在 state.input.todos 里了。
+        // 只在 completed 时再 emit task_update 会导致看板"等执行完才出现"，
+        // 体感上像没显示任务。这里只要任意状态拿得到 todos 数组就立刻广播，
+        // 同状态下重复的快照在前端会被覆盖式替换，无副作用。
+        if (isTodoWriteTool(toolName) && st && st.status !== 'pending') {
+          const stateRecord = st as unknown as Record<string, unknown>;
+          const liveInput = stateRecord.input;
+          const liveMetadata = stateRecord.metadata && typeof stateRecord.metadata === 'object'
+            ? stateRecord.metadata as Record<string, unknown>
+            : undefined;
+          const todos = extractTodosFromTodoWrite(liveInput, liveMetadata);
+          if (todos) this.publish(sessionId, { type: 'task_update', todos });
+        }
+
+        // 完成 / 错误 → tool_end
         if (st?.status === 'completed') {
           const title = st.title;
           const output = typeof st.output === 'string' ? st.output : '';
@@ -371,12 +385,6 @@ export class ChatEventNormalizer {
             title,
             durationMs: st.time?.end && st.time?.start ? st.time.end - st.time.start : undefined,
           });
-
-          // TodoWrite → 解析 todos 发出 task_update
-          if (isTodoWriteTool(toolName)) {
-            const todos = extractTodosFromTodoWrite(st.input, st.metadata);
-            if (todos) this.publish(sessionId, { type: 'task_update', todos });
-          }
         } else if (st?.status === 'error') {
           this.publish(sessionId, {
             type: 'tool_end',

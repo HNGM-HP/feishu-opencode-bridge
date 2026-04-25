@@ -75,6 +75,9 @@ export function useChatMessages(sessionId: Ref<string | null>) {
       const currentVersion = requestVersion
       messages.value = []
       tasks.value = []
+      // 切换会话时必须把所有"工作中"信号一并复位，否则上一会话残留的
+      // sending=true 会让新会话误显示「中断」按钮（issue: 切换至其它会话有概率显示中断）
+      sending.value = false
       running.value = false
       lastError.value = null
       total.value = 0

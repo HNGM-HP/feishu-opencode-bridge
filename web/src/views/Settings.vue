@@ -48,6 +48,21 @@
             终止服务
           </el-button>
         </div>
+        <div class="status-row" style="margin-top: 12px">
+          <span>开机自启：</span>
+          <el-switch
+            v-model="autoStartEnabled"
+            :loading="autoStartBusy"
+            :disabled="!autoStartSupported || autoStartBusy"
+            @change="handleToggleAutoStart"
+          />
+          <el-text v-if="!autoStartSupported" type="info" size="small" style="margin-left: 8px">
+            当前部署模式不支持（请在打包版客户端中配置）
+          </el-text>
+          <el-text v-else type="info" size="small" style="margin-left: 8px">
+            {{ autoStartHint }}
+          </el-text>
+        </div>
       </div>
 
       <el-divider />
@@ -280,6 +295,18 @@ const loginTimeout = ref(0)
 
 const restarting = ref(false)
 const shuttingDown = ref(false)
+const autoStartEnabled = ref(false)
+const autoStartSupported = ref(true)
+const autoStartPlatform = ref<string>('')
+const autoStartBusy = ref(false)
+const autoStartHint = computed(() => {
+  switch (autoStartPlatform.value) {
+    case 'win32': return '通过注册表 HKCU\\...\\Run 写入'
+    case 'darwin': return '通过 ~/Library/LaunchAgents 写入'
+    case 'linux': return '通过 ~/.config/autostart 写入'
+    default: return ''
+  }
+})
 const showShutdownDialog = ref(false)
 const installingOpenCode = ref(false)
 const upgradingOpenCode = ref(false)
@@ -311,6 +338,32 @@ async function loadStatus() {
     loginTimeout.value = timeoutRes.timeoutMinutes
   } catch (e: any) {
     console.error('加载状态失败:', e)
+  }
+
+  try {
+    const auto = await configApi.getAutoStart()
+    autoStartEnabled.value = auto.enabled
+    autoStartSupported.value = auto.supported
+    autoStartPlatform.value = auto.platform
+  } catch (e: any) {
+    console.error('加载自启状态失败:', e)
+    autoStartSupported.value = false
+  }
+}
+
+async function handleToggleAutoStart(value: string | number | boolean) {
+  const next = Boolean(value)
+  // el-switch 已经把 v-model 翻成新值；调用失败要回滚
+  autoStartBusy.value = true
+  try {
+    const result = await configApi.setAutoStart(next)
+    autoStartEnabled.value = result.enabled
+    ElMessage.success(next ? '已设置开机自启' : '已关闭开机自启')
+  } catch (e: any) {
+    autoStartEnabled.value = !next
+    ElMessage.error('设置失败：' + (e.response?.data?.error || e.message))
+  } finally {
+    autoStartBusy.value = false
   }
 }
 

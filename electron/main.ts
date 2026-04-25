@@ -723,7 +723,14 @@ app.whenReady().then(async () => {
   shell.openExternal(`http://localhost:${ADMIN_PORT}`);
 
   // 检查更新（非开发模式）
-  checkForUpdates();
+  // 延迟 30s 再请求 GitHub，避免和首次启动的网络/磁盘 IO 抢资源；
+  // 这一步即使 GitHub 完全不可达也不会拖慢窗口打开。
+  // 注：Windows 安装「卡半程」的根因已在 installer.nsh 移除阻塞 MessageBox。
+  setTimeout(() => {
+    checkForUpdates().catch(err => {
+      console.error('[Electron] checkForUpdates threw:', err);
+    });
+  }, 30_000);
 });
 
 // 应用退出前清理

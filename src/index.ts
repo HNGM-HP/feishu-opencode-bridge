@@ -573,8 +573,11 @@ async function main() {
       // 如果开启了前台模式，等待 opencode serve 的端口就绪后再弹出 attach 窗口（Windows 专用）
       // 做法：
       //   1. 轮询 TCP（最多 15s），等待 http://localhost:<port> 可连接
-      //   2. 用 `cmd /c start "OpenCode" cmd /k opencode attach <url>` 弹出可见的新 CMD 窗口
-      //      外层 cmd 用 windowsHide:true 隐藏，start 会在新窗口里运行 attach TUI
+      //   2. 通过 PowerShell 的 Start-Process 拉起一个新的可见 CMD 控制台跑 opencode attach
+      //      —— 不能再用 `cmd /c start ... + windowsHide:true`：父进程无 console 时
+      //         CREATE_NO_WINDOW 会传染到 start，导致弹窗失败。
+      //         核心约束：后台 opencode serve 由 process-manager 用 Start-Process -WindowStyle Hidden
+      //         启动且不能弹任何 CMD，本块只影响"前台 attach 窗口"，与之相互独立。
       if (opencodeConfig.autoStartForeground && isWindows) {
         void (async () => {
           const { probeTcpPort } = await import('./reliability/process-guard.js');
@@ -599,11 +602,20 @@ async function main() {
           }
 
           try {
-            spawn('cmd', ['/c', `start "OpenCode" cmd /k opencode attach ${attachUrl}`], {
-              detached: true,
-              stdio: 'ignore',
-              windowsHide: true,
-            }).unref();
+            spawn(
+              'powershell.exe',
+              [
+                '-NoProfile',
+                '-NonInteractive',
+                '-Command',
+                `Start-Process cmd -ArgumentList '/k opencode attach ${attachUrl}'`,
+              ],
+              {
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: true,
+              }
+            ).unref();
             console.log(`[Index] OpenCode 前台窗口已拉起（${attachUrl}）`);
           } catch (err) {
             console.warn('[Index] 拉起 OpenCode 前台窗口失败:', err);

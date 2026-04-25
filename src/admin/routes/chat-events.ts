@@ -37,7 +37,13 @@ export async function sseHandler(req: Request, res: Response): Promise<void> {
   const sinceSeq = parseSinceSeq(req);
   const clientId = Math.random().toString(36).substring(7);
 
-  res.setHeader('Content-Type', 'text/event-stream');
+  // Windows 上 Nagle + receive-buffer 聚合会让小 SSE 包延迟数秒后才送达浏览器，
+  // 表现为「OpenCode 已经回包，但页面要刷新才看见」。这里强制 NoDelay 并启用
+  // TCP keepalive，避免长连接中途被中间层静默关闭却没触发 close 事件。
+  req.socket.setNoDelay(true);
+  req.socket.setKeepAlive(true, 15000);
+
+  res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
@@ -70,9 +76,10 @@ export async function sseHandler(req: Request, res: Response): Promise<void> {
         return () => chatEventBus.off('publish', eventHandler);
       })();
 
+  // 5s 心跳：足够穿透 Windows TCP keepalive/中间反代的空闲超时，又不会显著增加流量。
   const keepalive = setInterval(() => {
     res.write('event: keepalive\ndata: {"type":"keepalive"}\n\n');
-  }, 15000);
+  }, 5000);
 
   console.log('[Chat Events] SSE client connected:', clientId, sessionId);
 

@@ -34,6 +34,7 @@ import { registerWorkspaceFilesRoutes } from './routes/workspace-files.js';
 import { registerWorkspaceTerminalRoutes } from './routes/workspace-terminal.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerChatUploadRoutes } from './routes/chat-upload.js';
+import { getAutoStart, setAutoStart } from './autostart.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -706,13 +707,30 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       const { port = 4096, host = 'localhost' } = req.body || {};
       const attachUrl = `http://${host}:${port}`;
 
-      // 使用 cmd /c start 弹出新的可见 CMD 窗口
-      // 外层 cmd.exe 隐藏（windowsHide: true），start 命令会创建新的可见窗口
-      spawn('cmd', ['/c', `start "OpenCode" cmd /k opencode attach ${attachUrl}`], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
-      }).unref();
+      // ⚠️ Windows 弹窗坑：旧实现 spawn('cmd', ['/c', 'start ... cmd /k ...'], { windowsHide: true })
+      // 在打包后（Electron 主进程无控制台）等价于 CREATE_NO_WINDOW，会被传给后续的 cmd 子树，
+      // 导致 start 命令也无法分配可见控制台 → 用户点了按钮但什么都看不到。
+      //
+      // 这里改用 PowerShell 的 Start-Process：
+      //   - 外层 powershell.exe 仍 windowsHide:true，不污染界面，与
+      //     scripts/process-manager.mjs 隐藏 opencode serve 的策略一致；
+      //   - 由 Start-Process 显式 CreateProcess 一个新的可见 cmd 控制台来跑 attach，
+      //     不依赖父进程是否有 console，从而保留"自启动 opencode 后台无窗"能力的同时
+      //     恢复"前台 attach 窗口可见"行为。
+      spawn(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `Start-Process cmd -ArgumentList '/k opencode attach ${attachUrl}'`,
+        ],
+        {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        }
+      ).unref();
 
       console.log(`[Admin] OpenCode attach 窗口已拉起（${attachUrl}）`);
       res.json({ ok: true, message: `OpenCode 前台窗口已打开（${attachUrl}）` });
@@ -1081,6 +1099,30 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
 
     configStore.setLoginTimeout(timeoutMinutes);
     res.json({ ok: true, timeoutMinutes, message: '登录超时设置已保存' });
+  });
+
+  // ── GET /api/admin/autostart（查询开机自启状态）
+  api.get('/admin/autostart', (_req, res) => {
+    try {
+      res.json(getAutoStart());
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || '查询自启状态失败' });
+    }
+  });
+
+  // ── PUT /api/admin/autostart（启用/关闭开机自启）
+  api.put('/admin/autostart', (req, res) => {
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须为布尔值' });
+      return;
+    }
+    try {
+      setAutoStart(enabled);
+      res.json({ ok: true, ...getAutoStart() });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || '设置自启失败' });
+    }
   });
 
   // ──────────────────────────────────────────────

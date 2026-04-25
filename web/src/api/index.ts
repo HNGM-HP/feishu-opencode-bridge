@@ -955,6 +955,16 @@ export const configApi = {
     const res = await http.put<{ ok: boolean; timeoutMinutes: number; message: string }>('/admin/login-timeout', { timeoutMinutes })
     return res.data
   },
+
+  async getAutoStart(): Promise<{ enabled: boolean; supported: boolean; platform: string }> {
+    const res = await http.get<{ enabled: boolean; supported: boolean; platform: string }>('/admin/autostart')
+    return res.data
+  },
+
+  async setAutoStart(enabled: boolean): Promise<{ ok: boolean; enabled: boolean; supported: boolean; platform: string }> {
+    const res = await http.put<{ ok: boolean; enabled: boolean; supported: boolean; platform: string }>('/admin/autostart', { enabled })
+    return res.data
+  },
 }
 
 export const sessionApi = {
