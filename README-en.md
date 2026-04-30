@@ -176,6 +176,99 @@ After installation, start the app and access `http://localhost:4098` to configur
 
 ---
 
+### NPM Install (Linux / Server)
+
+For Linux servers, NAS, cloud VMs and other headless environments:
+
+```bash
+npm install -g opencode-bridge
+```
+
+> Or use `npx opencode-bridge` to run directly without installation.
+
+#### Initialize Configuration
+
+```bash
+opencode-bridge-manage
+```
+
+The deployment wizard will automatically:
+
+- Detect and guide OpenCode installation
+- Generate initial `.env` configuration file
+- Configure systemd auto-start (Linux)
+
+#### Start Service
+
+```bash
+# Start in foreground (for debugging)
+opencode-bridge
+
+# Start in background (recommended)
+opencode-bridge-start
+
+# Stop service
+opencode-bridge-stop
+
+# Management menu (deploy / restart / uninstall, etc.)
+opencode-bridge-manage
+```
+
+#### Custom Config Directory (Optional)
+
+```bash
+opencode-bridge --config-dir /path/to/config
+```
+
+---
+
+### Source Deployment (Developers)
+
+```bash
+git clone https://github.com/HNGM-HP/opencode-bridge.git
+cd opencode-bridge
+```
+
+#### One-Click Deployment
+
+**Linux/macOS:**
+```bash
+chmod +x ./scripts/deploy.sh
+./scripts/deploy.sh
+```
+
+**Windows PowerShell:**
+```powershell
+.\scripts\deploy.ps1
+```
+
+This will automatically: detect Node.js / OpenCode → install dependencies and compile → generate config file.
+
+#### Start Service
+
+```bash
+# Linux/macOS
+./scripts/start.sh
+
+# Windows PowerShell
+.\scripts\start.ps1
+
+# Development Mode
+npm run dev
+```
+
+---
+
+After service starts, access the Web configuration panel:
+
+```
+http://localhost:4098
+```
+
+> On first access, you will be prompted to set an admin password.
+
+---
+
 ## ❓ Common Installation Issues
 
 ### macOS: "App is damaged" Error
@@ -266,63 +359,6 @@ If you encounter other issues:
 1. Check [Troubleshooting Guide](./assets/docs/troubleshooting.md)
 2. Search similar issues in [GitHub Issues](https://github.com/HNGM-HP/opencode-bridge/issues)
 3. Submit a new Issue with error logs
-
----
-
-### Source Deployment (Linux / Developers)
-
-#### 1. Clone Repository
-
-```bash
-git clone https://github.com/HNGM-HP/opencode-bridge.git
-cd opencode-bridge
-```
-
-#### 2. One-Click Deployment
-
-**Linux/macOS:**
-```bash
-chmod +x ./scripts/deploy.sh
-./scripts/deploy.sh
-```
-
-**Windows PowerShell:**
-```powershell
-.\scripts\deploy.ps1
-```
-
-This command will automatically:
-- Detect and guide Node.js installation
-- Detect and guide OpenCode installation
-- Install project dependencies and compile
-- Generate initial configuration file
-
-#### 3. Start Service
-
-**Linux/macOS:**
-```bash
-./scripts/start.sh
-```
-
-**Windows PowerShell:**
-```powershell
-.\scripts\start.ps1
-```
-
-**Development Mode:**
-```bash
-npm run dev
-```
-
-#### 4. Configure Platform
-
-After service starts, access the Web configuration panel:
-
-```
-http://localhost:4098
-```
-
-You will be prompted to set an administrator password on first access.
 
 ---
 
@@ -453,7 +489,7 @@ For complete configuration parameters, refer to the [Configuration Center Docume
 
 If this project helps you, please give it a Star!
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ET06731/opencode-im-bridge&type=github&theme=hand-drawn)](https://star-history.com/#ET06731/opencode-im-bridge&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=HNGM-HP/opencode-bridge&type=github&theme=hand-drawn)](https://star-history.com/#HNGM-HP/opencode-bridge&Date)
 
 ---
 

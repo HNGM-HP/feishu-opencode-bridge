@@ -1,6 +1,6 @@
 # OpenCode Bridge
 
-[![v3.0.0](https://img.shields.io/badge/v3.0.0-3178C6)](https://github.com/HNGM-HP/opencode-bridge/blob/main)
+[![v3.0.9](https://img.shields.io/badge/v3.0.9-760031c)](https://github.com/HNGM-HP/opencode-bridge/blob/main)
 [![Node.js >= 20](https://img.shields.io/badge/Node.js-%3E%3D20-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 [![License: GPLv3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
@@ -9,7 +9,7 @@
 
 ---
 
-> **OpenCode Bridge** 是一款企业级 OpenCode 全功能套壳应用，将 OpenCode 的 AI 编程能力与智能对话能力无缝集成到主流即时通讯平台，实现跨平台、跨设备的一体化智能协作体验。
+> **OpenCode Bridge** 是一款将 OpenCode 的 AI 编程能力与智能对话能力无缝集成到主流即时通讯平台，实现跨平台、跨设备的一体化智能协作体验。
 
 ---
 
@@ -109,6 +109,7 @@
 <details>
 <summary>🖼️ Web 可视化界面截图（点击展开）</summary>
 
+![web0](./assets/demo/web0.png)
 ![web1](./assets/demo/web1.png)
 ![web2](./assets/demo/web2.png)
 ![web3](./assets/demo/web3.png)
@@ -186,6 +187,101 @@ Windows 和 macOS 用户可直接在 [GitHub Releases](https://github.com/HNGM-H
 | macOS | `.dmg` | 拖拽至 Applications，首次启动请右键选择"打开" |
 
 安装完成后启动应用，访问 `http://localhost:4098` 进行平台配置。
+
+---
+
+### NPM 安装部署（Linux / 服务器）
+
+适用于 Linux 服务器、NAS、云主机等无桌面环境：
+
+```bash
+npm install -g opencode-bridge
+```
+
+> 也可使用 `npx opencode-bridge` 免安装直接运行。
+
+#### 初始化配置
+
+```bash
+opencode-bridge-manage
+```
+
+部署向导将自动完成：
+
+- 检测并引导安装 OpenCode
+- 生成初始 `.env` 配置文件
+- 配置 systemd 开机自启（Linux）
+
+#### 启动服务
+
+```bash
+# 前台启动（调试用）
+opencode-bridge
+
+# 后台启动（推荐）
+opencode-bridge-start
+
+# 停止服务
+opencode-bridge-stop
+
+# 管理菜单（部署 / 重启 / 卸载等）
+opencode-bridge-manage
+```
+
+#### 指定配置目录（可选）
+
+```bash
+opencode-bridge --config-dir /path/to/config
+```
+
+---
+
+### 源码部署（开发者）
+
+```bash
+git clone https://github.com/HNGM-HP/opencode-bridge.git
+cd opencode-bridge
+```
+
+#### 一键部署
+
+**Linux / macOS：**
+
+```bash
+chmod +x ./scripts/deploy.sh
+./scripts/deploy.sh
+```
+
+**Windows PowerShell：**
+
+```powershell
+.\scripts\deploy.ps1
+```
+
+部署脚本将自动完成：检测 Node.js / OpenCode → 安装依赖并编译 → 生成配置文件。
+
+#### 启动服务
+
+```bash
+# Linux / macOS
+./scripts/start.sh
+
+# Windows PowerShell
+.\scripts\start.ps1
+
+# 开发模式
+npm run dev
+```
+
+---
+
+服务启动后，访问 Web 配置面板完成各平台接入配置：
+
+```
+http://localhost:4098
+```
+
+> 首次访问时系统将提示设置管理员密码。
 
 ---
 
@@ -279,69 +375,6 @@ Microsoft Defender SmartScreen 筛选器已阻止无法识别的应用启动
 1. 查看 [故障排查文档](./assets/docs/troubleshooting.md)
 2. 在 [GitHub Issues](https://github.com/HNGM-HP/opencode-bridge/issues) 搜索类似问题
 3. 提交新的 Issue 并附上错误日志
-
----
-
-### 源码部署（Linux / 开发者）
-
-#### 第一步：克隆项目
-
-```bash
-git clone https://github.com/HNGM-HP/opencode-bridge.git
-cd opencode-bridge
-```
-
-#### 第二步：一键部署
-
-**Linux / macOS：**
-
-```bash
-chmod +x ./scripts/deploy.sh
-./scripts/deploy.sh
-```
-
-**Windows PowerShell：**
-
-```powershell
-.\scripts\deploy.ps1
-```
-
-部署脚本将自动完成以下操作：
-
-- 检测并引导安装 Node.js
-- 检测并引导安装 OpenCode
-- 安装项目依赖并编译
-- 生成初始配置文件
-
-#### 第三步：启动服务
-
-**Linux / macOS：**
-
-```bash
-./scripts/start.sh
-```
-
-**Windows PowerShell：**
-
-```powershell
-.\scripts\start.ps1
-```
-
-**开发模式：**
-
-```bash
-npm run dev
-```
-
-#### 第四步：配置平台
-
-服务启动后，访问 Web 配置面板完成各平台接入配置：
-
-```
-http://localhost:4098
-```
-
-> 首次访问时系统将提示设置管理员密码。
 
 ---
 
@@ -472,7 +505,7 @@ http://localhost:4098
 
 如果这个项目对你有帮助，欢迎点个 **Star** ⭐ 支持！
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ET06731/opencode-im-bridge&type=github&theme=hand-drawn)](https://star-history.com/#ET06731/opencode-im-bridge&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=HNGM-HP/opencode-bridge&type=github&theme=hand-drawn)](https://star-history.com/#HNGM-HP/opencode-bridge&Date)
 
 ---
 
