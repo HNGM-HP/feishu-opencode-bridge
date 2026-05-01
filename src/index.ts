@@ -665,8 +665,14 @@ async function main() {
   }
 
   // 2. 先启动 Admin Server（确保管理面板可用，即使 OpenCode 未运行）
-  if (!process.env.BRIDGE_SPAWNED_BY_ADMIN) {
-    const adminPort = parseInt(process.env.ADMIN_PORT ?? '4098', 10);
+  // 若 TUI 配置 WEB_ADMIN_DISABLED=true 或运行时 env BRIDGE_DISABLE_ADMIN=1，
+  // 则跳过 admin server 启动 —— 平台适配器仍会正常工作（仅 web 不可用）。
+  const { configStore: _cs } = await import('./store/config-store.js');
+  const _adminDisabledByCfg = (_cs.get().WEB_ADMIN_DISABLED ?? '') === 'true';
+  const _adminDisabledByEnv = process.env.BRIDGE_DISABLE_ADMIN === '1';
+  const adminDisabled = _adminDisabledByCfg || _adminDisabledByEnv;
+  if (!process.env.BRIDGE_SPAWNED_BY_ADMIN && !adminDisabled) {
+    const adminPort = parseInt(process.env.ADMIN_PORT ?? _cs.get().ADMIN_PORT ?? '4098', 10);
     const adminServer = createAdminServer({
       port: adminPort,
       cronManager: undefined, // cronManager 在后面初始化
@@ -675,6 +681,8 @@ async function main() {
     });
     adminServer.start();
     console.log(`[Admin] 管理面板已启动: http://localhost:${adminPort}`);
+  } else if (adminDisabled) {
+    console.log('[Admin] Web 管理面板已通过配置禁用（接入平台仍正常运行）');
   }
 
   // 3. 连接 OpenCode（失败不退出，允许用户在管理面板中诊断）
@@ -2037,7 +2045,11 @@ export async function stopBridge(): Promise<void> {
   }
 }
 
-if (process.env.VITEST !== 'true' && process.env.BRIDGE_EMBEDDED_MODE !== '1') {
+if (
+  process.env.VITEST !== 'true' &&
+  process.env.BRIDGE_EMBEDDED_MODE !== '1' &&
+  process.env.BRIDGE_CLI_MODE !== '1'
+) {
   main().catch(error => {
     console.error('Fatal Error:', error);
     process.exit(1);

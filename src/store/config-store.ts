@@ -195,6 +195,11 @@ export interface BridgeSettings {
   // 模型（扩展字段，.env.example 未列出但 config.ts 引用）
   DEFAULT_PROVIDER?: string;
   DEFAULT_MODEL?: string;
+
+  // CLI / TUI 向导相关（仅 CLI 使用，web 端不展示）
+  CLI_LANG?: string;            // 'zh' | 'en'
+  WEB_ADMIN_DISABLED?: string;  // 'true' 时无头模式启动不开 web 管理面板
+  ADMIN_PORT?: string;          // web 管理面板端口（默认 4098）
 }
 
 // ──────────────────────────────────────────────
