@@ -97,12 +97,13 @@ Unlike simple message forwarding, OpenCode Bridge provides a complete OpenCode e
 - **Cron Tasks**: Runtime dynamic management of scheduled tasks
 - **Log Auditing**: Complete operation logs and error tracking
 
-### 🎛️ Web Management Panel
+### 🎛️ Three Configuration Entries (Web / TUI / Config File)
 
-- **Visual Configuration**: Real-time modification of all configuration parameters in browser
-- **Platform Management**: View connection status of each platform
-- **Cron Management**: Create, enable/disable, delete scheduled tasks
-- **Service Control**: View service status and remote restart
+- **🌐 Web Management Panel**: Real-time visual configuration in the browser — platforms, cron, service control all in one place
+- **🧙 First-run Onboarding**: First Web visit pops a guided wizard (language → pick a starter platform → driver.js highlight tour over the left sidebar). Skippable and won't reappear; use the top-right "Help" menu anytime to reopen README and platform docs
+- **💻 TUI Terminal Wizard**: `opencode-bridge` / `opencode-bridge init` — full configuration in a pure CLI environment (Chinese + English, sharing the same SQLite config file with the web UI)
+- **🔌 Decoupled web toggle**: turn off the web admin from the TUI while keeping platform adapters running (suited for hardened intranet deployments)
+- **🆓 No login, no password**: the admin panel ships without account/password auth — secure access at the network layer (firewall / reverse proxy) instead
 
 ---
 
@@ -159,66 +160,64 @@ Unlike simple message forwarding, OpenCode Bridge provides a complete OpenCode e
 
 ## 🚀 Quick Start
 
-### Desktop App (Recommended)
+### Desktop App (Windows / macOS, Recommended)
 
-Windows and macOS users can download installers directly from [GitHub Releases](https://github.com/HNGM-HP/opencode-bridge/releases):
+Download the installer for your platform from [GitHub Releases](https://github.com/HNGM-HP/opencode-bridge/releases):
 
-| Platform | Download |
-|----------|----------|
-| Windows | Download `.exe` installer |
-| macOS | Download `.dmg` installer |
+| Platform | Installer | Notes |
+|----------|-----------|-------|
+| Windows | `.exe` | Double-click to install. If "unrecognized app" appears, click "Run anyway" |
+| macOS | `.dmg` | Drag to Applications. First launch: right-click → Open |
 
-**Installation Notes:**
-- **Windows**: Double-click `.exe` installer and follow the wizard. If you see "unrecognized app" warning, select "Run anyway"
-- **macOS**: Double-click `.dmg` to open, drag the app to Applications. First launch requires right-click and select "Open"
+The app launches your browser at `http://localhost:4098` automatically. **On first visit a guided onboarding wizard pops up**:
 
-After installation, start the app and access `http://localhost:4098` to configure platforms.
+1. Choose UI language (中文 / English)
+2. Pick a starter platform to connect (skippable)
+3. driver.js highlight tour over the left navigation (skippable, won't reappear)
+
+After onboarding, the top-right "Help" menu lets you reopen the README and platform-specific docs anytime.
 
 ---
 
-### NPM Install (Linux / Server)
-
-For Linux servers, NAS, cloud VMs and other headless environments:
+### NPM Install (Linux / Server / Headless)
 
 ```bash
 npm install -g opencode-bridge
 ```
 
-> Or use `npx opencode-bridge` to run directly without installation.
+> Or `npx opencode-bridge` to run without installation.
 
-#### Initialize Configuration
+#### Subcommands
 
-```bash
-opencode-bridge-manage
-```
+| Command | What it does |
+|---------|--------------|
+| `opencode-bridge` | **First run** → enters the TUI wizard; **already configured** → starts the bridge service |
+| `opencode-bridge init` | Force re-enter the TUI wizard (re-configure / edit any setting) |
+| `opencode-bridge start` | Skip the wizard and start the service immediately |
+| `opencode-bridge --config-dir /path` | Override config directory (default `./data`) |
+| `opencode-bridge --version` / `--help` | Show version / usage |
 
-The deployment wizard will automatically:
+#### TUI wizard flow
 
-- Detect and guide OpenCode installation
-- Generate initial `.env` configuration file
-- Configure systemd auto-start (Linux)
+1. **Language selection** (中文 / English, persisted)
+2. **How would you like to configure?**
+   - Configure here in the terminal (recommended for headless)
+   - Launch the web admin UI and configure in a browser
+   - Skip — start the service now
+   - Show help / documentation
+3. **Polling main menu**: pick the primary platform → enable/disable platforms & set credentials → OpenCode connection → group behaviour & allow-list → reliability / cron / heartbeat → output display → web admin on/off → help → save & start service / exit
 
-#### Start Service
+> The TUI and the Web panel share the same SQLite store (`data/config.db`); changes on either side are visible immediately on the other.
 
-```bash
-# Start in foreground (for debugging)
-opencode-bridge
+#### Run platforms without exposing the web UI
 
-# Start in background (recommended)
-opencode-bridge-start
-
-# Stop service
-opencode-bridge-stop
-
-# Management menu (deploy / restart / uninstall, etc.)
-opencode-bridge-manage
-```
-
-#### Custom Config Directory (Optional)
+Toggle "Web admin UI" off in the TUI, or use the env var:
 
 ```bash
-opencode-bridge --config-dir /path/to/config
+BRIDGE_DISABLE_ADMIN=1 opencode-bridge start
 ```
+
+Suited for hardened intranets — platform adapters keep relaying messages while the web port stays closed.
 
 ---
 
@@ -265,7 +264,7 @@ After service starts, access the Web configuration panel:
 http://localhost:4098
 ```
 
-> On first access, you will be prompted to set an admin password.
+> The admin panel ships without account/password authentication. Make sure port 4098 is exposed only on a trusted network, or front it with a reverse proxy / firewall.
 
 ---
 
@@ -347,7 +346,9 @@ Microsoft Defender SmartScreen blocked an unrecognized app
    lsof -i :4098
    ```
 
-4. **View log files**:
+4. **Check whether the web admin was disabled**: the TUI can disable the web panel. To re-enable, run `opencode-bridge init` and toggle "Web admin UI" back on, or make sure neither `WEB_ADMIN_DISABLED=true` nor `BRIDGE_DISABLE_ADMIN=1` is set.
+
+5. **View log files**:
    - **Windows**: `%APPDATA%/opencode-bridge/logs/`
    - **macOS**: `~/Library/Application Support/opencode-bridge/logs/`
 
@@ -467,9 +468,10 @@ The following commands are available on all platforms:
 
 | Method | Description |
 |--------|-------------|
-| Web Panel (Recommended) | Access `http://localhost:4098` for visual configuration |
-| SQLite Database | Configuration stored in `data/config.db` |
-| .env File | Only stores Admin panel startup parameters |
+| Web Panel | Access `http://localhost:4098` for visual configuration (recommended in GUI environments) |
+| TUI Terminal Wizard | Run `opencode-bridge init` for an offline polling menu (recommended in headless environments) |
+| SQLite Database | Configuration stored in `data/config.db`, shared by both the Web and the TUI |
+| `.env` File | Only used as a first-time migration source; runtime config lives in SQLite |
 
 ### Core Configuration Options
 
@@ -479,7 +481,9 @@ The following commands are available on all platforms:
 | `DISCORD_ENABLED` | `false` | Enable Discord adapter |
 | `OPENCODE_HOST` | `localhost` | OpenCode host address |
 | `OPENCODE_PORT` | `4096` | OpenCode port |
-| `ADMIN_PORT` | `4098` | Web configuration panel port |
+| `ADMIN_PORT` | `4098` | Web admin panel port |
+| `WEB_ADMIN_DISABLED` | `false` | When `true`, skip starting the web admin (platform adapters keep running) |
+| `CLI_LANG` | `zh` / `en` | TUI wizard language preference (asked on first run, then persisted) |
 
 For complete configuration parameters, refer to the [Configuration Center Documentation](assets/docs/environment-en.md).
 

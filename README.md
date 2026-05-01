@@ -97,12 +97,13 @@
 - **Cron 任务**：支持运行时动态管理定时任务
 - **日志审计**：完整的操作日志与错误追踪记录
 
-### 🎛️ Web 管理面板
+### 🎛️ 三套配置入口（Web / TUI / 配置文件）
 
-- **可视化配置**：通过浏览器实时修改所有配置参数
-- **平台管理**：查看各平台的连接状态
-- **Cron 管理**：创建、启用/禁用及删除定时任务
-- **服务控制**：查看服务运行状态，支持远程重启
+- **🌐 Web 管理面板**：浏览器可视化配置所有参数，平台 / Cron / 服务控制一站式
+- **🧙 首次安装引导**：首次访问 Web 自动弹出向导（语言 → 选一个初始平台 → 基于 driver.js 的左侧菜单高亮气泡讲解），可跳过且不再打扰；右上角"帮助"菜单随时回看 README 与平台文档链接
+- **💻 TUI 终端向导**：`opencode-bridge` / `opencode-bridge init` 在纯 CLI 环境下即可完成全部配置（中英双语，与 Web 共用同一份 SQLite 配置文件）
+- **🔌 平台开关解耦**：可在 TUI 内单独关闭 Web 面板而保留接入平台运行（适合内网安全场景）
+- **🆓 无登录无密码**：管理后台不再设置账号 / 密码，部署侧请通过防火墙 / 反向代理控制访问
 
 ---
 
@@ -177,22 +178,26 @@
 
 ## 🚀 快速开始
 
-### 桌面应用（推荐）
+### 桌面应用（Windows / macOS，推荐）
 
-Windows 和 macOS 用户可直接在 [GitHub Releases](https://github.com/HNGM-HP/opencode-bridge/releases) 下载对应安装包：
+在 [GitHub Releases](https://github.com/HNGM-HP/opencode-bridge/releases) 下载对应安装包：
 
 | 平台 | 安装包 | 说明 |
 |------|--------|------|
 | Windows | `.exe` | 双击安装，若提示"未识别应用"请选择"仍要运行" |
 | macOS | `.dmg` | 拖拽至 Applications，首次启动请右键选择"打开" |
 
-安装完成后启动应用，访问 `http://localhost:4098` 进行平台配置。
+启动应用后会自动弹出浏览器到 `http://localhost:4098`，**首次访问会自动进入安装引导**：
+
+1. 选择界面语言（中文 / English）
+2. 选择一个先要接入的平台（也可跳过）
+3. driver.js 风格的左侧菜单高亮逐项讲解（可跳过，后续不再显示）
+
+引导完成后随时可在右上角的"帮助"菜单回看 README 与平台配置文档链接。
 
 ---
 
-### NPM 安装部署（Linux / 服务器）
-
-适用于 Linux 服务器、NAS、云主机等无桌面环境：
+### NPM 安装部署（Linux / 服务器 / 无桌面环境）
 
 ```bash
 npm install -g opencode-bridge
@@ -200,39 +205,37 @@ npm install -g opencode-bridge
 
 > 也可使用 `npx opencode-bridge` 免安装直接运行。
 
-#### 初始化配置
+#### 子命令一览
+
+| 命令 | 说明 |
+|------|------|
+| `opencode-bridge` | **首次运行**进入 TUI 交互式向导；**已配置**则直接启动桥接服务 |
+| `opencode-bridge init` | 强制重新进入 TUI 向导（重新配置 / 修改任何项） |
+| `opencode-bridge start` | 跳过向导，直接启动服务 |
+| `opencode-bridge --config-dir /path` | 指定配置目录（默认 `./data`） |
+| `opencode-bridge --version` / `--help` | 版本号 / 用法帮助 |
+
+#### TUI 向导流程
+
+1. **选择语言**（中文 / English，偏好持久化）
+2. **选择配置方式**：
+   - 在终端中通过 TUI 完成配置（推荐用于无桌面环境）
+   - 启动 Web 管理面板，在浏览器中配置
+   - 跳过配置，直接启动服务
+   - 查看帮助 / 文档
+3. **进入轮询主菜单**：选择初始接入平台 → 平台增删/凭据 → OpenCode 连接 → 群聊行为 / 白名单 → 可靠性 / Cron / 心跳 → 输出显示 → Web 管理面板启停 → 帮助 → 启动服务 / 退出
+
+> TUI 与 Web 面板共用同一份 SQLite 配置（`data/config.db`），任意一侧修改对另一侧立即生效。
+
+#### 仅启用平台不启用 Web 面板
+
+在 TUI 的"Web 管理面板"菜单关闭，或临时通过环境变量：
 
 ```bash
-opencode-bridge-manage
+BRIDGE_DISABLE_ADMIN=1 opencode-bridge start
 ```
 
-部署向导将自动完成：
-
-- 检测并引导安装 OpenCode
-- 生成初始 `.env` 配置文件
-- 配置 systemd 开机自启（Linux）
-
-#### 启动服务
-
-```bash
-# 前台启动（调试用）
-opencode-bridge
-
-# 后台启动（推荐）
-opencode-bridge-start
-
-# 停止服务
-opencode-bridge-stop
-
-# 管理菜单（部署 / 重启 / 卸载等）
-opencode-bridge-manage
-```
-
-#### 指定配置目录（可选）
-
-```bash
-opencode-bridge --config-dir /path/to/config
-```
+适用于内网安全场景：平台适配器照常收发消息，但不暴露 Web 端口。
 
 ---
 
@@ -281,7 +284,7 @@ npm run dev
 http://localhost:4098
 ```
 
-> 首次访问时系统将提示设置管理员密码。
+> 管理后台不再设置账号 / 密码，请确保 4098 端口仅在受信网络暴露，或通过反向代理 + 防火墙控制访问。
 
 ---
 
@@ -363,7 +366,9 @@ Microsoft Defender SmartScreen 筛选器已阻止无法识别的应用启动
    lsof -i :4098
    ```
 
-4. **查看日志文件**：
+4. **检查 Web 是否被关闭**：在 TUI 中可手动关闭 Web 面板。如需重新打开，运行 `opencode-bridge init` 进入"Web 管理面板"菜单启用，或确认未设置 `WEB_ADMIN_DISABLED=true` / `BRIDGE_DISABLE_ADMIN=1`。
+
+5. **查看日志文件**：
    - **Windows**：`%APPDATA%/opencode-bridge/logs/`
    - **macOS**：`~/Library/Application Support/opencode-bridge/logs/`
 
@@ -483,9 +488,10 @@ Microsoft Defender SmartScreen 筛选器已阻止无法识别的应用启动
 
 | 方式 | 说明 |
 |------|------|
-| Web 面板（推荐） | 访问 `http://localhost:4098` 进行可视化配置 |
-| SQLite 数据库 | 配置存储于 `data/config.db` |
-| `.env` 文件 | 仅存储 Admin 面板启动参数 |
+| Web 面板 | 访问 `http://localhost:4098` 进行可视化配置（推荐有 GUI 环境） |
+| TUI 终端向导 | `opencode-bridge init` 进入轮询菜单，离线可用（推荐无 GUI 环境） |
+| SQLite 数据库 | 配置存储于 `data/config.db`，Web / TUI 共用同一份 |
+| `.env` 文件 | 仅作首次迁移来源；运行时配置以 SQLite 为准 |
 
 ### 核心配置项
 
@@ -496,6 +502,8 @@ Microsoft Defender SmartScreen 筛选器已阻止无法识别的应用启动
 | `OPENCODE_HOST` | `localhost` | OpenCode 服务地址 |
 | `OPENCODE_PORT` | `4096` | OpenCode 服务端口 |
 | `ADMIN_PORT` | `4098` | Web 配置面板监听端口 |
+| `WEB_ADMIN_DISABLED` | `false` | 设为 `true` 启动时不开 Web 面板（仅运行平台适配器） |
+| `CLI_LANG` | `zh` / `en` | TUI 向导语言偏好（首次运行自动询问后保存） |
 
 完整配置参数请参考 [配置中心文档](./assets/docs/environment.md)。
 
