@@ -29,6 +29,9 @@ importers:
       axios:
         specifier: ^1.7.0
         version: 1.13.6
+      driver.js:
+        specifier: ^1.4.0
+        version: 1.4.0
       element-plus:
         specifier: ^2.9.0
         version: 2.13.5(typescript@5.9.3)(vue@3.5.30(typescript@5.9.3))
@@ -645,6 +648,9 @@ packages:
 
   devlop@1.1.0:
     resolution: {integrity: sha512-RWmIqhcFf1lRYBvNmr7qTNuyCt/7/ns2jbpp1+PalgE/rDQcBT0fioSMUpJ93irlUhC5hrg4cYqe6U+0ImW0rA==}
+
+  driver.js@1.4.0:
+    resolution: {integrity: sha512-Gm64jm6PmcU+si21sQhBrTAM1JvUrR0QhNmjkprNLxohOBzul9+pNHXgQaT9lW84gwg9GMLB3NZGuGolsz5uew==}
 
   dunder-proto@1.0.1:
     resolution: {integrity: sha512-KIN/nDJBQRcXw0MLVhZE9iQHmG68qAVIBg9CqmUYjmQIhgij9U5MFvrqkUL5FbtyyzZuOeOt0zdeRe4UY7ct+A==}
@@ -1619,6 +1625,8 @@ snapshots:
   devlop@1.1.0:
     dependencies:
       dequal: 2.0.3
+
+  driver.js@1.4.0: {}
 
   dunder-proto@1.0.1:
     dependencies:
