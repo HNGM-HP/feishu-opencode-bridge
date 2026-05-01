@@ -1,37 +1,7 @@
 import axios from 'axios'
 
+// 管理后台不再启用账号/密码鉴权，所有请求直接放行
 const http = axios.create({ baseURL: '/api' })
-
-// 从 localStorage 读取 token 注入 Authorization 头
-http.interceptors.request.use(config => {
-  const token = localStorage.getItem('admin_token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
-})
-
-// 处理密码重置后的 410 响应：清除缓存并跳转到设置密码页面
-// 排除登录、认证、密码状态检查等接口，这些接口允许无密码访问
-const EXCLUDED_PATHS = [
-  '/auth/login',
-  '/auth/verify',
-  '/admin/password-status',
-  '/admin/password',
-]
-
-http.interceptors.response.use(
-  response => response,
-  error => {
-    if (
-      error.response?.status === 410 &&
-      error.response?.data?.reason === 'password_reset' &&
-      !EXCLUDED_PATHS.some(path => error.config?.url?.includes(path))
-    ) {
-      localStorage.removeItem('admin_token')
-      window.location.href = '/change-password?mode=setup'
-    }
-    return Promise.reject(error)
-  }
-)
 
 export interface BridgeSettings {
   FEISHU_ENABLED?: string
@@ -876,16 +846,6 @@ export const configApi = {
     return res.data
   },
 
-  async getPasswordStatus(): Promise<{ needsPasswordChange: boolean; hasPassword: boolean }> {
-    const res = await http.get('/admin/password-status')
-    return res.data
-  },
-
-  async changePassword(oldPassword: string, newPassword: string): Promise<{ ok: boolean; message: string }> {
-    const res = await http.put('/admin/password', { oldPassword, newPassword })
-    return res.data
-  },
-
   async getBridgeStatus(): Promise<BridgeStatus> {
     const res = await http.get<BridgeStatus>('/admin/bridge')
     return res.data
@@ -943,16 +903,6 @@ export const configApi = {
 
   async shutdown(): Promise<{ ok: boolean; message: string }> {
     const res = await http.post<{ ok: boolean; message: string }>('/admin/shutdown')
-    return res.data
-  },
-
-  async getLoginTimeout(): Promise<{ timeoutMinutes: number }> {
-    const res = await http.get<{ timeoutMinutes: number }>('/admin/login-timeout')
-    return res.data
-  },
-
-  async setLoginTimeout(timeoutMinutes: number): Promise<{ ok: boolean; timeoutMinutes: number; message: string }> {
-    const res = await http.put<{ ok: boolean; timeoutMinutes: number; message: string }>('/admin/login-timeout', { timeoutMinutes })
     return res.data
   },
 

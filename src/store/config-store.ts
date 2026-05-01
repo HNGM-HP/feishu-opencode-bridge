@@ -337,69 +337,11 @@ class ConfigStore {
       .run();
   }
 
-  // ──────────────────────────────────────────────
-  // 密码管理
-  // ──────────────────────────────────────────────
-
-  /** 获取管理员密码（数据库存储） */
-  getAdminPassword(): string | null {
-    const row = this.db
-      .prepare<[], { value: string }>(`SELECT value FROM admin_meta WHERE key = 'admin_password'`)
-      .get();
-    const value = row?.value;
-    return value && value !== '' ? value : null;
-  }
-
-  /** 设置管理员密码 */
-  setAdminPassword(password: string): void {
-    this.db
-      .prepare(
-        `INSERT INTO admin_meta (key, value) VALUES ('admin_password', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      )
-      .run(password);
-  }
-
-  /** 获取密码修改时间 */
-  getPasswordChangedAt(): string | null {
-    const row = this.db
-      .prepare<[], { value: string }>(`SELECT value FROM admin_meta WHERE key = 'password_changed_at'`)
-      .get();
-    return row?.value || null;
-  }
-
-  /** 设置密码修改时间 */
-  setPasswordChangedAt(timestamp: string): void {
-    this.db
-      .prepare(
-        `INSERT INTO admin_meta (key, value) VALUES ('password_changed_at', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      )
-      .run(timestamp);
-  }
-
-  /** 判断是否需要修改密码（首次登录） */
-  needsPasswordChange(): boolean {
-    return this.getPasswordChangedAt() === null;
-  }
-
-  /** 获取登录超时时间（分钟），0 表示不限制 */
-  getLoginTimeout(): number {
-    const row = this.db
-      .prepare<[], { value: string }>(`SELECT value FROM admin_meta WHERE key = 'login_timeout_minutes'`)
-      .get();
-    return row ? parseInt(row.value, 10) : 0;
-  }
-
-  /** 设置登录超时时间（分钟） */
-  setLoginTimeout(minutes: number): void {
-    this.db
-      .prepare(
-        `INSERT INTO admin_meta (key, value) VALUES ('login_timeout_minutes', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      )
-      .run(String(minutes));
-  }
+  // 注：管理后台已彻底移除账号 / 密码鉴权及登录超时机制，
+  // 原 getAdminPassword / setAdminPassword / needsPasswordChange /
+  // getPasswordChangedAt / setPasswordChangedAt /
+  // getLoginTimeout / setLoginTimeout 等接口已删除。
+  // admin_meta 表中遗留的相关字段不再读写，老数据会被自然忽略。
 
   getDbPath(): string {
     return this.dbPath;

@@ -91,10 +91,8 @@ export function useChatStream(
     intentionalClose = false
     currentSessionId = nextSessionId
 
-    const token = localStorage.getItem('admin_token') || ''
     const params = new URLSearchParams({
       session_id: nextSessionId,
-      token,
     })
     if (sinceSeq != null) {
       params.set('since', String(sinceSeq))

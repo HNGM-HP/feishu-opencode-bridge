@@ -18,7 +18,6 @@
  */
 
 import express from 'express';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -125,7 +124,6 @@ async function probeTcpPort(host: string, port: number, timeoutMs = 2000): Promi
 
 export interface AdminServerOptions {
   port: number;
-  password: string; // 仅用于首次初始化
   cronManager?: RuntimeCronManager;
   startedAt?: Date;
   version?: string;
@@ -138,70 +136,16 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
   const startedAt = options.startedAt ?? new Date();
   const version = options.version ?? 'unknown';
 
-  // ── 密码初始化：首次启动从 env 读取，后续使用数据库密码
-  const envPassword = options.password;
-  let dbPassword = configStore.getAdminPassword();
-  if (!dbPassword && envPassword) {
-    configStore.setAdminPassword(envPassword);
-    dbPassword = envPassword;
-    console.log('[Admin] 首次启动，已从环境变量初始化管理员密码');
-  }
-
   app.use(express.json());
-
-  // ── POST /api/admin/reset-password（无需认证，用于密码恢复）
-  app.post('/api/admin/reset-password', (_req, res) => {
-    configStore.setAdminPassword('');
-    configStore.setPasswordChangedAt('');
-    res.json({ ok: true, message: '密码已重置，请重新设置密码' });
-  });
 
   // ── 静态前端文件（dist/public）
   const publicDir = path.resolve(__dirname, '../../dist/public');
   app.use(express.static(publicDir));
 
-  // ── 基础 Token 鉴权中间件（Bearer password）
-  // 每次请求从数据库读取密码，确保修改密码后立即生效
-  function authMiddleware(
-    req: express.Request,
-    res: express.Response,
-    next: express.NextFunction
-  ): void {
-    const currentPassword = configStore.getAdminPassword() || '';
-    const authHeader = req.headers.authorization ?? '';
-    const hasToken = authHeader.startsWith('Bearer ');
-    const token = hasToken ? authHeader.slice(7) : '';
-
-    // 密码为空 → 允许通过（首次设置场景）
-    // 前端会通过 /api/admin/password-status 检测密码状态并跳转到设置页面
-    if (!currentPassword) {
-      next();
-      return;
-    }
-
-    // 使用时序安全的密码比较，避免长度泄露
-    // 将两个 buffer padding 到相同长度后再比较
-    const tokenBuf = Buffer.from(token, 'utf-8');
-    const passBuf = Buffer.from(currentPassword, 'utf-8');
-    const maxLen = Math.max(tokenBuf.length, passBuf.length, 64);
-
-    const paddedToken = Buffer.alloc(maxLen);
-    const paddedPass = Buffer.alloc(maxLen);
-    tokenBuf.copy(paddedToken);
-    passBuf.copy(paddedPass);
-
-    if (!crypto.timingSafeEqual(paddedToken, paddedPass)) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    next();
-  }
-
+  // ── 管理后台不再启用账号 / 密码鉴权，所有请求直接放行
   const api = express.Router();
-  api.use(authMiddleware);
 
   // ── Register Chat Routes (Phase A: Native Chat UI)
-  // These routes use their own auth middleware (chatAuthMiddleware), not admin password
   registerChatRoutes(app);
   registerChatUploadRoutes(app);
 
@@ -361,49 +305,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       startedAt: startedAt.toISOString(),
       dbPath: configStore.getDbPath(),
       cronJobCount: cronManager?.listJobs().length ?? 0,
-      needsPasswordChange: configStore.needsPasswordChange(),
     });
-  });
-
-  // ── GET /api/admin/password-status
-  api.get('/admin/password-status', (_req, res) => {
-    res.json({
-      needsPasswordChange: configStore.needsPasswordChange(),
-      hasPassword: !!configStore.getAdminPassword(),
-    });
-  });
-
-  // ── PUT /api/admin/password
-  api.put('/admin/password', (req, res) => {
-    const { oldPassword, newPassword } = req.body;
-
-    if (!newPassword || newPassword.length < 8) {
-      res.status(400).json({ error: '新密码长度至少 8 位' });
-      return;
-    }
-
-    const currentPassword = configStore.getAdminPassword();
-    const isFirstSetup = !currentPassword;
-
-    // 首次设置密码：无需验证旧密码
-    if (isFirstSetup) {
-      configStore.setAdminPassword(newPassword);
-      configStore.setPasswordChangedAt(new Date().toISOString());
-      res.json({ ok: true, message: '密码设置成功', isFirstSetup: true });
-      return;
-    }
-
-    // 修改密码：需要验证旧密码
-    if (oldPassword !== currentPassword) {
-      res.status(401).json({ error: '原密码错误' });
-      return;
-    }
-
-    // 更新密码
-    configStore.setAdminPassword(newPassword);
-    configStore.setPasswordChangedAt(new Date().toISOString());
-
-    res.json({ ok: true, message: '密码修改成功，请使用新密码重新登录' });
   });
 
   // ── POST /api/admin/restart
@@ -1080,25 +982,6 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
         process.exit(1);
       }
     }, 500);
-  });
-
-  // ── GET /api/admin/login-timeout（获取登录超时配置）
-  api.get('/admin/login-timeout', (_req, res) => {
-    const timeoutMinutes = configStore.getLoginTimeout();
-    res.json({ timeoutMinutes });
-  });
-
-  // ── PUT /api/admin/login-timeout（设置登录超时配置）
-  api.put('/admin/login-timeout', (req, res) => {
-    const { timeoutMinutes } = req.body;
-
-    if (typeof timeoutMinutes !== 'number' || timeoutMinutes < 0) {
-      res.status(400).json({ error: '超时时间必须为非负整数' });
-      return;
-    }
-
-    configStore.setLoginTimeout(timeoutMinutes);
-    res.json({ ok: true, timeoutMinutes, message: '登录超时设置已保存' });
   });
 
   // ── GET /api/admin/autostart（查询开机自启状态）

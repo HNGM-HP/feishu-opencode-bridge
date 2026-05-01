@@ -167,38 +167,6 @@
 
       <el-divider />
 
-      <!-- 登录设置 -->
-      <div class="section">
-        <h3>登录设置</h3>
-        <div class="status-row">
-          <span>登录超时：</span>
-          <el-input-number
-            v-model="loginTimeout"
-            :min="0"
-            :max="1440"
-            :step="10"
-            :disabled="savingTimeout"
-            style="width: 150px"
-          />
-          <span class="timeout-unit">分钟（0 表示不限制）</span>
-        </div>
-        <div class="button-row">
-          <el-button type="primary" :loading="savingTimeout" @click="handleSaveTimeout">
-            保存设置
-          </el-button>
-        </div>
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          class="timeout-tip"
-        >
-          设置登录后无操作自动退出时间，0 表示永不超时。
-        </el-alert>
-      </div>
-
-      <el-divider />
-
       <!-- 版本升级 -->
       <div class="section">
         <h3>版本升级</h3>
@@ -291,7 +259,6 @@ const bridgeStatus = ref<BridgeStatus | null>(null)
 const opencodeStatus = ref<OpenCodeStatus | null>(null)
 const opencodeUpdateCheck = ref<OpenCodeUpdateCheck | null>(null)
 const bridgeUpdateCheck = ref<{ hasUpdate: boolean; currentVersion: string; latestVersion: string | null } | null>(null)
-const loginTimeout = ref(0)
 
 const restarting = ref(false)
 const shuttingDown = ref(false)
@@ -316,7 +283,6 @@ const attachingOpenCode = ref(false)
 const upgrading = ref(false)
 const checkingOpenCodeUpdate = ref(false)
 const checkingBridgeUpdate = ref(false)
-const savingTimeout = ref(false)
 const selectedLocale = ref<'zh-CN' | 'en-US'>(appLocale.value)
 
 // 判断是否有 OpenCode 更新
@@ -334,8 +300,6 @@ async function loadStatus() {
     status.value = store.status
     bridgeStatus.value = await configApi.getBridgeStatus()
     opencodeStatus.value = await configApi.getOpenCodeStatus()
-    const timeoutRes = await configApi.getLoginTimeout()
-    loginTimeout.value = timeoutRes.timeoutMinutes
   } catch (e: any) {
     console.error('加载状态失败:', e)
   }
@@ -450,18 +414,6 @@ async function handleShutdownAll() {
     ElMessage.error('终止失败: ' + (e.response?.data?.error || e.message))
   } finally {
     shuttingDown.value = false
-  }
-}
-
-async function handleSaveTimeout() {
-  savingTimeout.value = true
-  try {
-    await configApi.setLoginTimeout(loginTimeout.value)
-    ElMessage.success('登录超时设置已保存')
-  } catch (e: any) {
-    ElMessage.error('保存失败: ' + (e.response?.data?.error || e.message))
-  } finally {
-    savingTimeout.value = false
   }
 }
 

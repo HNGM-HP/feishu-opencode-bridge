@@ -34,61 +34,7 @@ export function createAdminRoutes(options: AdminRoutesOptions): express.Router {
       startedAt: startedAt.toISOString(),
       dbPath: configStore.getDbPath(),
       cronJobCount,
-      needsPasswordChange: configStore.needsPasswordChange(),
     });
-  });
-
-  // ── GET /api/admin/password-status
-  router.get('/password-status', (_req, res) => {
-    res.json({
-      needsPasswordChange: configStore.needsPasswordChange(),
-      hasPassword: !!configStore.getAdminPassword(),
-    });
-  });
-
-  // ── POST /api/admin/reset-password（重置密码，用于密码恢复）
-  router.post('/reset-password', (_req, res) => {
-    // 清除密码和密码修改时间
-    configStore.setAdminPassword('');
-    configStore.setPasswordChangedAt('');
-
-    res.json({
-      ok: true,
-      message: '密码已重置，请重新设置密码',
-    });
-  });
-
-  // ── PUT /api/admin/password（修改密码或首次设置密码）
-  router.put('/password', (req, res) => {
-    const { oldPassword, newPassword } = req.body;
-
-    if (!newPassword || newPassword.length < 8) {
-      res.status(400).json({ error: '新密码长度至少 8 位' });
-      return;
-    }
-
-    const currentPassword = configStore.getAdminPassword();
-    const isFirstSetup = !currentPassword || currentPassword === '';
-
-    // 首次设置密码：无需验证旧密码
-    if (isFirstSetup) {
-      configStore.setAdminPassword(newPassword);
-      configStore.setPasswordChangedAt(new Date().toISOString());
-      res.json({ ok: true, message: '密码设置成功', isFirstSetup: true });
-      return;
-    }
-
-    // 修改密码：需要验证旧密码
-    if (oldPassword !== currentPassword) {
-      res.status(401).json({ error: '原密码错误' });
-      return;
-    }
-
-    // 更新密码
-    configStore.setAdminPassword(newPassword);
-    configStore.setPasswordChangedAt(new Date().toISOString());
-
-    res.json({ ok: true, message: '密码修改成功，请使用新密码重新登录' });
   });
 
   // ── POST /api/admin/restart
@@ -255,25 +201,6 @@ export function createAdminRoutes(options: AdminRoutesOptions): express.Router {
     }
 
     res.json({ ok: true, results });
-  });
-
-  // ── GET /api/admin/login-timeout（获取登录超时配置）
-  router.get('/login-timeout', (_req, res) => {
-    const timeoutMinutes = configStore.getLoginTimeout();
-    res.json({ timeoutMinutes });
-  });
-
-  // ── PUT /api/admin/login-timeout（设置登录超时配置）
-  router.put('/login-timeout', (req, res) => {
-    const { timeoutMinutes } = req.body;
-
-    if (typeof timeoutMinutes !== 'number' || timeoutMinutes < 0) {
-      res.status(400).json({ error: '超时时间必须为非负整数' });
-      return;
-    }
-
-    configStore.setLoginTimeout(timeoutMinutes);
-    res.json({ ok: true, timeoutMinutes, message: '登录超时设置已保存' });
   });
 
   // ── GET /api/admin/check-update

@@ -58,26 +58,6 @@
           <el-text size="small" type="info">v{{ status.version }}</el-text>
           <el-text size="small" type="info">运行 {{ formatUptime(status.uptime) }}</el-text>
         </div>
-        <div class="footer-row">
-          <el-button
-            size="small"
-            :icon="Key"
-            @click="handleChangePassword"
-            class="footer-btn"
-          >
-            修改密码
-          </el-button>
-          <el-button
-            type="danger"
-            size="small"
-            :icon="SwitchButton"
-            @click="handleLogout"
-            class="footer-btn"
-            plain
-          >
-            退出
-          </el-button>
-        </div>
       </div>
     </el-aside>
 
@@ -121,10 +101,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { DataAnalysis, Loading, Document, SwitchButton, Key, Link, ChatLineSquare, ChatDotRound, Connection, Warning, Setting, Timer, Monitor } from '@element-plus/icons-vue'
+import { DataAnalysis, Loading, Document, Link, ChatLineSquare, ChatDotRound, Connection, Warning, Setting, Timer, Monitor } from '@element-plus/icons-vue'
 import { useConfigStore } from './stores/config'
 import { configApi } from './api/index'
 import type { ServiceStatus } from './api/index'
@@ -136,86 +116,25 @@ const store = useConfigStore()
 const status = ref<ServiceStatus | null>(null)
 const restartDialogVisible = ref(false)
 const restarting = ref(false)
-const loginError = ref(false)
 const errorLogCount = ref(0)
-
-// 登录超时相关
-const loginTimeoutMinutes = ref(0)
-const lastActivityTime = ref(Date.now())
-let timeoutCheckInterval: ReturnType<typeof setInterval> | null = null
 
 const isChatRoute = computed(() => route.path === '/chat' || route.path.startsWith('/chat/'))
 const activeMenu = computed(() => isChatRoute.value ? '/chat' : route.path)
 
 async function loadAppData() {
-  if (route.path === '/login' || !localStorage.getItem('admin_token')) return
   try {
     await store.initializeAll()
     status.value = store.status
     // 加载日志统计
     const logStats = await configApi.getLogStats()
     errorLogCount.value = logStats.error
-    // 加载登录超时配置
-    const timeoutRes = await configApi.getLoginTimeout()
-    loginTimeoutMinutes.value = timeoutRes.timeoutMinutes
-    startTimeoutChecker()
-  } catch (e: any) {
-    if (e.response?.status === 401) {
-      loginError.value = true
-      router.push('/login')
-    }
+  } catch {
+    // 忽略加载错误，不再做鉴权跳转
   }
-}
-
-// 启动超时检查器
-function startTimeoutChecker() {
-  stopTimeoutChecker()
-  if (loginTimeoutMinutes.value <= 0) return // 0 表示不限制
-
-  // 每分钟检查一次
-  timeoutCheckInterval = setInterval(() => {
-    const timeoutMs = loginTimeoutMinutes.value * 60 * 1000
-    const elapsed = Date.now() - lastActivityTime.value
-    if (elapsed >= timeoutMs) {
-      ElMessage.warning('登录已超时，请重新登录')
-      handleLogout()
-    }
-  }, 60000) // 每分钟检查一次
-}
-
-// 停止超时检查器
-function stopTimeoutChecker() {
-  if (timeoutCheckInterval) {
-    clearInterval(timeoutCheckInterval)
-    timeoutCheckInterval = null
-  }
-}
-
-// 更新活动时间
-function updateActivity() {
-  lastActivityTime.value = Date.now()
 }
 
 onMounted(() => {
   loadAppData()
-  // 监听用户活动
-  document.addEventListener('click', updateActivity)
-  document.addEventListener('keydown', updateActivity)
-  document.addEventListener('mousemove', updateActivity)
-})
-
-onUnmounted(() => {
-  stopTimeoutChecker()
-  document.removeEventListener('click', updateActivity)
-  document.removeEventListener('keydown', updateActivity)
-  document.removeEventListener('mousemove', updateActivity)
-})
-
-// 监听路由变化，登录成功后跳转到 Dashboard 时加载数据
-watch(() => route.path, (newPath, oldPath) => {
-  if (oldPath === '/login' && newPath !== '/login' && localStorage.getItem('admin_token')) {
-    loadAppData()
-  }
 })
 
 watch(
@@ -256,16 +175,6 @@ async function confirmRestart() {
   } finally {
     restarting.value = false
   }
-}
-
-function handleLogout() {
-  localStorage.removeItem('admin_token')
-  stopTimeoutChecker()
-  router.push('/login')
-}
-
-function handleChangePassword() {
-  router.push('/change-password')
 }
 
 function goToSettings() {

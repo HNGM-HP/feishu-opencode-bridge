@@ -20,7 +20,6 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createAdminServer } from './admin-server.js';
 import { bridgeManager, type BridgeStatus } from './bridge-manager.js';
-import { configStore } from '../store/config-store.js';
 import { initLogger } from '../utils/logger.js';
 import { logStore } from '../store/log-store.js';
 import { VERSION } from '../utils/version.js';
@@ -78,10 +77,9 @@ async function main() {
   console.log('║     OpenCode Bridge Admin v' + VERSION + '          ║');
   console.log('╚════════════════════════════════════════════════╝');
 
-  // 启动 Admin Server
+  // 启动 Admin Server（已移除账号 / 密码鉴权）
   const adminServer = createAdminServer({
     port: ADMIN_PORT,
-    password: process.env.ADMIN_PASSWORD ?? '',
     startedAt: new Date(),
     version: VERSION,
     bridgeManager,

@@ -667,10 +667,8 @@ async function main() {
   // 2. 先启动 Admin Server（确保管理面板可用，即使 OpenCode 未运行）
   if (!process.env.BRIDGE_SPAWNED_BY_ADMIN) {
     const adminPort = parseInt(process.env.ADMIN_PORT ?? '4098', 10);
-    const adminPassword = process.env.ADMIN_PASSWORD ?? '';
     const adminServer = createAdminServer({
       port: adminPort,
-      password: adminPassword,
       cronManager: undefined, // cronManager 在后面初始化
       startedAt: new Date(),
       version: VERSION,
