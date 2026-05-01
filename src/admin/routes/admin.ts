@@ -203,6 +203,18 @@ export function createAdminRoutes(options: AdminRoutesOptions): express.Router {
     res.json({ ok: true, results });
   });
 
+  // ── GET /api/admin/onboarding-status
+  router.get('/onboarding-status', (_req, res) => {
+    res.json({ completed: configStore.isOnboardingCompleted() });
+  });
+
+  // ── PUT /api/admin/onboarding-status
+  router.put('/onboarding-status', (req, res) => {
+    const completed = Boolean(req.body?.completed);
+    configStore.setOnboardingCompleted(completed);
+    res.json({ ok: true, completed });
+  });
+
   // ── GET /api/admin/check-update
   router.get('/check-update', async (_req, res) => {
     try {

@@ -343,6 +343,28 @@ class ConfigStore {
   // getLoginTimeout / setLoginTimeout 等接口已删除。
   // admin_meta 表中遗留的相关字段不再读写，老数据会被自然忽略。
 
+  // ──────────────────────────────────────────────
+  // 首次安装引导（onboarding）状态
+  // ──────────────────────────────────────────────
+
+  /** 是否已完成或跳过首次安装引导 */
+  isOnboardingCompleted(): boolean {
+    const row = this.db
+      .prepare<[], { value: string }>(`SELECT value FROM admin_meta WHERE key = 'onboarding_completed'`)
+      .get();
+    return row?.value === '1';
+  }
+
+  /** 设置引导完成标记（true=完成或跳过；false=重置以便重新展示） */
+  setOnboardingCompleted(completed: boolean): void {
+    this.db
+      .prepare(
+        `INSERT INTO admin_meta (key, value) VALUES ('onboarding_completed', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
+      )
+      .run(completed ? '1' : '0');
+  }
+
   getDbPath(): string {
     return this.dbPath;
   }

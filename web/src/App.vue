@@ -8,45 +8,45 @@
         <span>Bridge</span>
       </div>
       <el-menu :router="true" :default-active="activeMenu" class="nav-menu">
-        <el-menu-item index="/dashboard">
+        <el-menu-item index="/dashboard" data-tour="nav-dashboard">
           <el-icon><DataAnalysis /></el-icon>
           <span>系统状态</span>
         </el-menu-item>
-        <el-menu-item index="/chat">
+        <el-menu-item index="/chat" data-tour="nav-chat">
           <el-icon><ChatLineSquare /></el-icon>
           <span>AI 工作区</span>
         </el-menu-item>
-        <el-menu-item index="/platforms">
+        <el-menu-item index="/platforms" data-tour="nav-platforms">
           <el-icon><ChatDotRound /></el-icon>
           <span>平台接入</span>
         </el-menu-item>
-        <el-menu-item index="/sessions">
+        <el-menu-item index="/sessions" data-tour="nav-sessions">
           <el-icon><Link /></el-icon>
           <span>Session 管理</span>
         </el-menu-item>
-        <el-menu-item index="/opencode">
+        <el-menu-item index="/opencode" data-tour="nav-opencode">
           <el-icon><Connection /></el-icon>
           <span>OpenCode 对接</span>
         </el-menu-item>
-        <el-menu-item index="/reliability">
+        <el-menu-item index="/reliability" data-tour="nav-reliability">
           <el-icon><Warning /></el-icon>
           <span>高可用配置</span>
         </el-menu-item>
-        <el-menu-item index="/routing">
+        <el-menu-item index="/routing" data-tour="nav-routing">
           <el-icon><Setting /></el-icon>
           <span>核心行为</span>
         </el-menu-item>
-        <el-menu-item index="/cron">
+        <el-menu-item index="/cron" data-tour="nav-cron">
           <el-icon><Timer /></el-icon>
           <span>Cron 任务管理</span>
           <el-badge v-if="store.cronJobCount > 0" :value="store.runningJobCount" type="success" class="cron-badge" />
         </el-menu-item>
-        <el-menu-item index="/logs">
+        <el-menu-item index="/logs" data-tour="nav-logs">
           <el-icon><Document /></el-icon>
           <span>日志管理</span>
           <el-badge v-if="errorLogCount > 0" :value="errorLogCount" type="danger" class="cron-badge" />
         </el-menu-item>
-        <el-menu-item index="/settings">
+        <el-menu-item index="/settings" data-tour="nav-settings">
           <el-icon><Setting /></el-icon>
           <span>系统设置</span>
         </el-menu-item>
@@ -58,8 +58,13 @@
           <el-text size="small" type="info">v{{ status.version }}</el-text>
           <el-text size="small" type="info">运行 {{ formatUptime(status.uptime) }}</el-text>
         </div>
+        <div class="footer-row">
+          <HelpMenu />
+        </div>
       </div>
     </el-aside>
+
+    <OnboardingWizard />
 
     <!-- 内容区 -->
     <el-main :class="['main-content', { 'main-content--workspace': isChatRoute }]">
@@ -109,6 +114,9 @@ import { useConfigStore } from './stores/config'
 import { configApi } from './api/index'
 import type { ServiceStatus } from './api/index'
 import { appLocale, elementPlusLocale, isEnglishLocale, translateUiText } from './i18n/runtime'
+import OnboardingWizard from './components/onboarding/OnboardingWizard.vue'
+import HelpMenu from './components/onboarding/HelpMenu.vue'
+import { useOnboarding } from './composables/useOnboarding'
 
 const route = useRoute()
 const router = useRouter()
@@ -120,6 +128,8 @@ const errorLogCount = ref(0)
 
 const isChatRoute = computed(() => route.path === '/chat' || route.path.startsWith('/chat/'))
 const activeMenu = computed(() => isChatRoute.value ? '/chat' : route.path)
+
+const onboarding = useOnboarding()
 
 async function loadAppData() {
   try {
@@ -135,6 +145,8 @@ async function loadAppData() {
 
 onMounted(() => {
   loadAppData()
+  // 首次安装引导：未完成时弹出向导，已完成则不打扰
+  void onboarding.bootstrap()
 })
 
 watch(

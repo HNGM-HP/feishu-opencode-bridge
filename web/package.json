@@ -16,6 +16,7 @@
     "@shikijs/themes": "^4.0.2",
     "ansi-to-html": "^0.7.2",
     "axios": "^1.7.0",
+    "driver.js": "^1.4.0",
     "element-plus": "^2.9.0",
     "markdown-it": "^14.1.1",
     "pinia": "^2.3.0",

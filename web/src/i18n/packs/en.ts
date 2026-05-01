@@ -1,4 +1,72 @@
 export const EN_TRANSLATION_MAP: Record<string, string> = {
+  // ── 首次安装引导
+  '欢迎使用 OpenCode Bridge。先选择一下你习惯的界面语言，随时可以在系统设置里切换。':
+    'Welcome to OpenCode Bridge. Pick your preferred interface language — you can change it anytime from System Settings.',
+  '挑一个最常用的平台先接入，后续可以在「平台接入」里继续配置其它平台。也可以现在跳过这一步。':
+    'Pick the platform you use most to wire up first. You can configure the others later from "Platform Integrations", or skip this step now.',
+  '最后用一分钟熟悉一下左侧导航：每一项都是后续配置 / 排错的入口。点击「开始导览」会逐一高亮讲解。':
+    'Take a minute to get familiar with the left navigation — each entry is a gate for further configuration / troubleshooting. Click "Start Tour" to walk through them one by one.',
+  '系统状态：服务概览、版本、运行时长': 'System Status: service overview, version and uptime',
+  'AI 工作区：直接发送 Prompt 调试 OpenCode': 'AI Workspace: send prompts directly to debug OpenCode',
+  '平台接入：八个 IM 平台的开关与凭据': 'Platform Integrations: switches & credentials for the 8 IM platforms',
+  'Session / OpenCode 对接 / 高可用 / 核心行为：精细化能力': 'Session / OpenCode / Reliability / Core Behavior: fine-grained controls',
+  'Cron / 日志 / 系统设置：运行期监控与系统级开关': 'Cron / Logs / System Settings: runtime monitoring and system-level switches',
+  '想跳过导览也没关系，之后可以在左下角的「帮助」里再次访问对应文档。':
+    'Skipping the tour is fine — relevant docs are always reachable from the "Help" entry at the bottom-left.',
+  '步骤 1 / 3 · 选择界面语言': 'Step 1 / 3 · Choose interface language',
+  '步骤 2 / 3 · 选择首个接入平台': 'Step 2 / 3 · Pick your first platform',
+  '步骤 3 / 3 · 熟悉左侧导航':   'Step 3 / 3 · Get familiar with left navigation',
+  '简体中文界面': 'Simplified Chinese UI',
+  'English interface': 'English interface',
+  '跳过引导': 'Skip onboarding',
+  '上一步': 'Back',
+  '下一步': 'Next',
+  '开始导览': 'Start Tour',
+  '下一项': 'Next',
+  '上一项': 'Previous',
+  '完成': 'Done',
+  // ── 平台说明（用于引导第二步的卡片）
+  '飞书': 'Feishu',
+  '企业微信': 'WeCom',
+  '个人微信': 'WeChat',
+  '钉钉': 'DingTalk',
+  '企业 IM，支持机器人回调与流式回复': 'Enterprise IM, bot callbacks and streaming replies',
+  '社区聊天平台，原生 Bot Token 接入': 'Community chat with native Bot Token integration',
+  '企业群机器人 Webhook 双向消息': 'Group-bot Webhook two-way messaging',
+  '基于网关的扫码登录与消息桥接': 'Gateway-based QR login and message bridging',
+  '企业 IM，机器人 / Stream 模式接入': 'Enterprise IM, bot / Stream mode integration',
+  '官方 Bot API，全球可用': 'Official Bot API, globally available',
+  '官方 API + OneBot 双协议': 'Official API + OneBot dual protocol',
+  'Personal / Business 双模式': 'Personal / Business dual mode',
+  // ── 引导导览（driver.js popover）描述
+  '服务版本、运行时长、依赖健康度都在这里。': 'Service version, uptime and dependency health all live here.',
+  '不绑定任何 IM 也能直接调用 OpenCode 跑 Prompt 与工具调用。': 'Trigger OpenCode prompts and tool calls directly without binding any IM.',
+  '飞书 / Discord / 微信 / 钉钉 / Telegram / QQ / WhatsApp 共八个平台开关与凭据。':
+    'Toggles and credentials for all 8 platforms: Feishu / Discord / WeChat / DingTalk / Telegram / QQ / WhatsApp.',
+  '查看 / 解绑各平台的会话绑定与轮询状态。':
+    'Inspect / unbind per-platform session bindings and polling state.',
+  'OpenCode 服务安装、启动方式与连接参数。':
+    'OpenCode service installation, startup mode and connection parameters.',
+  '心跳 / 救援策略 / 失败阈值 / 冷却窗口等可靠性参数。':
+    'Heartbeat / repair policy / failure threshold / cooldown — all reliability knobs.',
+  '群聊触发条件、思考链与工具链显隐、默认工作目录等核心开关。':
+    'Group-chat triggers, thinking / tool chain visibility, default work directory — core behaviour switches.',
+  '定时触发的提醒 / 巡检 / 自动化任务，可在这里新建启停。':
+    'Scheduled reminders / health checks / automation jobs — create and toggle them here.',
+  '运行日志检索与清理，错误条数会在菜单上以红色徽标提示。':
+    'Search and clear runtime logs; error counts appear as red badges on the menu.',
+  '界面语言、版本升级、Bridge 重启等系统级操作。':
+    'Interface language, version upgrade, Bridge restart — system-level operations.',
+
+  // ── 帮助菜单
+  '帮助': 'Help',
+  'README（项目说明）': 'README (Project Overview)',
+  'README · English': 'README · English',
+  '平台接入指南': 'Platform Integration Guides',
+  'OpenCode 服务部署': 'OpenCode Service Deployment',
+  '高可用与心跳策略': 'Reliability & Heartbeat',
+  '提交 Issue / 反馈': 'Open Issue / Feedback',
+
   '登录': 'Login',
   '修改密码': 'Change Password',
   '系统状态': 'System Status',

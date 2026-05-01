@@ -915,6 +915,16 @@ export const configApi = {
     const res = await http.put<{ ok: boolean; enabled: boolean; supported: boolean; platform: string }>('/admin/autostart', { enabled })
     return res.data
   },
+
+  async getOnboardingStatus(): Promise<{ completed: boolean }> {
+    const res = await http.get<{ completed: boolean }>('/admin/onboarding-status')
+    return res.data
+  },
+
+  async setOnboardingStatus(completed: boolean): Promise<{ ok: boolean; completed: boolean }> {
+    const res = await http.put<{ ok: boolean; completed: boolean }>('/admin/onboarding-status', { completed })
+    return res.data
+  },
 }
 
 export const sessionApi = {
