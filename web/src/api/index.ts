@@ -359,10 +359,11 @@ export interface ChatCommandInfo {
   description?: string
   agent?: string
   model?: string
-  source?: 'command' | 'mcp' | 'skill' | 'bridge-doc'
+  source?: 'command' | 'mcp' | 'skill' | 'bridge-doc' | 'agent'
   template: string
   subtask?: boolean
   hints: string[]
+  group?: string
 }
 
 export interface ChatModelOption {

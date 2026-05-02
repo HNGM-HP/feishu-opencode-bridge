@@ -5,6 +5,10 @@ import { opencodeClient } from '../../opencode/client.js';
 import { configStore } from '../../store/config-store.js';
 import { chatAuthMiddleware } from './chat-auth.js';
 import { KNOWN_EFFORT_LEVELS, normalizeEffortLevel } from '../../commands/effort.js';
+import { skillRegistry } from '../../services/resources/skills/registry.js';
+import { getMCPRegistry } from '../../services/resources/mcp/manager.js';
+import { listSlashCommands as listMCPSlashCommands, toCommandItems as toMCPCommandItems } from '../../services/resources/mcp/slash.js';
+import { listSlashCommands as listAgentSlashCommands, toCommandItems as toAgentCommandItems } from '../../services/resources/agents/slash.js';
 
 function errorMsg(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error';
@@ -169,9 +173,10 @@ function extractProviderModels(provider: unknown): Array<{
 type CommandItem = {
   name: string;
   description?: string;
-  source?: 'command' | 'mcp' | 'skill' | 'bridge-doc';
+  source?: 'command' | 'mcp' | 'skill' | 'agent' | 'bridge-doc';
   template: string;
   hints: string[];
+  group?: 'command' | 'mcp' | 'skill' | 'agent' | 'other';
 };
 
 function toTemplate(commandCell: string): string {
@@ -249,6 +254,61 @@ function mergeCommands(primary: CommandItem[], fallback: CommandItem[]): Command
   for (const item of fallback) upsert(item);
 
   return Array.from(merged.values()).sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
+}
+
+/**
+ * 根据source确定命令分组
+ */
+function getCommandGroup(source?: string): 'command' | 'mcp' | 'skill' | 'agent' | 'other' {
+  switch (source) {
+    case 'command':
+    case 'bridge-doc':
+      return 'command';
+    case 'mcp':
+      return 'mcp';
+    case 'skill':
+      return 'skill';
+    case 'agent':
+      return 'agent';
+    default:
+      return 'other';
+  }
+}
+
+/**
+ * 将命令按分组分类
+ */
+function groupCommands(commands: CommandItem[]): Map<string, CommandItem[]> {
+  const groups = new Map<string, CommandItem[]>();
+  const groupOrder: Record<string, number> = {
+    command: 1,
+    mcp: 2,
+    skill: 3,
+    agent: 4,
+    other: 5,
+  };
+
+  for (const cmd of commands) {
+    const group = getCommandGroup(cmd.source);
+    if (!groups.has(group)) {
+      groups.set(group, []);
+    }
+    groups.get(group)!.push({ ...cmd, group });
+  }
+
+  // 按分组顺序排序
+  const sortedGroups = new Map<string, CommandItem[]>();
+  const sortedKeys = Array.from(groups.keys()).sort(
+    (a, b) => (groupOrder[a] || 99) - (groupOrder[b] || 99)
+  );
+
+  for (const key of sortedKeys) {
+    const items = groups.get(key)!;
+    // 每组内按名称排序
+    sortedGroups.set(key, items.sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')));
+  }
+
+  return sortedGroups;
 }
 
 export function registerChatMetaRoutes(app: Application): void {
@@ -372,12 +432,46 @@ export function registerChatMetaRoutes(app: Application): void {
         .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
       const fallbackCommands = await readBridgeCommandFallback().catch(() => []);
 
-      res.json({ commands: mergeCommands(commands, fallbackCommands) });
+      // 1. 获取技能命令
+      const skillCommands = skillRegistry.listSlashCommands();
+      const skillCommandItems: CommandItem[] = skillCommands.map(skill => ({
+        name: skill.command,
+        description: skill.description,
+        source: 'skill' as const,
+        template: skill.command,
+        hints: [],
+      }));
+
+      // 2. 获取 MCP 命令（从 slash.ts 获取）
+      const mcpSlashCommands = await listMCPSlashCommands();
+      const mcpCommandItems: CommandItem[] = toMCPCommandItems(mcpSlashCommands);
+
+      // 3. 获取 Agent 命令（从 slash.ts 获取）
+      const agentSlashCommands = listAgentSlashCommands();
+      const agentCommandItems: CommandItem[] = toAgentCommandItems(agentSlashCommands);
+
+      // 4. 合并所有命令
+      const allCommands = mergeCommands(
+        commands,
+        [...fallbackCommands, ...skillCommandItems, ...mcpCommandItems, ...agentCommandItems]
+      );
+
+      // 5. 按组返回（添加group字段）
+      const groupedCommands = allCommands.map(cmd => ({
+        ...cmd,
+        group: getCommandGroup(cmd.source),
+      }));
+
+      res.json({ commands: groupedCommands });
     } catch (error) {
       console.error('[Chat API] 获取命令列表失败:', error);
       try {
         const fallbackCommands = await readBridgeCommandFallback();
-        res.json({ commands: fallbackCommands, fallback: true, error: errorMsg(error) });
+        const groupedFallback = fallbackCommands.map(cmd => ({
+          ...cmd,
+          group: getCommandGroup(cmd.source),
+        }));
+        res.json({ commands: groupedFallback, fallback: true, error: errorMsg(error) });
       } catch (fallbackError) {
         res.status(502).json({ error: errorMsg(fallbackError) });
       }

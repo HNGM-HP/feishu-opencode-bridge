@@ -74,11 +74,13 @@
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "axios": "^1.13.6",
     "better-sqlite3": "^12.8.0",
+    "chokidar": "^5.0.0",
     "dingtalk-stream": "^2.1.4",
     "discord.js": "^14.25.1",
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
     "grammy": "^1.41.1",
+    "gray-matter": "^4.0.3",
     "multer": "^2.1.1",
     "node-cron": "^4.2.1",
     "qrcode": "^1.5.4",
@@ -94,15 +96,17 @@
     "@types/node": "^22.10.0",
     "@types/pino": "^7.0.5",
     "@types/qrcode": "^1.5.6",
+    "@types/supertest": "^6.0.3",
     "@types/ws": "^8.18.1",
     "electron": "^34.5.8",
     "electron-builder": "^25.1.8",
     "electron-rebuild": "^3.2.9",
     "pino": "^10.3.1",
     "puppeteer": "^24.40.0",
+    "supertest": "^7.2.2",
     "tsx": "^4.19.0",
     "typescript": "^5.9.3",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.5"
   },
   "engines": {
     "node": ">=20.0.0"

@@ -46,6 +46,10 @@
           <span>日志管理</span>
           <el-badge v-if="errorLogCount > 0" :value="errorLogCount" type="danger" class="cron-badge" />
         </el-menu-item>
+        <el-menu-item index="/resources" data-tour="nav-resources">
+          <el-icon><Box /></el-icon>
+          <span>资源管理</span>
+        </el-menu-item>
         <el-menu-item index="/settings" data-tour="nav-settings">
           <el-icon><Setting /></el-icon>
           <span>系统设置</span>
@@ -109,7 +113,7 @@
 import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { DataAnalysis, Loading, Document, Link, ChatLineSquare, ChatDotRound, Connection, Warning, Setting, Timer, Monitor } from '@element-plus/icons-vue'
+import { DataAnalysis, Loading, Document, Link, ChatLineSquare, ChatDotRound, Connection, Warning, Setting, Timer, Monitor, Box } from '@element-plus/icons-vue'
 import { useConfigStore } from './stores/config'
 import { configApi } from './api/index'
 import type { ServiceStatus } from './api/index'

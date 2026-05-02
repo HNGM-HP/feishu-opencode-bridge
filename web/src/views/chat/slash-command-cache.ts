@@ -22,3 +22,11 @@ export async function getSlashCommands(): Promise<ChatCommandInfo[]> {
   const commands = await commandCachePromise
   return Array.isArray(commands) ? commands : []
 }
+
+/**
+ * Invalidate the commands cache.
+ * Call this after creating, updating, or deleting skills that provide slash commands.
+ */
+export function invalidateCommandsCache(): void {
+  commandCache = null
+}

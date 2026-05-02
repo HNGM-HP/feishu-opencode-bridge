@@ -39,8 +39,6 @@ export interface ParsedCommand {
   text?: string;           // prompt类型的文本内容
   modelName?: string;      // model类型的模型名称
   agentName?: string;      // agent类型的名称
-  roleAction?: 'create';
-  roleSpec?: string;
   sessionAction?: 'new' | 'switch';
   sessionId?: string;      // session switch的目标ID
   sessionDirectory?: string; // session new 时指定的目录
@@ -189,16 +187,6 @@ export function parseCommand(text: string): ParsedCommand {
     return bangCommand;
   }
 
-  // 中文自然语言创建角色（不带 /）
-  const textRoleCreateMatch = trimmed.match(/^创建角色\s+([\s\S]+)$/);
-  if (textRoleCreateMatch) {
-    return {
-      type: 'role',
-      roleAction: 'create',
-      roleSpec: textRoleCreateMatch[1].trim(),
-    };
-  }
-
   // 中文自然语言发送文件（不带 /）
   const sendFileMatch = trimmed.match(/^发送文件\s+([\s\S]+)$/);
   if (sendFileMatch) {
@@ -284,16 +272,9 @@ export function parseCommand(text: string): ParsedCommand {
         return { type: 'agents' }; // 列出所有可用角色
 
       case 'role':
-      case '角色': {
-        if (args.length > 0 && (args[0].toLowerCase() === 'create' || args[0] === '创建')) {
-          return {
-            type: 'role',
-            roleAction: 'create',
-            roleSpec: args.slice(1).join(' ').trim(),
-          };
-        }
+      case '角色':
+        // 角色创建功能已迁移至资源管理系统，此处仅保留role类型用于其他扩展
         return { type: 'role' };
-      }
 
       case 'session':
         if (args.length === 0) {
@@ -491,7 +472,6 @@ export function getHelpText(): string {
 • \`/effort <档位>\` 设置会话默认强度 (e.g. \`/effort high\`)
 • \`/effort default\` 清除会话强度，恢复模型默认
 • \`#xhigh 帮我深度分析这段代码\` 仅当前消息临时覆盖强度
-• \`创建角色 名称=旅行助手; 描述=帮我做行程规划; 类型=主; 工具=webfetch\` 新建自定义角色
 • \`/panel\` 推送交互式控制面板卡片 ✨
 • \`/undo\` 撤回上一轮对话 (如果你发错或 AI 答错)
 • \`/stop\` 停止当前正在生成的回答
@@ -523,6 +503,15 @@ export function getHelpText(): string {
 • \`/send <绝对路径>\` 直接发送文件到群聊 (e.g. \`/send /path/to/file.png\` 或 \`/send C:\\Users\\你\\Desktop\\图片.jpg\`)
 • \`发送文件 <路径或描述>\` 中文自然语言触发（同上）
 • \`/restart opencode\` 重启本地 OpenCode 进程（仅 loopback）
+
+🎯 **资源管理**
+• 智能体/技能/MCP服务器管理功能已迁移至新的资源管理系统
+• Web UI: 访问 http://host:port/resources 进行可视化管理
+• CLI: 使用 \`opencode-bridge bridge resource\` 命令管理
+  • \`bridge resource agent --help\` 管理智能体
+  • \`bridge resource skill --help\` 管理技能
+  • \`bridge resource mcp --help\` 管理MCP服务器
+  • \`bridge resource model --help\` 管理模型提供商
 
 ${cronHelpBlock}`;
 }

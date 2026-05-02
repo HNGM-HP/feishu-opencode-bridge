@@ -582,6 +582,7 @@ function formatCommandSource(source?: string): string {
   if (source === 'mcp') return 'MCP'
   if (source === 'skill') return '技能'
   if (source === 'bridge-doc') return '内置'
+  if (source === 'agent') return '代理'
   return 'OpenCode'
 }
 

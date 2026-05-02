@@ -31,9 +31,12 @@ import { createSessionRoutes } from './routes/session.js';
 import { registerWorkspaceGitRoutes } from './routes/workspace-git.js';
 import { registerWorkspaceFilesRoutes } from './routes/workspace-files.js';
 import { registerWorkspaceTerminalRoutes } from './routes/workspace-terminal.js';
+import { registerResourcesTerminalRoutes, setupResourcesTerminalWebSocket } from './routes/resources-terminal.js';
 import { registerChatRoutes } from './routes/chat.js';
 import { registerChatUploadRoutes } from './routes/chat-upload.js';
+import { createResourcesRoutes } from './routes/resources.js';
 import { getAutoStart, setAutoStart } from './autostart.js';
+import { initResourceSystem } from '../services/resources/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -130,7 +133,7 @@ export interface AdminServerOptions {
   bridgeManager?: BridgeManager;
 }
 
-export function createAdminServer(options: AdminServerOptions): { start: () => void; stop: () => void } {
+export function createAdminServer(options: AdminServerOptions): { start: () => Promise<void>; stop: () => void } {
   const app = express();
   const { port, cronManager, bridgeManager } = options;
   const startedAt = options.startedAt ?? new Date();
@@ -949,6 +952,12 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
   registerWorkspaceFilesRoutes(api);
   registerWorkspaceTerminalRoutes(api);
 
+  // ── Resources 管理路由（Skills, MCP, Agents, Providers）
+  api.use('/resources', createResourcesRoutes());
+
+  // ── Resources 终端路由（WebSocket终端用于OAuth登录）
+  registerResourcesTerminalRoutes(api);
+
   // ── POST /api/admin/shutdown（终止服务）
   api.post('/admin/shutdown', async (_req, res) => {
     res.json({ ok: true, message: '服务正在终止...' });
@@ -1304,7 +1313,10 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
   let server: ReturnType<typeof app.listen> | null = null;
 
   return {
-    start() {
+    async start() {
+      // ── 初始化资源系统（skills/mcp/agents/providers 目录与事件总线）
+      await initResourceSystem();
+
       server = app.listen(port, '0.0.0.0', () => {
     const interfaces = os.networkInterfaces();
     let lanIp = 'localhost';
@@ -1319,6 +1331,9 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
     }
     console.log(`[Admin] 可视化配置面板已启动: http://${lanIp}:${port}`);
   });
+
+      // ── 设置 WebSocket 终端服务器（用于 OAuth 登录）
+      setupResourcesTerminalWebSocket(server);
     },
     stop() {
       server?.close();
