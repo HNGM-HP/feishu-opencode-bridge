@@ -12,7 +12,7 @@ const routes = [
   { path: '/routing', component: () => import('../views/CoreRouting.vue'), meta: { title: '核心行为' } },
   { path: '/cron', component: () => import('../views/CronJobs.vue'), meta: { title: 'Cron 任务管理' } },
   { path: '/logs', component: () => import('../views/Logs.vue'), meta: { title: '日志管理' } },
-  { path: '/resources', redirect: '/resources/skills' },
+  { path: '/resources', component: () => import('../views/resources/index.vue'), meta: { title: '资源管理' } },
   { path: '/settings', component: () => import('../views/Settings.vue'), meta: { title: '系统设置' } },
   // 兼容旧书签：登录 / 修改密码相关路由已移除，统一重定向至 dashboard
   { path: '/login', redirect: '/dashboard' },
