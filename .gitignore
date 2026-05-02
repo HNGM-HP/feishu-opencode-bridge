@@ -15,6 +15,12 @@ release/
 data/config.db
 data/
 
+# 临时文档和计划文件
+plan*.md
+PLAN*.md
+PLAN.md
+.codex
+
 # 前端依赖
 web/node_modules/
 
