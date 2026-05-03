@@ -538,9 +538,10 @@ async function main() {
         // Electron 打包后：scripts 在 resources/app/scripts/
         processManagerPath = pathMod.join((process as any).resourcesPath, 'app', 'scripts', 'process-manager.mjs');
       } else {
-        // 开发环境或非 Electron 环境：从 dist/ 向上找项目根的 scripts/
+        // 开发环境：src/index.ts 位于项目根下的 src/；构建后：dist/index.js 位于项目根下的 dist/
+        // 这两种布局到项目根的相对层级一致，因此统一回退一层即可定位 scripts/。
         const selfDir = pathMod.dirname(fileURLToPath(import.meta.url));
-        processManagerPath = pathMod.resolve(selfDir, '../../scripts/process-manager.mjs');
+        processManagerPath = pathMod.resolve(selfDir, '../scripts/process-manager.mjs');
       }
 
       // 检查 process-manager 是否存在

@@ -80,12 +80,27 @@ async function writeAuthConfig(config: OpenCodeAuthConfig): Promise<void> {
 async function fetchModelsFromOpenCode(): Promise<Map<string, string[]>> {
   return new Promise((resolve) => {
     const models = new Map<string, string[]>();
-    const child = spawn('opencode', ['models'], {
+    const isWindows = process.platform === 'win32';
+    const command = isWindows ? 'opencode models' : 'opencode';
+    const args = isWindows ? [] : ['models'];
+    const child = spawn(command, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
+      shell: isWindows,
+      windowsHide: isWindows,
     });
+    let settled = false;
 
     let stdout = '';
     let stderr = '';
+
+    const finish = (result: Map<string, string[]>): void => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      resolve(result);
+    };
 
     child.stdout?.on('data', (data) => {
       stdout += data.toString();
@@ -95,11 +110,16 @@ async function fetchModelsFromOpenCode(): Promise<Map<string, string[]>> {
       stderr += data.toString();
     });
 
+    child.on('error', (error) => {
+      console.error(`[Providers] 启动 ${command} models 失败:`, error instanceof Error ? error.message : String(error));
+      finish(new Map());
+    });
+
     child.on('close', (code) => {
       if (code !== 0) {
-        console.error('[Providers] opencode models 失败:', stderr);
+        console.error('[Providers] opencode models 失败:', stderr || `exit code ${code}`);
         // 即使失败也返回空缓存，不阻塞启动
-        resolve(new Map());
+        finish(new Map());
         return;
       }
 
@@ -125,14 +145,14 @@ async function fetchModelsFromOpenCode(): Promise<Map<string, string[]>> {
         models.set(providerId, providerModels);
       }
 
-      resolve(models);
+      finish(models);
     });
 
     // 30 秒超时
-    setTimeout(() => {
+    const timeoutId = setTimeout(() => {
       child.kill();
       console.error('[Providers] opencode models 超时');
-      resolve(models);
+      finish(models);
     }, 30000);
   });
 }
