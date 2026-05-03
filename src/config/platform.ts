@@ -209,6 +209,24 @@ export const modelConfig = {
     const model = process.env.DEFAULT_MODEL?.trim();
     return provider && model ? model : undefined;
   },
+  get chatModelWhitelist(): string[] {
+    const raw = process.env.CHAT_MODEL_WHITELIST?.trim();
+    if (!raw) return [];
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((item): item is string => typeof item === 'string')
+        .map(item => item.trim())
+        .filter(Boolean);
+    } catch {
+      return raw
+        .split(/[\r\n,;]+/)
+        .map(item => item.trim())
+        .filter(Boolean);
+    }
+  },
 };
 
 export const permissionConfig = {

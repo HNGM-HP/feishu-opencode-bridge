@@ -3,6 +3,7 @@ import * as path from 'path';
 import type { EffortLevel } from '../commands/effort.js';
 
 export type ChatSessionType = 'p2p' | 'group';
+export type SessionOrderMode = 'default' | 'last_time';
 
 export interface ChatSessionData {
   chatId: string;
@@ -21,6 +22,10 @@ export interface ChatSessionData {
   resolvedDirectory?: string;
   projectName?: string;
   defaultDirectory?: string;
+  sessionOrderMode?: SessionOrderMode;
+  helpWithQc?: boolean;
+  sessionWithCtl?: boolean;
+  sessionWithChange?: boolean;
   reminderSent?: boolean;
   interactionHistory: InteractionRecord[];
 }
@@ -372,6 +377,10 @@ class ChatSessionStore {
       ...(options?.resolvedDirectory ? { resolvedDirectory: options.resolvedDirectory } : {}),
       ...(options?.projectName ? { projectName: options.projectName } : {}),
       ...(current?.defaultDirectory ? { defaultDirectory: current.defaultDirectory } : {}),
+      ...(current?.sessionOrderMode ? { sessionOrderMode: current.sessionOrderMode } : {}),
+      ...(typeof current?.helpWithQc === 'boolean' ? { helpWithQc: current.helpWithQc } : {}),
+      ...(typeof current?.sessionWithCtl === 'boolean' ? { sessionWithCtl: current.sessionWithCtl } : {}),
+      ...(typeof current?.sessionWithChange === 'boolean' ? { sessionWithChange: current.sessionWithChange } : {}),
       ...(current?.preferredModel ? { preferredModel: current.preferredModel } : {}),
       ...(current?.preferredAgent ? { preferredAgent: current.preferredAgent } : {}),
       ...(current?.preferredEffort ? { preferredEffort: current.preferredEffort } : {}),
@@ -438,6 +447,10 @@ class ChatSessionStore {
       ...(options?.resolvedDirectory ? { resolvedDirectory: options.resolvedDirectory } : {}),
       ...(options?.projectName ? { projectName: options.projectName } : {}),
       ...(current?.defaultDirectory ? { defaultDirectory: current.defaultDirectory } : {}),
+      ...(current?.sessionOrderMode ? { sessionOrderMode: current.sessionOrderMode } : {}),
+      ...(typeof current?.helpWithQc === 'boolean' ? { helpWithQc: current.helpWithQc } : {}),
+      ...(typeof current?.sessionWithCtl === 'boolean' ? { sessionWithCtl: current.sessionWithCtl } : {}),
+      ...(typeof current?.sessionWithChange === 'boolean' ? { sessionWithChange: current.sessionWithChange } : {}),
       ...(current?.preferredModel ? { preferredModel: current.preferredModel } : {}),
       ...(current?.preferredAgent ? { preferredAgent: current.preferredAgent } : {}),
       ...(current?.preferredEffort ? { preferredEffort: current.preferredEffort } : {}),
@@ -525,6 +538,10 @@ class ChatSessionStore {
       preferredAgent?: string;
       preferredEffort?: EffortLevel;
       defaultDirectory?: string;
+      sessionOrderMode?: SessionOrderMode;
+      helpWithQc?: boolean;
+      sessionWithCtl?: boolean;
+      sessionWithChange?: boolean;
     }
   ): void {
     const session = this.getChatDataLegacyOrNamespaced(chatId);
@@ -561,6 +578,38 @@ class ChatSessionStore {
         delete session.defaultDirectory;
       }
     }
+
+    if ('sessionOrderMode' in config) {
+      if (config.sessionOrderMode) {
+        session.sessionOrderMode = config.sessionOrderMode;
+      } else {
+        delete session.sessionOrderMode;
+      }
+    }
+
+    if ('helpWithQc' in config) {
+      if (typeof config.helpWithQc === 'boolean') {
+        session.helpWithQc = config.helpWithQc;
+      } else {
+        delete session.helpWithQc;
+      }
+    }
+
+    if ('sessionWithCtl' in config) {
+      if (typeof config.sessionWithCtl === 'boolean') {
+        session.sessionWithCtl = config.sessionWithCtl;
+      } else {
+        delete session.sessionWithCtl;
+      }
+    }
+
+    if ('sessionWithChange' in config) {
+      if (typeof config.sessionWithChange === 'boolean') {
+        session.sessionWithChange = config.sessionWithChange;
+      } else {
+        delete session.sessionWithChange;
+      }
+    }
     this.save();
   }
 
@@ -572,6 +621,10 @@ class ChatSessionStore {
       preferredAgent?: string;
       preferredEffort?: EffortLevel;
       defaultDirectory?: string;
+      sessionOrderMode?: SessionOrderMode;
+      helpWithQc?: boolean;
+      sessionWithCtl?: boolean;
+      sessionWithChange?: boolean;
     }
   ): void {
     const session = this.getSessionByConversation(platform, conversationId);
@@ -606,6 +659,38 @@ class ChatSessionStore {
         session.defaultDirectory = config.defaultDirectory;
       } else {
         delete session.defaultDirectory;
+      }
+    }
+
+    if ('sessionOrderMode' in config) {
+      if (config.sessionOrderMode) {
+        session.sessionOrderMode = config.sessionOrderMode;
+      } else {
+        delete session.sessionOrderMode;
+      }
+    }
+
+    if ('helpWithQc' in config) {
+      if (typeof config.helpWithQc === 'boolean') {
+        session.helpWithQc = config.helpWithQc;
+      } else {
+        delete session.helpWithQc;
+      }
+    }
+
+    if ('sessionWithCtl' in config) {
+      if (typeof config.sessionWithCtl === 'boolean') {
+        session.sessionWithCtl = config.sessionWithCtl;
+      } else {
+        delete session.sessionWithCtl;
+      }
+    }
+
+    if ('sessionWithChange' in config) {
+      if (typeof config.sessionWithChange === 'boolean') {
+        session.sessionWithChange = config.sessionWithChange;
+      } else {
+        delete session.sessionWithChange;
       }
     }
 

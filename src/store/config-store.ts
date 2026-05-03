@@ -195,6 +195,7 @@ export interface BridgeSettings {
   // 模型（扩展字段，.env.example 未列出但 config.ts 引用）
   DEFAULT_PROVIDER?: string;
   DEFAULT_MODEL?: string;
+  CHAT_MODEL_WHITELIST?: string;      // JSON 数组：["provider/model", ...]
 
   // CLI / TUI 向导相关（仅 CLI 使用，web 端不展示）
   CLI_LANG?: string;            // 'zh' | 'en'

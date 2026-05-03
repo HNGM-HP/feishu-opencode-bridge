@@ -7,6 +7,9 @@ import { outputBuffer } from '../opencode/output-buffer.js';
 import { commandHandler } from './command.js';
 import type { FeishuCardActionEvent } from '../feishu/client.js';
 import { isCompletionNotFoundError } from '../feishu/client.js';
+import { isChatModelAllowed, parseChatModelReference } from '../utils/chat-model-whitelist.js';
+import { parseCommand } from '../commands/parser.js';
+import { p2pHandler } from './p2p.js';
 
 export class CardActionHandler {
   private extractSelectedOption(value: unknown): string | undefined {
@@ -51,9 +54,14 @@ export class CardActionHandler {
         return this.handleAgentSelect(actionValue, event);
       case 'toggle_thinking':
         return this.handleToggleThinking(actionValue, event);
+      case 'help_run_command':
+        return this.handleHelpRunCommand(actionValue, event);
+      case 'session_ctl_submit':
+        return this.handleSessionCtlSubmit(actionValue, event);
+      case 'session_list_switch':
+        return this.handleSessionListSwitch(actionValue, event);
       case 'create_chat':
-        // P2P 创建会话，由 p2pHandler 处理
-        return;
+        return this.handleCreateChatAction(event);
       case 'permission_allow':
       case 'permission_deny':
         // 权限确认，由 index.ts 直接处理
@@ -149,6 +157,17 @@ export class CardActionHandler {
       return { toast: { type: 'error', content: '参数错误' } };
     }
 
+    const parsedModel = parseChatModelReference(selectedOption);
+    if (parsedModel && !isChatModelAllowed(parsedModel.providerId, parsedModel.modelId)) {
+      return {
+        toast: {
+          type: 'error',
+          content: '该模型不在当前允许列表中',
+          i18n_content: { zh_cn: '该模型不在当前允许列表中', en_us: 'This model is not allowed by the current whitelist' }
+        }
+      };
+    }
+
     // 更新配置
     chatSessionStore.updateConfig(chatId, { preferredModel: selectedOption });
     console.log(`[CardAction] 已切换模型: ${selectedOption}`);
@@ -195,6 +214,147 @@ export class CardActionHandler {
   private async handleToggleThinking(_value: any, _event: FeishuCardActionEvent): Promise<object> {
       // 兼容历史卡片按钮：思考展开已改为飞书原生折叠面板，无需回调更新。
       return { msg: 'ok' };
+  }
+
+  private async handleHelpRunCommand(value: any, event: FeishuCardActionEvent): Promise<object> {
+    const chatId = typeof value?.chatId === 'string' ? value.chatId : event.chatId;
+    const commandText = typeof value?.command === 'string' ? value.command.trim() : '';
+    const chatType = value?.chatType === 'p2p' ? 'p2p' : 'group';
+    const messageId = event.messageId;
+
+    if (!chatId || !commandText || !messageId) {
+      return {
+        toast: {
+          type: 'error',
+          content: '命令参数缺失',
+          i18n_content: { zh_cn: '命令参数缺失', en_us: 'Missing command parameters' }
+        }
+      };
+    }
+
+    if (commandText === '/compact') {
+      commandHandler.startCompactInBackground(chatId, messageId);
+      return {
+        toast: {
+          type: 'success',
+          content: '已开始压缩上下文，完成后会通过新消息通知',
+          i18n_content: { zh_cn: '已开始压缩上下文，完成后会通过新消息通知', en_us: 'Compaction started and will notify when done' }
+        }
+      };
+    }
+
+    const command = parseCommand(commandText);
+    try {
+      await commandHandler.handle(command, {
+        chatId,
+        messageId,
+        senderId: event.openId,
+        chatType,
+      });
+      return {
+        toast: {
+          type: 'success',
+          content: `已执行 ${commandText}`,
+          i18n_content: { zh_cn: `已执行 ${commandText}`, en_us: `Executed ${commandText}` }
+        }
+      };
+    } catch (error) {
+      console.error('[CardAction] Help shortcut execution failed:', error);
+      return {
+        toast: {
+          type: 'error',
+          content: `执行失败: ${commandText}`,
+          i18n_content: { zh_cn: `执行失败: ${commandText}`, en_us: `Failed: ${commandText}` }
+        }
+      };
+    }
+  }
+
+  private async handleSessionCtlSubmit(value: any, event: FeishuCardActionEvent): Promise<object> {
+    const chatId = typeof value?.chatId === 'string' ? value.chatId : event.chatId;
+    const chatType = value?.chatType === 'p2p' ? 'p2p' : 'group';
+    const messageId = event.messageId;
+    const eventAny = event as unknown as { action?: { form_value?: Record<string, string> } };
+    const formValue = eventAny.action?.form_value;
+    const selectedSessionId = formValue?.session_target?.trim()
+      || this.extractSelectedOption(value.selectedSessionId)
+      || '';
+    const sessionName = formValue?.session_name?.trim() || '';
+
+    if (!chatId || !messageId || !selectedSessionId) {
+      return {
+        toast: {
+          type: 'error',
+          content: '提交参数缺失',
+          i18n_content: { zh_cn: '提交参数缺失', en_us: 'Missing submit parameters' }
+        }
+      };
+    }
+
+    try {
+      await commandHandler.handleSessionControlSubmit(
+        chatId,
+        messageId,
+        event.openId,
+        chatType,
+        selectedSessionId,
+        sessionName
+      );
+      return {
+        toast: {
+          type: 'success',
+          content: '会话操作已执行',
+          i18n_content: { zh_cn: '会话操作已执行', en_us: 'Session operation completed' }
+        }
+      };
+    } catch (error) {
+      console.error('[CardAction] Session control submit failed:', error);
+      const message = error instanceof Error ? error.message : '会话操作失败';
+      return {
+        toast: {
+          type: 'error',
+          content: message,
+          i18n_content: { zh_cn: message, en_us: message }
+        }
+      };
+    }
+  }
+
+  private async handleSessionListSwitch(value: any, event: FeishuCardActionEvent): Promise<object> {
+    const chatId = typeof value?.chatId === 'string' ? value.chatId : event.chatId;
+    const chatType = value?.chatType === 'p2p' ? 'p2p' : 'group';
+    const targetSessionId = this.extractSelectedOption(value.sessionId) || '';
+
+    if (!chatId || !event.messageId || !targetSessionId) {
+      return {
+        toast: {
+          type: 'error',
+          content: '切换参数缺失',
+          i18n_content: { zh_cn: '切换参数缺失', en_us: 'Missing switch parameters' }
+        }
+      };
+    }
+
+    await commandHandler.switchSessionFromCard(
+      chatId,
+      event.messageId,
+      event.openId,
+      targetSessionId,
+      chatType
+    );
+
+    return {
+      toast: {
+        type: 'success',
+        content: '已执行会话切换',
+        i18n_content: { zh_cn: '已执行会话切换', en_us: 'Session switch requested' }
+      }
+    };
+  }
+
+  private async handleCreateChatAction(event: FeishuCardActionEvent): Promise<object> {
+    const result = await p2pHandler.handleCardAction(event);
+    return result || { msg: 'ok' };
   }
 }
 

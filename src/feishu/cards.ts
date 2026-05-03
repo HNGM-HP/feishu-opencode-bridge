@@ -215,6 +215,185 @@ export function buildStatusCard(data: StatusCardData): object {
   };
 }
 
+export interface MarkdownCardPage {
+  title: string;
+  markdown: string;
+  template?: 'blue' | 'green' | 'red' | 'orange' | 'grey';
+}
+
+export function buildMarkdownCard(page: MarkdownCardPage): object {
+  const content = page.markdown.trim() || '（无内容）';
+  return {
+    schema: '2.0',
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      title: {
+        tag: 'plain_text',
+        content: page.title,
+      },
+      template: page.template || 'blue',
+    },
+    body: {
+      elements: [
+        {
+          tag: 'markdown',
+          content,
+        },
+      ],
+    },
+  };
+}
+
+export interface HelpShortcutAction {
+  label: string;
+  command: string;
+}
+
+export interface ShortcutCardData {
+  title: string;
+  description?: string;
+  chatId: string;
+  chatType: 'p2p' | 'group';
+  shortcuts: HelpShortcutAction[];
+  template?: 'blue' | 'green' | 'red' | 'orange' | 'grey';
+}
+
+export interface HelpCardData {
+  title: string;
+  markdown: string;
+  chatId: string;
+  chatType: 'p2p' | 'group';
+  shortcuts: HelpShortcutAction[];
+  template?: 'blue' | 'green' | 'red' | 'orange' | 'grey';
+}
+
+export function buildHelpCard(data: HelpCardData): object {
+  const shortcutRows: HelpShortcutAction[][] = [];
+  for (let index = 0; index < data.shortcuts.length; index += 3) {
+    shortcutRows.push(data.shortcuts.slice(index, index + 3));
+  }
+
+  const elements: object[] = [
+    {
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: data.markdown.trim() || '（无内容）',
+      },
+    },
+  ];
+
+  if (shortcutRows.length > 0) {
+    elements.push({
+      tag: 'hr',
+    });
+    elements.push({
+      tag: 'markdown',
+      content: '**快捷命令**\n点击后会直接执行对应命令。',
+    });
+
+    for (const row of shortcutRows) {
+      elements.push({
+        tag: 'action',
+        actions: row.map(item => ({
+          tag: 'button',
+          text: {
+            tag: 'plain_text',
+            content: item.label,
+          },
+          type: 'default',
+          value: {
+            action: 'help_run_command',
+            command: item.command,
+            chatId: data.chatId,
+            chatType: data.chatType,
+          },
+        })),
+      });
+    }
+  }
+
+  return {
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      title: {
+        tag: 'plain_text',
+        content: data.title,
+      },
+      template: data.template || 'blue',
+    },
+    elements,
+  };
+}
+
+export function buildShortcutCommandCard(data: ShortcutCardData): object {
+  const shortcutRows: HelpShortcutAction[][] = [];
+  for (let index = 0; index < data.shortcuts.length; index += 3) {
+    shortcutRows.push(data.shortcuts.slice(index, index + 3));
+  }
+
+  const resolveShortcutActionValue = (item: HelpShortcutAction): Record<string, unknown> => {
+    if (item.command.trim() === '/create_chat') {
+      return {
+        action: 'create_chat',
+        chatId: data.chatId,
+        chatType: data.chatType,
+      };
+    }
+
+    return {
+      action: 'help_run_command',
+      command: item.command,
+      chatId: data.chatId,
+      chatType: data.chatType,
+    };
+  };
+
+  const elements: object[] = [];
+  if (data.description?.trim()) {
+    elements.push({
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: data.description.trim(),
+      },
+    });
+  }
+
+  for (const row of shortcutRows) {
+    elements.push({
+      tag: 'action',
+      actions: row.map(item => ({
+        tag: 'button',
+        text: {
+          tag: 'plain_text',
+          content: item.label,
+        },
+        type: 'default',
+        value: resolveShortcutActionValue(item),
+      })),
+    });
+  }
+
+  return {
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      title: {
+        tag: 'plain_text',
+        content: data.title,
+      },
+      template: data.template || 'blue',
+    },
+    elements,
+  };
+}
+
 // 控制面板卡片
 export interface ControlCardData {
   conversationKey: string;
@@ -245,7 +424,7 @@ export function buildControlCard(data: ControlCardData): object {
     header: {
       title: {
         tag: 'plain_text',
-        content: '🎛️ 会话控制面板',
+        content: '🎛️ 模型与角色面板',
       },
       template: 'blue',
     },
@@ -297,6 +476,240 @@ export function buildControlCard(data: ControlCardData): object {
         ],
       },
     ],
+  };
+}
+
+export interface SessionCtlSessionOption {
+  label: string;
+  value: string;
+}
+
+export interface SessionControlCardData {
+  chatId: string;
+  chatType: 'p2p' | 'group';
+  currentDirectory: string;
+  currentSessionId: string;
+  currentSessionTitle: string;
+  selectedSessionId: string;
+  sessionOptions: SessionCtlSessionOption[];
+  totalSessionCount?: number;
+}
+
+export const SESSION_CTL_CURRENT_VALUE = '__current_session__';
+export const SESSION_CTL_NEW_VALUE = '__new_session__';
+
+export function buildSessionControlCard(data: SessionControlCardData): object {
+  const shownExistingCount = data.sessionOptions.filter(option =>
+    option.value !== SESSION_CTL_CURRENT_VALUE && option.value !== SESSION_CTL_NEW_VALUE
+  ).length;
+  const totalSessionCount = typeof data.totalSessionCount === 'number' && data.totalSessionCount >= shownExistingCount
+    ? data.totalSessionCount
+    : shownExistingCount;
+  const selected = data.selectedSessionId || SESSION_CTL_CURRENT_VALUE;
+  const formElements: object[] = [
+    {
+      tag: 'select_static',
+      name: 'session_target',
+      placeholder: { tag: 'plain_text', content: '选择会话' },
+      options: data.sessionOptions.map(option => ({
+        text: { tag: 'plain_text', content: option.label },
+        value: option.value,
+      })),
+    },
+    {
+      tag: 'input',
+      name: 'session_name',
+      placeholder: {
+        tag: 'plain_text',
+        content: '会话名称（切换到其他会话时可留空）',
+      },
+    },
+  ];
+
+  formElements.push({
+    tag: 'button',
+    text: { tag: 'plain_text', content: '确认提交' },
+    type: 'primary',
+    action_type: 'form_submit',
+    name: 'session_ctl_submit',
+    value: {
+      action: 'session_ctl_submit',
+      chatId: data.chatId,
+      chatType: data.chatType,
+      selectedSessionId: selected,
+    },
+  });
+
+  return {
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      title: {
+        tag: 'plain_text',
+        content: '🧭 会话控制面板',
+      },
+      template: 'blue',
+    },
+    elements: [
+      {
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: [
+            `**当前会话工作区目录**: \`${data.currentDirectory}\``,
+            `**SessionID**: \`${data.currentSessionId}\``,
+            `**OpenCode侧会话名称**: ${data.currentSessionTitle}`,
+          ].join('\n'),
+        },
+      },
+      {
+        tag: 'form',
+        name: 'session_ctl_form',
+        elements: formElements,
+      },
+      {
+        tag: 'note',
+        elements: [
+          {
+            tag: 'plain_text',
+            content: [
+              '选择“当前会话”时：输入名称后提交，将修改当前会话名称。',
+              '选择“新建 OpenCode 会话”时：名称可留空，留空则使用默认命名规则。',
+              '选择其他会话时：将先切换到目标会话；若填写名称，则会在切换后顺带重命名该会话。',
+              totalSessionCount > shownExistingCount
+                ? `当前仅展示最近 ${shownExistingCount} 个可切换会话（总计 ${totalSessionCount} 个）。`
+                : '未主动选择时默认按“当前会话”处理。',
+            ].join('\n'),
+          },
+        ],
+      },
+    ],
+  };
+}
+
+export interface SessionListActionCardData {
+  title: string;
+  sessionId: string;
+  markdown: string;
+  chatId: string;
+  chatType: 'p2p' | 'group';
+}
+
+export function buildSessionListActionCard(data: SessionListActionCardData): object {
+  return {
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      title: {
+        tag: 'plain_text',
+        content: data.title,
+      },
+      template: 'blue',
+    },
+    elements: [
+      {
+        tag: 'div',
+        text: {
+          tag: 'lark_md',
+          content: data.markdown,
+        },
+      },
+      {
+        tag: 'action',
+        actions: [
+          {
+            tag: 'button',
+            text: {
+              tag: 'plain_text',
+              content: '切换至此Session',
+            },
+            type: 'primary',
+            value: {
+              action: 'session_list_switch',
+              sessionId: data.sessionId,
+              chatId: data.chatId,
+              chatType: data.chatType,
+            },
+          },
+        ],
+      },
+    ],
+  };
+}
+
+export interface SessionListCardEntry {
+  sessionId: string;
+  markdown: string;
+}
+
+export interface SessionListCardData {
+  title: string;
+  summaryMarkdown: string;
+  chatId: string;
+  chatType: 'p2p' | 'group';
+  entries: SessionListCardEntry[];
+}
+
+export function buildSessionListCard(data: SessionListCardData): object {
+  const elements: object[] = [
+    {
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: data.summaryMarkdown.trim() || '（无内容）',
+      },
+    },
+  ];
+
+  data.entries.forEach((entry, index) => {
+    elements.push({
+      tag: 'div',
+      text: {
+        tag: 'lark_md',
+        content: entry.markdown,
+      },
+    });
+    elements.push({
+      tag: 'action',
+      actions: [
+        {
+          tag: 'button',
+          text: {
+            tag: 'plain_text',
+            content: '切换至此Session',
+          },
+          type: 'primary',
+          value: {
+            action: 'session_list_switch',
+            sessionId: entry.sessionId,
+            chatId: data.chatId,
+            chatType: data.chatType,
+          },
+        },
+      ],
+    });
+
+    if (index < data.entries.length - 1) {
+      elements.push({
+        tag: 'hr',
+      });
+    }
+  });
+
+  return {
+    config: {
+      wide_screen_mode: true,
+    },
+    header: {
+      title: {
+        tag: 'plain_text',
+        content: data.title,
+      },
+      template: 'blue',
+    },
+    elements,
   };
 }
 

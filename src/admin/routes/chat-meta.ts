@@ -9,6 +9,7 @@ import { skillRegistry } from '../../services/resources/skills/registry.js';
 import { getMCPRegistry } from '../../services/resources/mcp/manager.js';
 import { listSlashCommands as listMCPSlashCommands, toCommandItems as toMCPCommandItems } from '../../services/resources/mcp/slash.js';
 import { listSlashCommands as listAgentSlashCommands, toCommandItems as toAgentCommandItems } from '../../services/resources/agents/slash.js';
+import { modelConfig } from '../../config.js';
 
 function errorMsg(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error';
@@ -385,6 +386,8 @@ export function registerChatMetaRoutes(app: Application): void {
     try {
       const providersResult = await opencodeClient.getProviders();
       const providers = Array.isArray(providersResult.providers) ? providersResult.providers : [];
+      const whitelist = new Set(modelConfig.chatModelWhitelist.map(item => item.toLowerCase()));
+      const useWhitelist = whitelist.size > 0;
 
       const items = providers
         .map(provider => {
@@ -401,10 +404,15 @@ export function registerChatMetaRoutes(app: Application): void {
           return {
             id,
             name,
-            models: extractProviderModels(provider),
+            models: extractProviderModels(provider).filter(model => {
+              if (!useWhitelist) {
+                return true;
+              }
+              return whitelist.has(`${id}/${model.id}`.toLowerCase());
+            }),
           };
         })
-        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+        .filter((item): item is NonNullable<typeof item> => Boolean(item && item.models.length > 0))
         .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
 
       res.json({ providers: items });

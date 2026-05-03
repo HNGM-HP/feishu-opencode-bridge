@@ -27,6 +27,7 @@ import { configStore, type BridgeSettings } from '../store/config-store.js';
 import { logStore } from '../store/log-store.js';
 import type { RuntimeCronManager } from '../reliability/runtime-cron.js';
 import type { BridgeManager } from './bridge-manager.js';
+import { opencodeConfig } from '../config.js';
 import { createSessionRoutes } from './routes/session.js';
 import { registerWorkspaceGitRoutes } from './routes/workspace-git.js';
 import { registerWorkspaceFilesRoutes } from './routes/workspace-files.js';
@@ -37,8 +38,147 @@ import { registerChatUploadRoutes } from './routes/chat-upload.js';
 import { createResourcesRoutes } from './routes/resources.js';
 import { getAutoStart, setAutoStart } from './autostart.js';
 import { initResourceSystem } from '../services/resources/index.js';
+import { opencodeClient } from '../opencode/client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function toRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function parseOptionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0') return false;
+  }
+  return undefined;
+}
+
+function extractEnabledModelsFromOpencodeConfig(config: unknown): string[] {
+  const root = toRecord(config);
+  if (!root) return [];
+
+  const providersRecord = toRecord(root.provider) || toRecord(root.providers);
+  if (!providersRecord) return [];
+
+  const selected = new Set<string>();
+  for (const [providerId, rawProvider] of Object.entries(providersRecord)) {
+    const providerRecord = toRecord(rawProvider);
+    if (!providerRecord) continue;
+
+    const rawModels = providerRecord.models;
+    if (Array.isArray(rawModels)) {
+      for (const item of rawModels) {
+        if (typeof item === 'string' && item.trim()) {
+          selected.add(`${providerId}/${item.trim()}`);
+          continue;
+        }
+        const modelRecord = toRecord(item);
+        const modelId = typeof modelRecord?.id === 'string' && modelRecord.id.trim()
+          ? modelRecord.id.trim()
+          : '';
+        if (modelId) {
+          selected.add(`${providerId}/${modelId}`);
+        }
+      }
+      continue;
+    }
+
+    const modelMap = toRecord(rawModels);
+    if (!modelMap) continue;
+
+    for (const [modelKey, rawModel] of Object.entries(modelMap)) {
+      if (rawModel === false || rawModel === null) {
+        continue;
+      }
+
+      const modelRecord = toRecord(rawModel);
+      const disabled = parseOptionalBoolean(modelRecord?.disabled);
+      if (disabled === true) {
+        continue;
+      }
+
+      const configId = typeof modelRecord?.id === 'string' && modelRecord.id.trim()
+        ? modelRecord.id.trim()
+        : modelKey.trim();
+      if (configId) {
+        selected.add(`${providerId}/${configId}`);
+      }
+    }
+  }
+
+  return Array.from(selected).sort((left, right) => left.localeCompare(right, 'en'));
+}
+
+function extractProviderId(provider: unknown): string | undefined {
+  const record = toRecord(provider);
+  const rawId = typeof record?.id === 'string' ? record.id.trim() : '';
+  return rawId || undefined;
+}
+
+function extractProviderModels(provider: unknown): Array<{ id: string; name: string }> {
+  const record = toRecord(provider);
+  const rawModels = record?.models;
+  const models: Array<{ id: string; name: string }> = [];
+  const dedupe = new Set<string>();
+
+  const pushModel = (rawModel: unknown, fallbackId?: string): void => {
+    const fallbackNormalized = typeof fallbackId === 'string' ? fallbackId.trim() : '';
+    if (!rawModel || typeof rawModel !== 'object') {
+      if (!fallbackNormalized) return;
+      const key = fallbackNormalized.toLowerCase();
+      if (dedupe.has(key)) return;
+      dedupe.add(key);
+      models.push({ id: fallbackNormalized, name: fallbackNormalized });
+      return;
+    }
+
+    const modelRecord = rawModel as Record<string, unknown>;
+    const modelId = typeof modelRecord.id === 'string' && modelRecord.id.trim()
+      ? modelRecord.id.trim()
+      : fallbackNormalized;
+    if (!modelId) return;
+
+    const modelName = typeof modelRecord.name === 'string' && modelRecord.name.trim()
+      ? modelRecord.name.trim()
+      : modelId;
+    const key = modelId.toLowerCase();
+    if (dedupe.has(key)) return;
+    dedupe.add(key);
+    models.push({ id: modelId, name: modelName });
+  };
+
+  if (Array.isArray(rawModels)) {
+    for (const rawModel of rawModels) {
+      pushModel(rawModel);
+    }
+  } else {
+    const modelMap = toRecord(rawModels);
+    if (modelMap) {
+      for (const [modelKey, rawModel] of Object.entries(modelMap)) {
+        pushModel(rawModel, modelKey);
+      }
+    }
+  }
+
+  return models.sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
+}
+
+function buildOpencodeAuthHeaders(): Record<string, string> {
+  if (!opencodeConfig.serverPassword) {
+    return {};
+  }
+
+  const username = opencodeConfig.serverUsername || 'opencode';
+  const authorization = Buffer.from(`${username}:${opencodeConfig.serverPassword}`).toString('base64');
+  return { Authorization: `Basic ${authorization}` };
+}
 
 // 开发模式检测（process.resourcesPath 是 Electron 特有属性）
 const isDev = process.env.NODE_ENV === 'development' || !(process as any).resourcesPath;
@@ -915,6 +1055,66 @@ export function createAdminServer(options: AdminServerOptions): { start: () => P
     } catch (error: any) {
       console.error('[Admin] 获取模型列表失败:', error.message);
       res.status(500).json({ error: '获取模型列表失败：' + error.message });
+    }
+  });
+
+  // ── GET /api/opencode/model-catalog
+  api.get('/opencode/model-catalog', async (_req, res) => {
+    try {
+      const providersResult = await opencodeClient.getProviders();
+      const providers = Array.isArray(providersResult.providers) ? providersResult.providers : [];
+
+      const items = providers
+        .map(provider => {
+          const record = provider as Record<string, unknown>;
+          const id = extractProviderId(provider);
+          if (!id) {
+            return null;
+          }
+
+          const name = typeof record.name === 'string' && record.name.trim()
+            ? record.name.trim()
+            : id;
+
+          return {
+            id,
+            name,
+            models: extractProviderModels(provider),
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+        .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
+
+      res.json({ providers: items });
+    } catch (error: any) {
+      console.error('[Admin] 获取完整模型目录失败:', error.message);
+      res.status(502).json({ error: '获取完整模型目录失败：' + error.message });
+    }
+  });
+
+  // ── GET /api/opencode/enabled-models-sync
+  api.get('/opencode/enabled-models-sync', async (_req, res) => {
+    try {
+      let config: unknown;
+      try {
+        config = await opencodeClient.getConfig();
+      } catch {
+        const connected = await opencodeClient.connect();
+        if (!connected) {
+          throw new Error('OpenCode 当前不可连接，无法读取运行时配置');
+        }
+        config = await opencodeClient.getConfig();
+      }
+
+      const models = extractEnabledModelsFromOpencodeConfig(config);
+      res.json({
+        source: 'opencode_runtime_config',
+        models,
+        count: models.length,
+      });
+    } catch (error: any) {
+      console.error('[Admin] 同步 OpenCode 已启用模型失败:', error.message);
+      res.status(502).json({ error: '同步 OpenCode 已启用模型失败：' + error.message });
     }
   });
 
