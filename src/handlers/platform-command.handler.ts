@@ -13,6 +13,7 @@ import { DirectoryPolicy } from '../utils/directory-policy.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
 import { modelConfig, userConfig } from '../config.js';
 import type { PlatformSender } from '../platform/types.js';
+import { isChatModelAllowed, parseChatModelReference } from '../utils/chat-model-whitelist.js';
 
 const EFFORT_USAGE_TEXT = '用法: /effort（查看） 或 /effort <low|high|max|xhigh>（设置） 或 /effort default（清除）';
 const EFFORT_DISPLAY_ORDER = KNOWN_EFFORT_LEVELS;
@@ -107,7 +108,7 @@ export class PlatformCommandHandler {
           break;
 
         case 'models':
-          await this.handleModels(chatId, sender);
+          await this.handleModels(chatId, command.listAll ?? false, sender);
           break;
 
         case 'agent':
@@ -160,7 +161,8 @@ export class PlatformCommandHandler {
 • \`/help\` 显示帮助
 • \`/model\` 查看当前模型
 • \`/model <名称>\` 切换模型
-• \`/models\` 列出所有可用模型
+• \`/models\` 列出当前可选模型
+• \`/models all\` 列出全部当前可选模型
 • \`/agent\` 查看当前角色
 • \`/agent <名称>\` 切换角色
 • \`/agents\` 列出所有可用角色
@@ -476,7 +478,12 @@ export class PlatformCommandHandler {
         chatSessionStore.updateConfigByConversation(this.platform, chatId, { preferredModel: newValue });
         await this.sendText(sender, chatId, `✅ 已切换模型: ${newValue}`);
       } else if (normalizedModelName.includes(':') || normalizedModelName.includes('/')) {
-        // 支持强制设置
+        const parsedModel = parseChatModelReference(modelName);
+        if (parsedModel && !isChatModelAllowed(parsedModel.providerId, parsedModel.modelId)) {
+          await this.sendText(sender, chatId, `❌ 模型 "${modelName.trim()}" 不在当前允许列表中`);
+          return;
+        }
+
         chatSessionStore.updateConfigByConversation(this.platform, chatId, { preferredModel: modelName.trim() });
         await this.sendText(sender, chatId, `⚠️ 已设置模型: ${modelName.trim()}（未在列表中验证）`);
       } else {
@@ -488,7 +495,7 @@ export class PlatformCommandHandler {
     }
   }
 
-  private async handleModels(chatId: string, sender: PlatformSender): Promise<void> {
+  private async handleModels(chatId: string, listAll: boolean, sender: PlatformSender): Promise<void> {
     try {
       const providersResult = await opencodeClient.getProviders();
       const providers = Array.isArray(providersResult.providers) ? providersResult.providers : [];
@@ -502,15 +509,16 @@ export class PlatformCommandHandler {
 
         const providerName = (provider as Record<string, unknown>).name || (provider as Record<string, unknown>).id || 'Unknown';
         lines.push(`**${providerName}**`);
+        totalCount += providerModels.length;
 
-        for (const model of providerModels.slice(0, 20)) {
+        const visibleModels = listAll ? providerModels : providerModels.slice(0, 20);
+        for (const model of visibleModels) {
           const modelDisplay = model.modelName || model.modelId;
           const modelKey = `${model.providerId}:${model.modelId}`;
           lines.push(`  • ${modelDisplay} (\`${modelKey}\`)`);
-          totalCount++;
         }
 
-        if (providerModels.length > 20) {
+        if (!listAll && providerModels.length > 20) {
           lines.push(`  _... 共 ${providerModels.length} 个模型_`);
         }
         lines.push('');
@@ -551,6 +559,7 @@ export class PlatformCommandHandler {
         const modelRecord = m as Record<string, unknown>;
         const modelId = typeof modelRecord.id === 'string' ? modelRecord.id : undefined;
         if (!modelId) continue;
+        if (!isChatModelAllowed(providerId, modelId)) continue;
 
         models.push({
           providerId,
@@ -564,6 +573,7 @@ export class PlatformCommandHandler {
       for (const [key, value] of Object.entries(modelMap)) {
         if (value && typeof value === 'object') {
           const modelRecord = value as Record<string, unknown>;
+          if (!isChatModelAllowed(providerId, key)) continue;
           models.push({
             providerId,
             modelId: key,

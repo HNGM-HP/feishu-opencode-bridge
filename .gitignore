@@ -21,6 +21,7 @@ web/node_modules/
 # 日志文件
 logs/
 *.log
+.codex-logs/
 
 # 会话数据（用户隐私）
 .session-*.json

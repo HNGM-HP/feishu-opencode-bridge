@@ -10,7 +10,7 @@ import {
 } from '../feishu/cards.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
-import { parseCommand, getHelpText, type ParsedCommand } from '../commands/parser.js';
+import { parseCommand, type ParsedCommand } from '../commands/parser.js';
 import { commandHandler } from './command.js';
 import { groupHandler } from './group.js';
 import { directoryConfig, userConfig } from '../config.js';
@@ -259,19 +259,75 @@ export class P2PHandler {
       ? session.directory.trim()
       : '/';
   }
-private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: boolean): string {
+
+  private getDisplayWidth(text: string): number {
+    let width = 0;
+    for (const char of text) {
+      width += /[^\u0000-\u00ff]/.test(char) ? 2 : 1;
+    }
+    return width;
+  }
+
+  private truncateByDisplayWidth(text: string, maxWidth: number, mode: 'start' | 'end' = 'end'): string {
+    const normalized = text.trim();
+    if (!normalized) {
+      return '';
+    }
+
+    if (this.getDisplayWidth(normalized) <= maxWidth) {
+      return normalized;
+    }
+
+    const ellipsis = '...';
+    const ellipsisWidth = this.getDisplayWidth(ellipsis);
+    const targetWidth = Math.max(0, maxWidth - ellipsisWidth);
+    let collected = '';
+    let usedWidth = 0;
+    const chars = [...normalized];
+    const source = mode === 'start' ? [...chars].reverse() : chars;
+
+    for (const char of source) {
+      const charWidth = this.getDisplayWidth(char);
+      if (usedWidth + charWidth > targetWidth) {
+        break;
+      }
+      collected = mode === 'start' ? `${char}${collected}` : `${collected}${char}`;
+      usedWidth += charWidth;
+    }
+
+    return mode === 'start' ? `${ellipsis}${collected}` : `${collected}${ellipsis}`;
+  }
+
+  private compactDirectoryLabel(directory: string, highlightWorkspace: boolean): string {
+    const normalized = directory.trim() || '/';
+    const shortDirectory = this.truncateByDisplayWidth(normalized, 16, 'start');
+    return shortDirectory;
+  }
+
+  private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: boolean): string {
     const title = typeof session.title === 'string' && session.title.trim().length > 0
       ? session.title.trim()
       : '未命名会话';
-    const compactTitle = title.length > 24 ? `${title.slice(0, 24)}...` : title;
+    const compactTitle = this.truncateByDisplayWidth(title, 24, 'end');
     const directory = this.getSessionDirectory(session);
-    const compactDirectory = directory.length > 18 ? `...${directory.slice(-18)}` : directory;
     const shortId = session.id.slice(0, 8);
-    const workspaceLabel = highlightWorkspace ? `【${compactDirectory}】` : compactDirectory;
+    const workspaceLabel = this.compactDirectoryLabel(directory, highlightWorkspace);
     return `${workspaceLabel} / ${shortId} / ${compactTitle}`;
   }
 
   private sortSessionsForCreateChat(sessions: OpencodeSession[]): OpencodeSession[] {
+    return [...sessions].sort((a, b) => {
+      const left = a.time?.updated ?? a.time?.created ?? 0;
+      const right = b.time?.updated ?? b.time?.created ?? 0;
+      if (left !== right) {
+        return right - left;
+      }
+
+      return a.id.localeCompare(b.id, 'en');
+    });
+  }
+
+  private sortSessionsForCreateChatDefault(sessions: OpencodeSession[]): OpencodeSession[] {
     return [...sessions].sort((a, b) => {
       const directoryCompare = this.getSessionDirectory(a).localeCompare(this.getSessionDirectory(b), 'zh-Hans-CN');
       if (directoryCompare !== 0) {
@@ -288,7 +344,7 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
     });
   }
 
-  private async buildCreateChatCardData(selectedSessionId?: string): Promise<CreateChatCardData> {
+  private async buildCreateChatCardData(chatId: string, selectedSessionId?: string): Promise<CreateChatCardData> {
     const sessionOptions: CreateChatSessionOption[] = [
       {
         label: '新建 OpenCode 会话（默认）',
@@ -301,7 +357,11 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
     let sessions: OpencodeSession[] = [];
     if (userConfig.enableManualSessionBind) {
       try {
-        sessions = this.sortSessionsForCreateChat(await opencodeClient.listSessionsAcrossProjects());
+        const sessionOrderMode = commandHandler.getSessionOrderMode(chatId);
+        const allSessions = await opencodeClient.listSessionsAcrossProjects();
+        sessions = sessionOrderMode === 'last_time'
+          ? this.sortSessionsForCreateChat(allSessions)
+          : this.sortSessionsForCreateChatDefault(allSessions);
         totalSessionCount = sessions.length;
 
         let previousDirectory = '';
@@ -342,7 +402,7 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
     selectedSessionId?: string,
     openId?: string
   ): Promise<void> {
-    const cardData = await this.buildCreateChatCardData(selectedSessionId);
+    const cardData = await this.buildCreateChatCardData(chatId, selectedSessionId);
     const card = buildCreateChatCard(cardData);
     let sentCardMessageId: string | null = null;
     if (messageId) {
@@ -430,7 +490,7 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
   }
 
   private async pushFirstContactGuidance(chatId: string, senderId: string, messageId: string): Promise<void> {
-    const createChatData = await this.buildCreateChatCardData();
+    const createChatData = await this.buildCreateChatCardData(chatId);
     const card = buildWelcomeCard(senderId, createChatData);
     const welcomeCardMessageId = await feishuClient.sendCard(chatId, card);
     this.rememberCreateChatSelection(
@@ -439,7 +499,7 @@ private getSessionOptionLabel(session: OpencodeSession, highlightWorkspace: bool
       welcomeCardMessageId || undefined,
       senderId
     );
-    await this.safeReply(messageId, chatId, getHelpText());
+    await commandHandler.replyHelpCard(messageId, chatId, 'p2p');
 
     try {
       await commandHandler.pushPanelCard(chatId, 'p2p');

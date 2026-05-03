@@ -103,6 +103,7 @@ export interface BridgeSettings {
   ROUTER_MODE?: string
   DEFAULT_PROVIDER?: string
   DEFAULT_MODEL?: string
+  CHAT_MODEL_WHITELIST?: string
   // 非多模态模型图片预处理（OCR 回退）
   IMAGE_VISION_PREPROCESS?: string
   VISION_OCR_MODEL?: string
@@ -779,6 +780,20 @@ export const configApi = {
       models,
     }))
     return { providers, raw: res.data.raw }
+  },
+
+  async getModelCatalog(): Promise<ChatModelProviderInfo[]> {
+    const res = await http.get<{ providers: ChatModelProviderInfo[] }>('/opencode/model-catalog')
+    return Array.isArray(res.data.providers) ? res.data.providers : []
+  },
+
+  async syncEnabledModelsFromOpenCode(): Promise<{ source: string; models: string[]; count: number }> {
+    const res = await http.get<{ source: string; models: string[]; count: number }>('/opencode/enabled-models-sync')
+    return {
+      source: res.data.source,
+      models: Array.isArray(res.data.models) ? res.data.models : [],
+      count: typeof res.data.count === 'number' ? res.data.count : 0,
+    }
   },
 
   async getSessions(): Promise<{

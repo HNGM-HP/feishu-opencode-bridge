@@ -491,10 +491,23 @@ function isBlankUserPlaceholder(message: ChatMessageVm): boolean {
 export function buildConversationTurns(messages: ChatMessageVm[]): ConversationTurn[] {
   const turns: ConversationTurn[] = []
   const turnsByUserId = new Map<string, ConversationTurn>()
+  const seenMessageIds = new Set<string>()
   let currentSequentialTurn: ConversationTurn | null = null
 
   for (const message of messages) {
+    if (seenMessageIds.has(message.id)) {
+      continue
+    }
+    seenMessageIds.add(message.id)
+
     if (message.role === 'user') {
+      const existingTurn = turnsByUserId.get(message.id)
+      if (existingTurn) {
+        existingTurn.userMessage = message
+        currentSequentialTurn = existingTurn
+        continue
+      }
+
       const previousTurn = turns[turns.length - 1]
       if (
         isBlankUserPlaceholder(message)
@@ -522,7 +535,9 @@ export function buildConversationTurns(messages: ChatMessageVm[]): ConversationT
     if (parentId) {
       const linkedTurn = turnsByUserId.get(parentId)
       if (linkedTurn) {
-        linkedTurn.assistantMessages.push(message)
+        if (!linkedTurn.assistantMessages.some(item => item.id === message.id)) {
+          linkedTurn.assistantMessages.push(message)
+        }
         continue
       }
     }
@@ -538,17 +553,32 @@ export function buildConversationTurns(messages: ChatMessageVm[]): ConversationT
       continue
     }
 
-    currentSequentialTurn.assistantMessages.push(message)
+    if (!currentSequentialTurn.assistantMessages.some(item => item.id === message.id)) {
+      currentSequentialTurn.assistantMessages.push(message)
+    }
   }
 
-  if (turns.length > 0) {
-    const lastTurn = turns[turns.length - 1]
+  const dedupedTurns: ConversationTurn[] = []
+  const seenTurnSignatures = new Set<string>()
+
+  for (const turn of turns) {
+    const assistantIds = turn.assistantMessages.map(message => message.id).join(',')
+    const signature = `${turn.userMessage?.id || 'orphan'}|${assistantIds}`
+    if (seenTurnSignatures.has(signature)) {
+      continue
+    }
+    seenTurnSignatures.add(signature)
+    dedupedTurns.push(turn)
+  }
+
+  if (dedupedTurns.length > 0) {
+    const lastTurn = dedupedTurns[dedupedTurns.length - 1]
     if (lastTurn.assistantMessages.some(message => message.status === 'streaming')) {
       lastTurn.autoExpand = true
     }
   }
 
-  return turns
+  return dedupedTurns
 }
 
 // 支持的思考强度选项映射，用于标准化不同模型的参数名称

@@ -5,6 +5,7 @@ import { opencodeClient } from '../../opencode/client.js';
 import { configStore } from '../../store/config-store.js';
 import { chatAuthMiddleware } from './chat-auth.js';
 import { KNOWN_EFFORT_LEVELS, normalizeEffortLevel } from '../../commands/effort.js';
+import { modelConfig } from '../../config.js';
 
 function errorMsg(error: unknown): string {
   return error instanceof Error ? error.message : 'Unknown error';
@@ -325,6 +326,8 @@ export function registerChatMetaRoutes(app: Application): void {
     try {
       const providersResult = await opencodeClient.getProviders();
       const providers = Array.isArray(providersResult.providers) ? providersResult.providers : [];
+      const whitelist = new Set(modelConfig.chatModelWhitelist.map(item => item.toLowerCase()));
+      const useWhitelist = whitelist.size > 0;
 
       const items = providers
         .map(provider => {
@@ -341,10 +344,15 @@ export function registerChatMetaRoutes(app: Application): void {
           return {
             id,
             name,
-            models: extractProviderModels(provider),
+            models: extractProviderModels(provider).filter(model => {
+              if (!useWhitelist) {
+                return true;
+              }
+              return whitelist.has(`${id}/${model.id}`.toLowerCase());
+            }),
           };
         })
-        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+        .filter((item): item is NonNullable<typeof item> => Boolean(item && item.models.length > 0))
         .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
 
       res.json({ providers: items });

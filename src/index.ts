@@ -1290,6 +1290,23 @@ async function main() {
     streamStateManager.setErrorNotice(sessionID, '');
   };
 
+  const FEISHU_RENDER_DEDUPE_WINDOW_MS = 15_000;
+  const feishuRecentRenderCache = new Map<string, {
+    status: StreamCardData['status'];
+    signature: string;
+    messageIds: string[];
+    updatedAt: number;
+  }>();
+
+  const pruneFeishuRecentRenderCache = (): void => {
+    const now = Date.now();
+    for (const [key, value] of feishuRecentRenderCache.entries()) {
+      if (now - value.updatedAt > FEISHU_RENDER_DEDUPE_WINDOW_MS) {
+        feishuRecentRenderCache.delete(key);
+      }
+    }
+  };
+
   const formatProviderError = (raw: unknown): string => {
     if (!raw || typeof raw !== 'object') {
       return '模型执行失败';
@@ -1518,6 +1535,39 @@ async function main() {
       }
     );
 
+    pruneFeishuRecentRenderCache();
+    const renderSignature = JSON.stringify(cards);
+    const cachedRender = feishuRecentRenderCache.get(buffer.key);
+
+    if (
+      existingMessageIds.length === 0 &&
+      cachedRender &&
+      cachedRender.messageIds.length > 0 &&
+      Date.now() - cachedRender.updatedAt <= FEISHU_RENDER_DEDUPE_WINDOW_MS
+    ) {
+      existingMessageIds = [...cachedRender.messageIds];
+      outputBuffer.setMessageId(buffer.key, existingMessageIds[0]);
+      streamStateManager.setCardMessageIds(buffer.key, existingMessageIds);
+    }
+
+    if (
+      cachedRender &&
+      cachedRender.status === status &&
+      cachedRender.signature === renderSignature &&
+      cachedRender.messageIds.length > 0 &&
+      Date.now() - cachedRender.updatedAt <= FEISHU_RENDER_DEDUPE_WINDOW_MS
+    ) {
+      outputBuffer.setMessageId(buffer.key, cachedRender.messageIds[0]);
+      streamStateManager.setCardMessageIds(buffer.key, [...cachedRender.messageIds]);
+
+      if (buffer.status !== 'running') {
+        streamStateManager.clear(buffer.key);
+        clearPartSnapshotsForSession(buffer.sessionId);
+        outputBuffer.clear(buffer.key);
+      }
+      return;
+    }
+
     const nextMessageIds: string[] = [];
 
     const feishuAdapter = getCachedAdapter('feishu');
@@ -1536,14 +1586,8 @@ async function main() {
           nextMessageIds.push(existingMessageId);
           continue;
         }
-
-        const replacementMessageId = await sender.sendCard(conversationId, card);
-        if (replacementMessageId) {
-          void sender.deleteMessage(existingMessageId).catch(() => undefined);
-          nextMessageIds.push(replacementMessageId);
-        } else {
-          nextMessageIds.push(existingMessageId);
-        }
+        console.warn(`[outputBuffer] 飞书卡片更新失败，保留原卡避免重复发卡: buffer=${buffer.key}, msgId=${existingMessageId}`);
+        nextMessageIds.push(existingMessageId);
         continue;
       }
 
@@ -1564,6 +1608,12 @@ async function main() {
     if (nextMessageIds.length > 0) {
       outputBuffer.setMessageId(buffer.key, nextMessageIds[0]);
       streamStateManager.setCardMessageIds(buffer.key, nextMessageIds);
+      feishuRecentRenderCache.set(buffer.key, {
+        status,
+        signature: renderSignature,
+        messageIds: [...nextMessageIds],
+        updatedAt: Date.now(),
+      });
     } else {
       streamStateManager.setCardMessageIds(buffer.key, []);
     }
