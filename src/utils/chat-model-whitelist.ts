@@ -55,3 +55,118 @@ export function parseChatModelReference(raw: string | undefined): { providerId: 
 
   return { providerId, modelId };
 }
+
+export interface ChatModelCatalogItem {
+  providerId: string;
+  providerName: string;
+  modelId: string;
+  modelName: string;
+}
+
+export function collectAllowedChatModels(providers: unknown[]): ChatModelCatalogItem[] {
+  const items: ChatModelCatalogItem[] = [];
+  const seen = new Set<string>();
+
+  for (const provider of providers) {
+    if (!provider || typeof provider !== 'object') {
+      continue;
+    }
+
+    const providerRecord = provider as Record<string, unknown>;
+    const providerId = typeof providerRecord.id === 'string' ? providerRecord.id.trim() : '';
+    if (!providerId) {
+      continue;
+    }
+
+    const providerName = typeof providerRecord.name === 'string' && providerRecord.name.trim()
+      ? providerRecord.name.trim()
+      : providerId;
+
+    const rawModels = providerRecord.models;
+    if (Array.isArray(rawModels)) {
+      for (const rawModel of rawModels) {
+        if (!rawModel || typeof rawModel !== 'object') {
+          continue;
+        }
+
+        const modelRecord = rawModel as Record<string, unknown>;
+        const modelId = typeof modelRecord.id === 'string' ? modelRecord.id.trim() : '';
+        if (!modelId || !isChatModelAllowed(providerId, modelId)) {
+          continue;
+        }
+
+        const key = buildChatModelWhitelistKey(providerId, modelId);
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+
+        items.push({
+          providerId,
+          providerName,
+          modelId,
+          modelName: typeof modelRecord.name === 'string' && modelRecord.name.trim()
+            ? modelRecord.name.trim()
+            : modelId,
+        });
+      }
+      continue;
+    }
+
+    if (!rawModels || typeof rawModels !== 'object') {
+      continue;
+    }
+
+    const modelMap = rawModels as Record<string, unknown>;
+    for (const [modelKey, rawModel] of Object.entries(modelMap)) {
+      const modelRecord = rawModel && typeof rawModel === 'object'
+        ? rawModel as Record<string, unknown>
+        : undefined;
+      const modelId = typeof modelRecord?.id === 'string' && modelRecord.id.trim()
+        ? modelRecord.id.trim()
+        : modelKey.trim();
+      if (!modelId || !isChatModelAllowed(providerId, modelId)) {
+        continue;
+      }
+
+      const key = buildChatModelWhitelistKey(providerId, modelId);
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+
+      items.push({
+        providerId,
+        providerName,
+        modelId,
+        modelName: typeof modelRecord?.name === 'string' && modelRecord.name.trim()
+          ? modelRecord.name.trim()
+          : modelId,
+      });
+    }
+  }
+
+  return items;
+}
+
+export function findAllowedChatModel(
+  providers: unknown[],
+  rawInput: string | undefined
+): ChatModelCatalogItem | null {
+  const normalized = typeof rawInput === 'string' ? rawInput.trim().toLowerCase() : '';
+  if (!normalized) {
+    return null;
+  }
+
+  const models = collectAllowedChatModels(providers);
+  return models.find(model => {
+    const candidates = [
+      `${model.providerId}:${model.modelId}`,
+      `${model.providerId}/${model.modelId}`,
+      model.modelId,
+      model.modelName,
+    ];
+
+    return candidates.some(candidate => candidate.trim().toLowerCase() === normalized);
+  }) || null;
+}

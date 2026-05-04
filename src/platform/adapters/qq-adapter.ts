@@ -7,7 +7,7 @@
  */
 
 import WebSocket from 'ws';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import type {
   PlatformAdapter,
   PlatformMessageEvent,
@@ -186,6 +186,49 @@ class QQOfficialClient {
     private readonly appId: string,
     private readonly secret: string,
   ) {}
+
+  private resetAccessToken(): void {
+    this.accessToken = null;
+    this.accessTokenExpiresAt = 0;
+    this.accessTokenPromise = null;
+  }
+
+  private isAccessTokenExpiredError(error: unknown): boolean {
+    if (!(error instanceof AxiosError)) {
+      return false;
+    }
+
+    const responseData = error.response?.data as {
+      code?: number | string;
+      err_code?: number | string;
+      message?: string;
+    } | undefined;
+
+    const errorCode = responseData?.err_code ?? responseData?.code;
+    const normalizedCode = typeof errorCode === 'string' ? Number(errorCode) : errorCode;
+    if (normalizedCode === 11244) {
+      return true;
+    }
+
+    const message = responseData?.message?.toLowerCase();
+    return typeof message === 'string' && message.includes('token not exist or expire');
+  }
+
+  private async postMessage(
+    endpoint: string,
+    requestData: Record<string, unknown>,
+    accessToken: string,
+  ): Promise<string | null> {
+    const response = await axios.post(endpoint, requestData, {
+      headers: {
+        'Authorization': `QQBot ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      timeout: 30000,
+    });
+
+    return response.data?.id || response.data?.msg_id || null;
+  }
 
   private async fetchAccessToken(): Promise<string> {
     console.log('[QQ Official] 获取 Access Token...');
@@ -503,7 +546,6 @@ class QQOfficialClient {
   async sendMessage(chatId: string, text: string, msgId?: string): Promise<string | null> {
     try {
       const content = removeMarkdownFormatting(text);
-      const accessToken = await this.getValidAccessToken();
       const isGroup = chatId.startsWith('group_');
       const targetId = chatId.replace(/^(group_|c2c_)/, '');
 
@@ -520,15 +562,19 @@ class QQOfficialClient {
         requestData.msg_id = msgId;
       }
 
-      const response = await axios.post(endpoint, requestData, {
-        headers: {
-          'Authorization': `QQBot ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        timeout: 30000,
-      });
+      try {
+        const accessToken = await this.getValidAccessToken();
+        return await this.postMessage(endpoint, requestData, accessToken);
+      } catch (error) {
+        if (!this.isAccessTokenExpiredError(error)) {
+          throw error;
+        }
 
-      return response.data?.id || response.data?.msg_id || null;
+        console.warn('[QQ Official] 发送消息时 Access Token 已失效，刷新后重试一次');
+        this.resetAccessToken();
+        const refreshedAccessToken = await this.getValidAccessToken();
+        return await this.postMessage(endpoint, requestData, refreshedAccessToken);
+      }
     } catch (error) {
       console.error('[QQ Official] 发送消息失败:', error);
       return null;

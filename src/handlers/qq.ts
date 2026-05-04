@@ -19,6 +19,12 @@ import { permissionHandler } from '../permissions/handler.js';
 import { questionHandler, type PendingQuestion } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
 import type { PlatformMessageEvent, PlatformSender } from '../platform/types.js';
+import {
+  collectAllowedChatModels,
+  findAllowedChatModel,
+  isChatModelAllowed,
+  parseChatModelReference,
+} from '../utils/chat-model-whitelist.js';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import { promises as fs } from 'fs';
@@ -678,39 +684,28 @@ export class QQHandler {
       const providersResult = await opencodeClient.getProviders();
       const providers = Array.isArray(providersResult.providers) ? providersResult.providers : [];
 
-      let matchedModel: { providerId: string; modelId: string } | null = null;
-      for (const provider of providers) {
-        const providerId = (provider as Record<string, unknown>)?.id as string | undefined;
-        const models = (provider as Record<string, unknown>)?.models;
-        if (!providerId || !models) continue;
-
-        const modelList = Array.isArray(models) ? models : Object.values(models as Record<string, unknown>);
-        for (const model of modelList) {
-          const modelId = (model as Record<string, unknown>)?.id as string | undefined;
-          if (!modelId) continue;
-
-          if (
-            modelId.toLowerCase() === normalizedModelName.toLowerCase() ||
-            `${providerId}:${modelId}`.toLowerCase() === normalizedModelName.toLowerCase()
-          ) {
-            matchedModel = { providerId, modelId };
-            break;
-          }
-        }
-        if (matchedModel) break;
-      }
+      const matchedModel = findAllowedChatModel(providers, normalizedModelName);
 
       if (matchedModel) {
         chatSessionStore.updateConfigByConversation('qq', chatId, {
           preferredModel: `${matchedModel.providerId}:${matchedModel.modelId}`,
         });
         await sender.sendText(chatId, `已切换模型: ${matchedModel.providerId}:${matchedModel.modelId}`);
-      } else if (normalizedModelName.includes(':')) {
-        // 强制设置格式正确的模型
+      } else if (normalizedModelName.includes(':') || normalizedModelName.includes('/')) {
+        const parsedModel = parseChatModelReference(normalizedModelName);
+        if (!parsedModel) {
+          await sender.sendText(chatId, `未找到模型 "${normalizedModelName}"`);
+          return;
+        }
+        if (!isChatModelAllowed(parsedModel.providerId, parsedModel.modelId)) {
+          await sender.sendText(chatId, `模型 "${normalizedModelName}" 不在当前允许列表中`);
+          return;
+        }
+
         chatSessionStore.updateConfigByConversation('qq', chatId, {
-          preferredModel: normalizedModelName,
+          preferredModel: `${parsedModel.providerId}:${parsedModel.modelId}`,
         });
-        await sender.sendText(chatId, `已设置模型: ${normalizedModelName}`);
+        await sender.sendText(chatId, `已设置模型: ${parsedModel.providerId}:${parsedModel.modelId}`);
       } else {
         await sender.sendText(chatId, `未找到模型 "${normalizedModelName}"`);
       }
@@ -737,48 +732,31 @@ export class QQHandler {
       const lines: string[] = ['📋 可用模型列表\n'];
       let totalCount = 0;
 
-      for (const provider of providers) {
-        const providerId = (provider as Record<string, unknown>).id as string | undefined;
-        const providerName = (provider as Record<string, unknown>).name || providerId || 'Unknown';
-        const rawModels = (provider as Record<string, unknown>).models;
+      const models = collectAllowedChatModels(providers);
+      const providerGroups = new Map<string, { providerName: string; models: Array<{ id: string; name: string }> }>();
 
-        // models 可能是数组，也可能是对象（Map）
-        const models: Array<{ id: string; name?: string }> = [];
-        if (Array.isArray(rawModels)) {
-          for (const m of rawModels) {
-            if (m && typeof m === 'object') {
-              const mr = m as Record<string, unknown>;
-              models.push({
-                id: (mr.id as string) || '',
-                name: mr.name as string | undefined,
-              });
-            }
-          }
-        } else if (rawModels && typeof rawModels === 'object') {
-          // SDK 返回的是对象 Map<string, Model>
-          const modelMap = rawModels as Record<string, unknown>;
-          for (const [modelId, modelInfo] of Object.entries(modelMap)) {
-            if (modelInfo && typeof modelInfo === 'object') {
-              const mi = modelInfo as Record<string, unknown>;
-              models.push({
-                id: modelId,
-                name: (mi.name as string) || modelId,
-              });
-            }
-          }
+      for (const model of models) {
+        if (!providerGroups.has(model.providerId)) {
+          providerGroups.set(model.providerId, {
+            providerName: model.providerName,
+            models: [],
+          });
         }
+        providerGroups.get(model.providerId)!.models.push({ id: model.modelId, name: model.modelName });
+      }
 
-        if (models.length === 0) continue;
-        lines.push(`【${providerName}】`);
+      for (const [providerId, group] of providerGroups.entries()) {
+        if (group.models.length === 0) continue;
+        lines.push(`【${group.providerName}】`);
 
-        for (const model of models.slice(0, 10)) {
+        for (const model of group.models.slice(0, 10)) {
           const modelDisplay = model.name || model.id;
           lines.push(`  ${modelDisplay} (${providerId}:${model.id})`);
           totalCount++;
         }
 
-        if (models.length > 10) {
-          lines.push(`  ... 共 ${models.length} 个模型`);
+        if (group.models.length > 10) {
+          lines.push(`  ... 共 ${group.models.length} 个模型`);
         }
         lines.push('');
       }

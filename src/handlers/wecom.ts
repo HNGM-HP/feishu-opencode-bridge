@@ -21,6 +21,12 @@ import { permissionHandler } from '../permissions/handler.js';
 import { questionHandler, type PendingQuestion } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
 import type { PlatformMessageEvent, PlatformSender, PlatformAttachment } from '../platform/types.js';
+import {
+  collectAllowedChatModels,
+  findAllowedChatModel,
+  isChatModelAllowed,
+  parseChatModelReference,
+} from '../utils/chat-model-whitelist.js';
 
 // 附件相关配置
 const ATTACHMENT_BASE_DIR = path.resolve(process.cwd(), 'tmp', 'wecom-uploads');
@@ -483,8 +489,36 @@ export class WeComHandler {
       return;
     }
 
-    chatSessionStore.updateConfig(chatId, { preferredModel: modelName });
-    await sender.sendText(chatId, `已切换模型: ${modelName}`);
+    try {
+      const providersResult = await opencodeClient.getProviders();
+      const providers = Array.isArray(providersResult.providers) ? providersResult.providers : [];
+      const normalizedModelName = modelName.trim();
+      const matchedModel = findAllowedChatModel(providers, normalizedModelName);
+
+      if (matchedModel) {
+        const preferredModel = `${matchedModel.providerId}:${matchedModel.modelId}`;
+        chatSessionStore.updateConfigByConversation('wecom', chatId, { preferredModel });
+        await sender.sendText(chatId, `已切换模型: ${preferredModel}`);
+        return;
+      }
+
+      const parsedModel = parseChatModelReference(normalizedModelName);
+      if (!parsedModel) {
+        await sender.sendText(chatId, `未找到模型 "${normalizedModelName}"`);
+        return;
+      }
+      if (!isChatModelAllowed(parsedModel.providerId, parsedModel.modelId)) {
+        await sender.sendText(chatId, `模型 "${normalizedModelName}" 不在当前允许列表中`);
+        return;
+      }
+
+      const preferredModel = `${parsedModel.providerId}:${parsedModel.modelId}`;
+      chatSessionStore.updateConfigByConversation('wecom', chatId, { preferredModel });
+      await sender.sendText(chatId, `已切换模型: ${preferredModel}`);
+    } catch (error) {
+      console.error('[WeCom] 设置模型失败:', error);
+      await sender.sendText(chatId, '设置模型失败');
+    }
   }
 
   /**
@@ -498,35 +532,28 @@ export class WeComHandler {
       const lines: string[] = ['📋 可用模型列表\n'];
       let totalCount = 0;
 
-      for (const provider of providers) {
-        const providerId = (provider as Record<string, unknown>).id as string | undefined;
-        const providerName = (provider as Record<string, unknown>).name || providerId || 'Unknown';
-        const rawModels = (provider as Record<string, unknown>).models;
+      const models = collectAllowedChatModels(providers);
+      const providerGroups = new Map<string, { providerName: string; models: Array<{ id: string; name: string }> }>();
 
-        const models: Array<{ id: string; name?: string }> = [];
-        if (Array.isArray(rawModels)) {
-          for (const m of rawModels) {
-            if (m && typeof m === 'object') {
-              const mr = m as Record<string, unknown>;
-              models.push({
-                id: (mr.id as string) || '',
-                name: mr.name as string | undefined,
-              });
-            }
-          }
+      for (const model of models) {
+        if (!providerGroups.has(model.providerId)) {
+          providerGroups.set(model.providerId, { providerName: model.providerName, models: [] });
         }
+        providerGroups.get(model.providerId)!.models.push({ id: model.modelId, name: model.modelName });
+      }
 
-        if (models.length === 0) continue;
-        lines.push(`【${providerName}】`);
+      for (const [providerId, group] of providerGroups.entries()) {
+        if (group.models.length === 0) continue;
+        lines.push(`【${group.providerName}】`);
 
-        for (const model of models.slice(0, 10)) {
+        for (const model of group.models.slice(0, 10)) {
           const modelDisplay = model.name || model.id;
           lines.push(`  ${modelDisplay} (${providerId}:${model.id})`);
           totalCount++;
         }
 
-        if (models.length > 10) {
-          lines.push(`  ... 共 ${models.length} 个模型`);
+        if (group.models.length > 10) {
+          lines.push(`  ... 共 ${group.models.length} 个模型`);
         }
         lines.push('');
       }

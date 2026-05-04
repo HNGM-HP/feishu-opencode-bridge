@@ -22,6 +22,12 @@ import { normalizeEffortLevel, KNOWN_EFFORT_LEVELS } from '../commands/effort.js
 import { permissionHandler } from '../permissions/handler.js';
 import { questionHandler, type PendingQuestion } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
+import {
+  collectAllowedChatModels,
+  findAllowedChatModel,
+  isChatModelAllowed,
+  parseChatModelReference,
+} from '../utils/chat-model-whitelist.js';
 
 const WEIXIN_MESSAGE_LIMIT = 1800;
 const WEIXIN_HELP_TEXT = `📖 **微信 × OpenCode 机器人指南**
@@ -711,8 +717,27 @@ export class WeixinHandler {
       }
 
       const normalizedModelName = modelName.trim();
-      chatSessionStore.updateConfigByConversation('weixin', conversationId, { preferredModel: normalizedModelName });
-      await sender?.sendText(conversationId, `✅ 已设置模型: ${normalizedModelName}`);
+      const matchedModel = findAllowedChatModel(providers, normalizedModelName);
+      if (matchedModel) {
+        const preferredModel = `${matchedModel.providerId}:${matchedModel.modelId}`;
+        chatSessionStore.updateConfigByConversation('weixin', conversationId, { preferredModel });
+        await sender?.sendText(conversationId, `✅ 已设置模型: ${preferredModel}`);
+        return;
+      }
+
+      const parsedModel = parseChatModelReference(normalizedModelName);
+      if (!parsedModel) {
+        await sender?.sendText(conversationId, `❌ 未找到模型: ${normalizedModelName}`);
+        return;
+      }
+      if (!isChatModelAllowed(parsedModel.providerId, parsedModel.modelId)) {
+        await sender?.sendText(conversationId, `❌ 模型 "${normalizedModelName}" 不在当前允许列表中`);
+        return;
+      }
+
+      const preferredModel = `${parsedModel.providerId}:${parsedModel.modelId}`;
+      chatSessionStore.updateConfigByConversation('weixin', conversationId, { preferredModel });
+      await sender?.sendText(conversationId, `✅ 已设置模型: ${preferredModel}`);
     } catch (error) {
       console.error('[Weixin] 设置模型失败:', error);
       await sender?.sendText(conversationId, '❌ 设置模型失败');
@@ -779,49 +804,29 @@ export class WeixinHandler {
       const lines: string[] = ['📋 **可用模型列表**\n'];
       let totalCount = 0;
 
-      for (const provider of providers) {
-        const providerId = (provider as Record<string, unknown>).id as string | undefined;
-        const providerName = (provider as Record<string, unknown>).name || providerId || 'Unknown';
-        const rawModels = (provider as Record<string, unknown>).models;
+      const models = collectAllowedChatModels(providers);
+      const providerGroups = new Map<string, { providerName: string; models: Array<{ id: string; name: string }> }>();
 
-        // models 可能是数组，也可能是对象（Map）
-        const models: Array<{ id: string; name?: string }> = [];
-        if (Array.isArray(rawModels)) {
-          for (const m of rawModels) {
-            if (m && typeof m === 'object') {
-              const mr = m as Record<string, unknown>;
-              models.push({
-                id: (mr.id as string) || '',
-                name: mr.name as string | undefined,
-              });
-            }
-          }
-        } else if (rawModels && typeof rawModels === 'object') {
-          // SDK 返回的是对象 Map<string, Model>
-          const modelMap = rawModels as Record<string, unknown>;
-          for (const [modelId, modelInfo] of Object.entries(modelMap)) {
-            if (modelInfo && typeof modelInfo === 'object') {
-              const mi = modelInfo as Record<string, unknown>;
-              models.push({
-                id: modelId,
-                name: (mi.name as string) || modelId,
-              });
-            }
-          }
+      for (const model of models) {
+        if (!providerGroups.has(model.providerId)) {
+          providerGroups.set(model.providerId, { providerName: model.providerName, models: [] });
         }
+        providerGroups.get(model.providerId)!.models.push({ id: model.modelId, name: model.modelName });
+      }
 
-        if (models.length === 0) continue;
-        lines.push(`**${providerName}**`);
+      for (const [providerId, group] of providerGroups.entries()) {
+        if (group.models.length === 0) continue;
+        lines.push(`**${group.providerName}**`);
 
-        for (const model of models.slice(0, 15)) {
+        for (const model of group.models.slice(0, 15)) {
           const modelDisplay = model.name || model.id;
           const modelKey = `${providerId}:${model.id}`;
           lines.push(`  • ${modelDisplay} (\`${modelKey}\`)`);
           totalCount++;
         }
 
-        if (models.length > 15) {
-          lines.push(`  _... 共 ${models.length} 个模型_`);
+        if (group.models.length > 15) {
+          lines.push(`  _... 共 ${group.models.length} 个模型_`);
         }
         lines.push('');
       }

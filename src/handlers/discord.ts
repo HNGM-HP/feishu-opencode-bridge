@@ -26,6 +26,7 @@ import { permissionHandler } from '../permissions/handler.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { validateFilePath } from './file-sender.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
+import { isChatModelAllowed, parseChatModelReference } from '../utils/chat-model-whitelist.js';
 import type { PlatformMessageEvent, PlatformSender } from '../platform/types.js';
 import {
   buildCronHelpText,
@@ -649,6 +650,9 @@ class DiscordHandler {
           ? modelRecord.id.trim()
           : (typeof modelRecord.modelID === 'string' ? modelRecord.modelID.trim() : '');
         if (!modelId) {
+          continue;
+        }
+        if (!isChatModelAllowed(providerId, modelId)) {
           continue;
         }
 
@@ -2219,6 +2223,12 @@ ${pending.risk ? `- 风险：${pending.risk}` : ''}
     if (selected === 'none') {
       chatSessionStore.updateConfigByConversation('discord', conversationId, { preferredModel: undefined });
       await this.safeInteractionReply(interaction, '✅ 已切换为默认模型。');
+      return;
+    }
+
+    const parsedModel = parseChatModelReference(selected);
+    if (!parsedModel || !isChatModelAllowed(parsedModel.providerId, parsedModel.modelId)) {
+      await this.safeInteractionReply(interaction, '❌ 该模型不在当前允许列表中。');
       return;
     }
 
