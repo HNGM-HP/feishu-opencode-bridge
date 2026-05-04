@@ -8,6 +8,18 @@
         </div>
         <div class="header-actions">
           <el-button :icon="Plus" type="primary" @click="openBindDialog()">新增绑定</el-button>
+          <el-popover placement="bottom-end" :width="220" trigger="click">
+            <template #reference>
+              <el-button :icon="Setting">显示列</el-button>
+            </template>
+            <div class="column-toggle-list">
+              <label v-for="column in columnOptions" :key="column.key" class="column-toggle-item">
+                <el-checkbox v-model="columnVisibility[column.key]">
+                  {{ column.label }}
+                </el-checkbox>
+              </label>
+            </div>
+          </el-popover>
           <el-button :icon="Refresh" @click="loadData(true)" :loading="loading">刷新</el-button>
         </div>
       </div>
@@ -92,10 +104,18 @@
         empty-text="暂无会话数据"
         row-key="id"
         @selection-change="handleSelectionChange"
+        @sort-change="handleSortChange"
       >
         <el-table-column type="selection" width="50" />
 
-        <el-table-column label="Session ID" min-width="180" resizable>
+        <el-table-column
+          v-if="columnVisibility.id"
+          prop="id"
+          label="Session ID"
+          min-width="180"
+          resizable
+          sortable="custom"
+        >
           <template #default="{ row }">
             <div class="session-id" :title="row.id">
               {{ row.id }}
@@ -103,19 +123,44 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="标题" min-width="150" resizable show-overflow-tooltip>
+        <el-table-column
+          v-if="columnVisibility.title"
+          prop="title"
+          label="标题"
+          min-width="150"
+          resizable
+          show-overflow-tooltip
+          sortable="custom"
+        >
           <template #default="{ row }">
             <span class="title-text">{{ row.title || '未命名会话' }}</span>
           </template>
         </el-table-column>
 
-        <el-table-column label="工作目录" min-width="180" resizable show-overflow-tooltip>
+        <el-table-column
+          v-if="columnVisibility.directory"
+          prop="directory"
+          label="工作目录"
+          min-width="180"
+          resizable
+          show-overflow-tooltip
+          sortable="custom"
+        >
           <template #default="{ row }">
             <span class="dir-text">{{ row.directory || row.projectPath || '-' }}</span>
           </template>
         </el-table-column>
 
-        <el-table-column label="绑定状态" width="120" min-width="90" align="center" resizable>
+        <el-table-column
+          v-if="columnVisibility.bindStatus"
+          prop="isBound"
+          label="绑定状态"
+          width="120"
+          min-width="90"
+          align="center"
+          resizable
+          sortable="custom"
+        >
           <template #default="{ row }">
             <el-tag v-if="row.localOnly" type="warning" size="small">仅本地</el-tag>
             <el-tag v-else :type="row.isBound ? 'success' : 'info'" size="small">
@@ -124,7 +169,14 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="绑定详情" min-width="200" resizable>
+        <el-table-column
+          v-if="columnVisibility.bindings"
+          prop="bindings"
+          label="绑定详情"
+          min-width="200"
+          resizable
+          sortable="custom"
+        >
           <template #default="{ row }">
             <div v-if="row.bindings.length > 0" class="bindings-list">
               <div v-for="(b, idx) in row.bindings" :key="idx" class="binding-item">
@@ -136,6 +188,19 @@
               </div>
             </div>
             <span v-else class="no-binding">-</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column
+          v-if="columnVisibility.updatedAt"
+          prop="updatedAt"
+          label="最后修改时间"
+          min-width="176"
+          resizable
+          sortable="custom"
+        >
+          <template #default="{ row }">
+            <span class="time-text">{{ formatDateTime(row.updatedAt) }}</span>
           </template>
         </el-table-column>
 
@@ -270,9 +335,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch, reactive } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus, Refresh, Search } from '@element-plus/icons-vue'
+import { Plus, Refresh, Search, Setting } from '@element-plus/icons-vue'
 import {
   sessionApi,
   type PlatformInfo,
@@ -297,8 +362,33 @@ const filterPlatform = ref('')
 const searchText = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
+const sortState = ref<{ prop: SortableSessionColumn | ''; order: 'ascending' | 'descending' | null }>({
+  prop: '',
+  order: null,
+})
 
 const selectedRows = ref<OpenCodeSession[]>([])
+
+type SortableSessionColumn = 'id' | 'title' | 'directory' | 'isBound' | 'bindings' | 'updatedAt'
+type ColumnVisibilityKey = 'id' | 'title' | 'directory' | 'bindStatus' | 'bindings' | 'updatedAt'
+
+const columnVisibility = reactive<Record<ColumnVisibilityKey, boolean>>({
+  id: true,
+  title: true,
+  directory: true,
+  bindStatus: true,
+  bindings: true,
+  updatedAt: false,
+})
+
+const columnOptions: Array<{ key: ColumnVisibilityKey; label: string }> = [
+  { key: 'id', label: 'Session ID' },
+  { key: 'title', label: '标题' },
+  { key: 'directory', label: '工作目录' },
+  { key: 'bindStatus', label: '绑定状态' },
+  { key: 'bindings', label: '绑定详情' },
+  { key: 'updatedAt', label: '最后修改时间' },
+]
 
 // 防抖
 let searchTimer: ReturnType<typeof setTimeout> | null = null
@@ -351,7 +441,14 @@ const filteredSessions = computed(() => {
     )
   }
 
-  return result
+  if (!sortState.value.prop || !sortState.value.order) {
+    return result
+  }
+
+  const direction = sortState.value.order === 'ascending' ? 1 : -1
+  const sorted = [...result]
+  sorted.sort((left, right) => compareSessions(left, right, sortState.value.prop as SortableSessionColumn, direction))
+  return sorted
 })
 
 const total = computed(() => filteredSessions.value.length)
@@ -475,6 +572,67 @@ function getPlatformName(platformId: string): string {
 
 function handleSelectionChange(rows: OpenCodeSession[]) {
   selectedRows.value = rows
+}
+
+function handleSortChange(payload: { prop: string; order: 'ascending' | 'descending' | null }) {
+  const prop = payload.prop as SortableSessionColumn | ''
+  sortState.value = {
+    prop,
+    order: payload.order,
+  }
+  currentPage.value = 1
+}
+
+function compareSessions(
+  left: OpenCodeSession,
+  right: OpenCodeSession,
+  prop: SortableSessionColumn,
+  direction: 1 | -1,
+) {
+  const compareText = (a: string, b: string) => a.localeCompare(b, 'zh-Hans-CN')
+
+  switch (prop) {
+    case 'id':
+      return compareText(left.id || '', right.id || '') * direction
+    case 'title':
+      return compareText(left.title || '', right.title || '') * direction
+    case 'directory':
+      return compareText(left.directory || left.projectPath || '', right.directory || right.projectPath || '') * direction
+    case 'isBound': {
+      const leftRank = left.localOnly ? 2 : left.isBound ? 1 : 0
+      const rightRank = right.localOnly ? 2 : right.isBound ? 1 : 0
+      if (leftRank !== rightRank) {
+        return (leftRank - rightRank) * direction
+      }
+      return compareText(left.id || '', right.id || '') * direction
+    }
+    case 'bindings': {
+      const bindingCountDiff = left.bindings.length - right.bindings.length
+      if (bindingCountDiff !== 0) {
+        return bindingCountDiff * direction
+      }
+      const leftBindings = left.bindings.map(item => `${item.platform}:${item.conversationId}`).join('|')
+      const rightBindings = right.bindings.map(item => `${item.platform}:${item.conversationId}`).join('|')
+      return compareText(leftBindings, rightBindings) * direction
+    }
+    case 'updatedAt': {
+      const leftTime = left.updatedAt || 0
+      const rightTime = right.updatedAt || 0
+      if (leftTime !== rightTime) {
+        return (leftTime - rightTime) * direction
+      }
+      return compareText(left.id || '', right.id || '') * direction
+    }
+    default:
+      return 0
+  }
+}
+
+function formatDateTime(timestamp?: number) {
+  if (!timestamp) {
+    return '-'
+  }
+  return new Date(timestamp).toLocaleString('zh-CN', { hour12: false })
 }
 
 function openBindDialog(_binding?: undefined, sessionId?: string) {
@@ -690,6 +848,17 @@ async function handleBatchDelete() {
 .filter-card { margin-bottom: 16px; }
 .data-card { margin-bottom: 20px; }
 
+.column-toggle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.column-toggle-item {
+  display: flex;
+  align-items: center;
+}
+
 .batch-actions {
   display: flex;
   align-items: center;
@@ -717,6 +886,12 @@ async function handleBatchDelete() {
   text-overflow: ellipsis;
   white-space: nowrap;
   display: block;
+}
+
+.time-text {
+  font-size: 12px;
+  color: #606266;
+  white-space: nowrap;
 }
 
 .bindings-list { display: flex; flex-direction: column; gap: 4px; }

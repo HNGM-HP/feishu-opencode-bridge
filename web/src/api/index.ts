@@ -291,6 +291,7 @@ export interface OpenCodeSession {
   id: string
   title?: string
   createdAt?: string
+  updatedAt?: number
   projectPath?: string
   directory?: string
   isBound: boolean
