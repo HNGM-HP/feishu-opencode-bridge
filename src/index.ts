@@ -1298,6 +1298,11 @@ async function main() {
     messageIds: string[];
     updatedAt: number;
   }>();
+  const qqProgressState = new Map<string, {
+    sentThinking: string;
+    lastThinkingChunk: string;
+    finalSent: boolean;
+  }>();
 
   const pruneFeishuRecentRenderCache = (): void => {
     const now = Date.now();
@@ -1306,6 +1311,35 @@ async function main() {
         feishuRecentRenderCache.delete(key);
       }
     }
+  };
+
+  const getQQProgressState = (bufferKey: string): { sentThinking: string; lastThinkingChunk: string; finalSent: boolean } => {
+    let state = qqProgressState.get(bufferKey);
+    if (!state) {
+      state = {
+        sentThinking: '',
+        lastThinkingChunk: '',
+        finalSent: false,
+      };
+      qqProgressState.set(bufferKey, state);
+    }
+    return state;
+  };
+
+  const getIncrementalSuffix = (fullText: string, sentText: string): string => {
+    if (!fullText) {
+      return '';
+    }
+    if (!sentText) {
+      return fullText;
+    }
+    if (fullText.startsWith(sentText)) {
+      return fullText.slice(sentText.length);
+    }
+    if (sentText.startsWith(fullText)) {
+      return '';
+    }
+    return fullText;
   };
 
   const formatProviderError = (raw: unknown): string => {
@@ -1474,6 +1508,58 @@ async function main() {
       status,
       showThinking: false,
     };
+
+    if (platform === 'qq') {
+      const sender = getSenderByPlatform(platform);
+      if (!sender) {
+        console.error('[outputBuffer] 无法获取 QQ sender');
+        return;
+      }
+
+      const onlyText = chatSessionStore.getSessionByConversation('qq', conversationId)?.qqOutputOnlyText === true;
+      const progress = getQQProgressState(buffer.key);
+
+      const thinkingDelta = getIncrementalSuffix(current.thinking, progress.sentThinking);
+      const normalizedThinkingDelta = thinkingDelta.trim();
+
+      if (normalizedThinkingDelta && normalizedThinkingDelta !== progress.lastThinkingChunk) {
+        const safeThinkingDelta = normalizedThinkingDelta.replace(/```/g, '` ` `');
+        const thinkingPayload = onlyText
+          ? `思考过程：\n${normalizedThinkingDelta}`
+          : `**思考过程**\n\`\`\`text\n${safeThinkingDelta}\n\`\`\``;
+        await sender.sendCard(conversationId, onlyText
+          ? { qqText: thinkingPayload, forcePlainText: true }
+          : { markdown: thinkingPayload, qqText: thinkingPayload });
+        progress.sentThinking = current.thinking;
+        progress.lastThinkingChunk = normalizedThinkingDelta;
+      } else if (current.thinking.length > progress.sentThinking.length) {
+        progress.sentThinking = current.thinking;
+      }
+
+      if (buffer.status !== 'running' && !progress.finalSent) {
+        const finalCardData: StreamCardData = {
+          ...cardData,
+          thinking: '',
+          segments: (cardData.segments ?? []).filter(segment => segment.type !== 'reasoning'),
+        };
+        const finalPayload = buildPortableUpdatePayload(finalCardData, conversationId, 'qq');
+        await sender.sendCard(
+          conversationId,
+          onlyText
+            ? { qqText: finalPayload.qqText, forcePlainText: true }
+            : { markdown: finalPayload.markdown, qqText: finalPayload.qqText }
+        );
+        progress.finalSent = true;
+      }
+
+      if (buffer.status !== 'running') {
+        qqProgressState.delete(buffer.key);
+        streamStateManager.clear(buffer.key);
+        clearPartSnapshotsForSession(buffer.sessionId);
+        outputBuffer.clear(buffer.key);
+      }
+      return;
+    }
 
     if (platform !== 'feishu') {
       const sender = getSenderByPlatform(platform);

@@ -106,6 +106,162 @@ export function buildPortableUpdateText(data: StreamCardData, showThinking: bool
   return '⏳ 正在处理...';
 }
 
+function normalizeSegmentText(text: string): string {
+  return text.replace(/\r\n/g, '\n').trim();
+}
+
+function uniqueOrderedTexts(items: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const item of items) {
+    const normalized = normalizeSegmentText(item);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function buildQQSegmentText(
+  data: StreamCardData,
+  type: 'reasoning' | 'text',
+  fallback: string
+): string {
+  const segmentTexts = uniqueOrderedTexts(
+    (data.segments ?? [])
+      .filter((segment): segment is Extract<NonNullable<StreamCardData['segments']>[number], { type: 'reasoning' | 'text' }> => segment.type === type)
+      .map(segment => segment.text)
+  );
+
+  if (segmentTexts.length === 0) {
+    return normalizeSegmentText(fallback);
+  }
+
+  return segmentTexts.join('\n\n');
+}
+
+function stripDuplicatedReasoning(mainText: string, reasoningText: string): string {
+  const main = normalizeSegmentText(mainText);
+  const reasoning = normalizeSegmentText(reasoningText);
+
+  if (!main || !reasoning) {
+    return main;
+  }
+
+  if (main === reasoning) {
+    return '';
+  }
+
+  if (main.startsWith(reasoning)) {
+    return main.slice(reasoning.length).trimStart();
+  }
+
+  const doubled = `${reasoning}\n\n`;
+  if (main.startsWith(doubled)) {
+    return main.slice(doubled.length).trimStart();
+  }
+
+  const firstIndex = main.indexOf(reasoning);
+  if (firstIndex >= 0) {
+    const trimmed = `${main.slice(0, firstIndex)}${main.slice(firstIndex + reasoning.length)}`.trim();
+    return trimmed;
+  }
+
+  return main;
+}
+
+function buildQQMarkdownUpdateText(data: StreamCardData, showThinking: boolean = true): string {
+  const reasoningText = showThinking ? buildQQSegmentText(data, 'reasoning', data.thinking) : '';
+  const mainText = stripDuplicatedReasoning(buildQQSegmentText(data, 'text', data.text), reasoningText);
+
+  if (mainText && reasoningText) {
+    const safeThinking = reasoningText.replace(/```/g, '` ` `');
+    const clippedThinking = safeThinking.length > 1400
+      ? `${safeThinking.slice(0, 1400)}\n...(思考内容已截断)`
+      : safeThinking;
+    return [
+      '**思考过程**',
+      clippedThinking,
+      '',
+      '**回复**',
+      mainText,
+    ].join('\n');
+  }
+
+  if (mainText) {
+    return mainText;
+  }
+
+  if (reasoningText) {
+    const safeThinking = reasoningText.replace(/```/g, '` ` `');
+    const clippedThinking = safeThinking.length > 1400
+      ? `${safeThinking.slice(0, 1400)}\n...(思考内容已截断)`
+      : safeThinking;
+    return [
+      '**思考过程**',
+      clippedThinking,
+      '',
+      '⏳ 正在处理...',
+    ].join('\n');
+  }
+
+  if (data.status === 'failed') {
+    return '❌ 执行失败';
+  }
+
+  if (data.status === 'completed') {
+    return '✅ 已完成';
+  }
+
+  return '⏳ 正在处理...';
+}
+
+function buildQQPlainUpdateText(data: StreamCardData, showThinking: boolean = true): string {
+  const reasoningText = showThinking ? buildQQSegmentText(data, 'reasoning', data.thinking) : '';
+  const mainText = stripDuplicatedReasoning(buildQQSegmentText(data, 'text', data.text), reasoningText);
+
+  if (mainText && reasoningText) {
+    const clippedThinking = reasoningText.length > 1400
+      ? `${reasoningText.slice(0, 1400)}\n...(思考内容已截断)`
+      : reasoningText;
+    return [
+      '思考过程：',
+      clippedThinking,
+      '',
+      '回复：',
+      mainText,
+    ].join('\n');
+  }
+
+  if (mainText) {
+    return mainText;
+  }
+
+  if (reasoningText) {
+    const clippedThinking = reasoningText.length > 1400
+      ? `${reasoningText.slice(0, 1400)}\n...(思考内容已截断)`
+      : reasoningText;
+    return [
+      '思考过程：',
+      clippedThinking,
+      '',
+      '⏳ 正在处理...',
+    ].join('\n');
+  }
+
+  if (data.status === 'failed') {
+    return '❌ 执行失败';
+  }
+
+  if (data.status === 'completed') {
+    return '✅ 已完成';
+  }
+
+  return '⏳ 正在处理...';
+}
+
 /**
  * 可移植更新负载类型
  */
@@ -157,6 +313,82 @@ export function buildPortableUpdatePayload(
     ...data,
     segments: filteredSegments,
   };
+
+  if (platform === 'qq') {
+    const qqMarkdownText = buildQQMarkdownUpdateText(filteredData, showThinkingChain);
+    const qqPlainText = buildQQPlainUpdateText(filteredData, showThinkingChain);
+
+    if (!data.pendingQuestion) {
+      return {
+        text: qqPlainText,
+        markdown: qqMarkdownText,
+        qqText: qqPlainText,
+        telegramText: qqPlainText,
+        discordText: qqMarkdownText,
+      };
+    }
+
+    const questionLine = `❓ ${data.pendingQuestion.question}`;
+    const progressLine = `第 ${data.pendingQuestion.questionIndex + 1}/${data.pendingQuestion.totalQuestions} 题`;
+    const qqMarkdownWithQuestion = `${qqMarkdownText}\n${questionLine}\n${progressLine}`;
+    const qqPlainWithQuestion = `${qqPlainText}\n\n${questionLine}\n${progressLine}`;
+
+    const optionList = data.pendingQuestion.options
+      .filter(option => option.label.trim().length > 0)
+      .slice(0, 24)
+      .map(option => ({
+        label: option.label,
+        value: option.label,
+        ...(option.description ? { description: option.description } : {}),
+      }));
+
+    const options = [...optionList, {
+      label: '跳过本题',
+      value: '__skip__',
+      description: '留空并进入下一题',
+    }];
+
+    if (options.length === 0) {
+      return {
+        text: qqPlainWithQuestion,
+        markdown: qqMarkdownWithQuestion,
+        qqText: qqPlainWithQuestion,
+        telegramText: qqPlainWithQuestion,
+        discordText: qqMarkdownWithQuestion,
+      };
+    }
+
+    const maxValues = data.pendingQuestion.multiple
+      ? Math.min(Math.max(1, optionList.length), 25)
+      : 1;
+
+    const telegramButtons = optionList.slice(0, 8).map((opt, idx) => ({
+      text: opt.label,
+      callback_data: `oc_question:${idx}`,
+    }));
+    if (telegramButtons.length < 8) {
+      telegramButtons.push({ text: '跳过本题', callback_data: 'oc_question:skip' });
+    }
+
+    return {
+      text: qqPlainWithQuestion,
+      markdown: qqMarkdownWithQuestion,
+      qqText: qqPlainWithQuestion,
+      telegramText: qqPlainWithQuestion,
+      discordText: qqMarkdownWithQuestion,
+      discordComponents: [
+        {
+          type: 'select',
+          customId: `oc_question:${conversationId}`,
+          placeholder: '选择当前问题答案',
+          options,
+          minValues: 1,
+          maxValues,
+        },
+      ],
+      buttons: telegramButtons,
+    };
+  }
 
   const baseText = buildPortableUpdateText(filteredData, showThinkingChain);
   const telegramBaseText = buildTelegramText(filteredData, showThinkingChain);
