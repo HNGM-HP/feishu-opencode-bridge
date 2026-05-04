@@ -176,7 +176,7 @@
         </template>
 
         <el-alert type="info" :closable="false" show-icon style="margin-bottom:16px">
-          支持按提供商折叠/展开，也支持按当前筛选结果全选。刷新按钮会重新读取 OpenCode 当前运行时配置与最新 provider/model 目录，并补齐配置中已声明的模型。
+          支持按提供商折叠/展开，也支持按当前筛选结果全选。刷新按钮会重新读取 OpenCode 当前运行时配置与最新 provider/model 目录，便于核对当前表单是否与运行时配置一致，但不会自动改动你当前的勾选结果。
         </el-alert>
 
         <div class="model-selection-toolbar">
@@ -533,30 +533,16 @@ function toggleProviderCollapsed(providerId: string) {
 async function handleSyncEnabledModels() {
   syncingEnabledModels.value = true
   try {
+    const preservedSelections = [...selectedModelKeys.value]
     await Promise.all([
       loadModelCatalog(),
       loadVisionModels(true),
     ])
+
     const result = await configApi.syncEnabledModelsFromOpenCode()
-    const availableKeys = new Set(allSelectableModelKeys.value)
-    const next = new Set(selectedModelKeys.value)
-    let added = 0
+    setSelectedModelKeys(preservedSelections)
 
-    for (const rawKey of result.models) {
-      const key = rawKey.trim()
-      if (!key || !availableKeys.has(key) || next.has(key)) {
-        continue
-      }
-      next.add(key)
-      added += 1
-    }
-
-    setSelectedModelKeys(Array.from(next))
-    ElMessage.success(
-      added > 0
-        ? `已刷新 OpenCode 配置，并补充 ${added} 个配置模型`
-        : '已刷新 OpenCode 配置，当前没有新增可勾选模型'
-    )
+    ElMessage.success('OpenCode 配置刷新成功')
   } catch (error: any) {
     ElMessage.error(error?.message || '刷新 OpenCode 配置失败')
   } finally {
