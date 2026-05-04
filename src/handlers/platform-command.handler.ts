@@ -67,6 +67,8 @@ export class PlatformCommandHandler {
         case 'session':
           if (command.sessionAction === 'new') {
             await this.handleNewSession(chatId, context.senderId, context.chatType, command.sessionDirectory, command.sessionName, sender);
+          } else if (command.sessionAction === 'switch' && command.sessionId) {
+            await this.handleSwitchSession(chatId, context.senderId, context.chatType, command.sessionId, sender);
           } else {
             await this.sendText(sender, chatId, '用法: /session new 或 /session <sessionId>（列出会话请用 /sessions）');
           }
@@ -281,6 +283,54 @@ export class PlatformCommandHandler {
     } catch (error) {
       console.error(`[${this.platform}] 创建会话失败:`, error);
       await this.sendText(sender, chatId, '❌ 创建会话失败，请稍后重试');
+    }
+  }
+
+  private async handleSwitchSession(
+    chatId: string,
+    userId: string,
+    chatType: 'p2p' | 'group',
+    targetSessionId: string,
+    sender: PlatformSender
+  ): Promise<void> {
+    if (!userConfig.enableManualSessionBind) {
+      await this.sendText(sender, chatId, '当前未开启手动绑定已有会话');
+      return;
+    }
+
+    const normalizedSessionId = targetSessionId.trim();
+    if (!normalizedSessionId) {
+      await this.sendText(sender, chatId, '请提供要切换的 Session ID');
+      return;
+    }
+
+    try {
+      const session = await opencodeClient.findSessionAcrossProjects(normalizedSessionId);
+      if (!session) {
+        await this.sendText(sender, chatId, `未找到会话: ${normalizedSessionId}`);
+        return;
+      }
+
+      chatSessionStore.setSessionByConversation(
+        this.platform,
+        chatId,
+        session.id,
+        userId,
+        session.title || '未命名会话',
+        {
+          chatType,
+          resolvedDirectory: session.directory,
+        }
+      );
+
+      const lines = [`已切换到会话: ${session.id}`];
+      if (session.directory) {
+        lines.push(`工作目录: ${session.directory}`);
+      }
+      await this.sendText(sender, chatId, lines.join('\n'));
+    } catch (error) {
+      console.error(`[${this.platform}] 切换会话失败:`, error);
+      await this.sendText(sender, chatId, '切换会话失败，请稍后重试');
     }
   }
 

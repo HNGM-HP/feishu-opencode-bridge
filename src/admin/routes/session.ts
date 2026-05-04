@@ -519,6 +519,7 @@ export function createSessionRoutes(): express.Router {
       { id: 'qq', name: 'QQ', icon: 'qq' },
       { id: 'whatsapp', name: 'WhatsApp', icon: 'whatsapp' },
       { id: 'weixin', name: '个人微信', icon: 'weixin' },
+      { id: 'dingtalk', name: '钉钉', icon: 'dingtalk' },
     ];
     res.json({ platforms });
   });
