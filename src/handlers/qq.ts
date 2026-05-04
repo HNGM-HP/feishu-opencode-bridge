@@ -174,6 +174,9 @@ function getQQHelpText(): string {
 /config session order - 查看当前会话排序模式
 /config session order default - 使用默认排序
 /config session order last_time - 按最后修改时间倒序
+/config output onlyText - 查看 QQ 纯文本输出模式
+/config output onlyText true - 启用 QQ 纯文本输出
+/config output onlyText false - 恢复 QQ Markdown 输出
 /clear - 清空对话上下文
 /stop - 停止当前生成
 /help - 显示此帮助
@@ -192,7 +195,8 @@ function getQQHelpText(): string {
 回复"跳过"可跳过当前问题
 
 提示
-切换的模型/角色仅对当前会话生效。`;
+切换的模型/角色仅对当前会话生效。
+当前版本电脑 QQ 的 Markdown 渲染可能不稳定；如出现内容被吞或显示异常，可使用 /config output onlyText true 切换为纯文本输出。`;
 }
 
 function buildQQCmdInput(text: string, show?: string): string {
@@ -217,6 +221,9 @@ function getQQHelpMarkdown(): string {
     `${buildQQCmdInput('/config session order')} - 查看当前会话排序模式`,
     `${buildQQCmdInput('/config session order default')} - 使用默认排序`,
     `${buildQQCmdInput('/config session order last_time')} - 按最后修改时间倒序`,
+    `${buildQQCmdInput('/config output onlyText')} - 查看 QQ 纯文本输出模式`,
+    `${buildQQCmdInput('/config output onlyText true')} - 启用 QQ 纯文本输出`,
+    `${buildQQCmdInput('/config output onlyText false')} - 恢复 QQ Markdown 输出`,
     `${buildQQCmdInput('/clear')} - 清空对话上下文`,
     `${buildQQCmdInput('/stop')} - 停止当前生成`,
     `${buildQQCmdInput('/help')} - 显示此帮助`,
@@ -244,7 +251,8 @@ ${commandLines.join('\n')}
 回复"跳过"可跳过当前问题
 
 ## 提示
-切换的模型/角色仅对当前会话生效。`;
+切换的模型/角色仅对当前会话生效。  
+当前版本电脑 QQ 的 Markdown 渲染可能不稳定；如出现内容被吞或显示异常，可使用 ${buildQQCmdInput('/config output onlyText true')} 切换为纯文本输出。`;
 }
 
 type QQSessionInfo = Awaited<ReturnType<typeof opencodeClient.listSessions>>[number];
@@ -257,6 +265,10 @@ export class QQHandler {
 
   private formatSessionOrderMode(mode: SessionOrderMode): string {
     return mode === 'last_time' ? '按最后修改时间倒序' : '默认排序';
+  }
+
+  private isQQOnlyTextEnabled(chatId: string): boolean {
+    return chatSessionStore.getSessionByConversation('qq', chatId)?.qqOutputOnlyText === true;
   }
 
   private getSessionLastModifiedTime(session: QQSessionInfo): number {
@@ -306,6 +318,14 @@ export class QQHandler {
     sender: PlatformSender,
     payload: { markdown: string; qqText: string }
   ): Promise<void> {
+    if (this.isQQOnlyTextEnabled(chatId)) {
+      await sender.sendCard(chatId, {
+        qqText: payload.qqText,
+        forcePlainText: true,
+      });
+      return;
+    }
+
     await sender.sendCard(chatId, payload);
   }
 
@@ -682,7 +702,7 @@ export class QQHandler {
   ): Promise<void> {
     switch (command.type) {
       case 'help':
-        await sender.sendCard(chatId, {
+        await this.sendQQCard(chatId, sender, {
           markdown: getQQHelpMarkdown(),
           qqText: getQQHelpText(),
         });
@@ -1013,7 +1033,7 @@ export class QQHandler {
     chatId: string,
     sender: PlatformSender
   ): Promise<void> {
-    if (command.configScope !== 'session' || !command.configKey) {
+    if (!command.configKey) {
       await this.sendQQCard(chatId, sender, {
         markdown: [
           '# 当前聊天配置',
@@ -1021,6 +1041,7 @@ export class QQHandler {
           '- `/config session order` 查看当前会话排序模式',
           '- `/config session order default` 使用默认排序',
           '- `/config session order last_time` 按最后修改时间倒序',
+          '- `/config output onlyText true|false` 切换 QQ Markdown / 纯文本输出',
           '- `/config session help_with_qc true|false` 控制 /help 后是否推送 /qc',
           '- `/config session session_with_ctl true|false` 控制 /sessions 后是否推送 /session_ctl',
           '- `/config session session_with_change true|false` 控制 /sessions 是否展示会话切换按钮',
@@ -1030,11 +1051,56 @@ export class QQHandler {
           '/config session order - 查看当前会话排序模式',
           '/config session order default - 使用默认排序',
           '/config session order last_time - 按最后修改时间倒序',
+          '/config output onlyText true|false - 切换 QQ Markdown / 纯文本输出',
           '/config session help_with_qc true|false - 控制 /help 后是否推送 /qc',
           '/config session session_with_ctl true|false - 控制 /sessions 后是否推送 /session_ctl',
           '/config session session_with_change true|false - 控制 /sessions 是否展示会话切换按钮',
         ].join('\n'),
       });
+      return;
+    }
+
+    if (command.configScope === 'output' && command.configKey === 'only_text') {
+      const currentValue = this.isQQOnlyTextEnabled(chatId);
+
+      if (!command.configValue) {
+        await this.sendQQCard(chatId, sender, {
+          markdown: [
+            '# QQ 输出配置',
+            '',
+            `当前模式：**${currentValue ? '纯文本输出' : 'Markdown 输出'}**`,
+            '',
+            '- `true`：禁用 QQ Markdown，直接输出原始文本',
+            '- `false`：恢复 QQ Markdown 输出',
+            '',
+            '说明：当前版本电脑 QQ 的 Markdown 渲染可能不稳定，若出现内容被吞或显示异常，可切换到纯文本输出。',
+          ].join('\n'),
+          qqText: [
+            'QQ 输出配置',
+            `当前模式: ${currentValue ? '纯文本输出' : 'Markdown 输出'}`,
+            '- true: 禁用 QQ Markdown，直接输出原始文本',
+            '- false: 恢复 QQ Markdown 输出',
+            '说明: 当前版本电脑 QQ 的 Markdown 渲染可能不稳定，若出现内容被吞或显示异常，可切换到纯文本输出。',
+          ].join('\n'),
+        });
+        return;
+      }
+
+      if (command.configValue !== 'true' && command.configValue !== 'false') {
+        await sender.sendText(chatId, '配置 onlyText 仅支持 true 或 false。');
+        return;
+      }
+
+      const boolValue = command.configValue === 'true';
+      chatSessionStore.updateConfigByConversation('qq', chatId, {
+        qqOutputOnlyText: boolValue,
+      });
+      await sender.sendText(chatId, `QQ 输出模式已切换为：${boolValue ? '纯文本输出' : 'Markdown 输出'}`);
+      return;
+    }
+
+    if (command.configScope !== 'session') {
+      await sender.sendText(chatId, '当前仅支持 /config session 与 /config output onlyText 配置');
       return;
     }
 
@@ -1108,7 +1174,7 @@ export class QQHandler {
       return;
     }
 
-    await sender.sendText(chatId, '当前仅支持 /config session 下的会话排序与展示配置');
+    await sender.sendText(chatId, '当前仅支持 /config session 下的会话排序与展示配置，以及 /config output onlyText');
   }
 
   /**

@@ -83,6 +83,7 @@ type QQCardPayload = {
   content?: string;
   text?: string;
   markdown?: string;
+  forcePlainText?: boolean;
 };
 
 // ──────────────────────────────────────────────
@@ -596,6 +597,43 @@ class QQOfficialClient {
     return this.sendMarkdownMessage(chatId, text, msgId);
   }
 
+  async sendPlainTextMessage(chatId: string, text: string, msgId?: string): Promise<string | null> {
+    try {
+      const isGroup = chatId.startsWith('group_');
+      const targetId = chatId.replace(/^(group_|c2c_)/, '');
+
+      const endpoint = isGroup
+        ? `${QQ_API_BASE}/v2/groups/${targetId}/messages`
+        : `${QQ_API_BASE}/v2/users/${targetId}/messages`;
+
+      const requestData: Record<string, unknown> = {
+        content: text,
+        msg_type: 0,
+      };
+
+      if (isGroup && msgId) {
+        requestData.msg_id = msgId;
+      }
+
+      try {
+        const accessToken = await this.getValidAccessToken();
+        return await this.postMessage(endpoint, requestData, accessToken);
+      } catch (error) {
+        if (!this.isAccessTokenExpiredError(error)) {
+          throw error;
+        }
+
+        console.warn('[QQ Official] 发送纯文本消息时 Access Token 已失效，刷新后重试一次');
+        this.resetAccessToken();
+        const refreshedAccessToken = await this.getValidAccessToken();
+        return await this.postMessage(endpoint, requestData, refreshedAccessToken);
+      }
+    } catch (error) {
+      console.error('[QQ Official] 发送纯文本消息失败:', error);
+      return null;
+    }
+  }
+
   async sendMarkdownMessage(chatId: string, markdown: string, msgId?: string): Promise<string | null> {
     try {
       const isGroup = chatId.startsWith('group_');
@@ -984,6 +1022,24 @@ class QQSender implements PlatformSender {
 
   async sendCard(conversationId: string, card: object): Promise<string | null> {
     const payload = card as QQCardPayload;
+    if (this.protocol === 'official' && payload.forcePlainText) {
+      const content = payload.qqText || payload.text || payload.content || payload.markdown || JSON.stringify(card);
+      const chunks = splitText(content, QQ_MESSAGE_LIMIT);
+      if (chunks.length === 0) return null;
+
+      let firstMessageId: string | null = null;
+      for (const chunk of chunks) {
+        const messageId = await this.adapter.sendRawPlainTextMessage(conversationId, chunk);
+        if (messageId && !firstMessageId) {
+          firstMessageId = messageId;
+        }
+        if (messageId) {
+          this.adapter.rememberMessageConversation(messageId, conversationId);
+        }
+      }
+      return firstMessageId;
+    }
+
     if (this.protocol === 'official' && payload.markdown) {
       const messageId = await this.adapter.sendRawMarkdownMessage(conversationId, payload.markdown);
       if (messageId) {
@@ -1197,6 +1253,14 @@ export class QQAdapter implements PlatformAdapter {
     }
 
     return this.sendRawMessage(conversationId, markdown);
+  }
+
+  async sendRawPlainTextMessage(conversationId: string, text: string): Promise<string | null> {
+    if (qqConfig.protocol === 'official' && this.officialClient) {
+      return this.officialClient.sendPlainTextMessage(conversationId, text);
+    }
+
+    return this.sendRawMessage(conversationId, text);
   }
 
   async deleteMessage(messageId: string): Promise<boolean> {

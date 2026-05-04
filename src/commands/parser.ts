@@ -60,8 +60,8 @@ export interface ParsedCommand {
   effortReset?: boolean;
   promptEffort?: EffortLevel;
   adminAction?: 'add';
-  configScope?: 'session';
-  configKey?: 'order' | 'help_with_qc' | 'session_with_ctl' | 'session_with_change';
+  configScope?: 'session' | 'output';
+  configKey?: 'order' | 'help_with_qc' | 'session_with_ctl' | 'session_with_change' | 'only_text';
   configValue?: string;
   renameTitle?: string;    // rename 类型的新会话名称（可选，无参数时弹卡片）
   cronAction?: CronIntentAction;
@@ -451,6 +451,15 @@ export function parseCommand(text: string): ParsedCommand {
             type: 'config',
             configScope: 'session',
             configKey: 'session_with_change',
+            ...(args[2] ? { configValue: args[2].trim().toLowerCase() } : {}),
+          };
+        }
+
+        if (args.length >= 2 && args[0].toLowerCase() === 'output' && args[1].toLowerCase() === 'onlytext') {
+          return {
+            type: 'config',
+            configScope: 'output',
+            configKey: 'only_text',
             ...(args[2] ? { configValue: args[2].trim().toLowerCase() } : {}),
           };
         }

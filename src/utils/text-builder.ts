@@ -112,6 +112,7 @@ export function buildPortableUpdateText(data: StreamCardData, showThinking: bool
 export type PortableUpdatePayload = {
   text: string;
   markdown: string;
+  qqText: string;
   telegramText: string;
   discordText: string;
   discordComponents?: Array<{
@@ -161,7 +162,7 @@ export function buildPortableUpdatePayload(
   const telegramBaseText = buildTelegramText(filteredData, showThinkingChain);
 
   if (!data.pendingQuestion) {
-    return { text: baseText, markdown: baseText, telegramText: telegramBaseText, discordText: baseText };
+    return { text: baseText, markdown: baseText, qqText: baseText, telegramText: telegramBaseText, discordText: baseText };
   }
 
   const questionLine = `❓ ${data.pendingQuestion.question}`;
@@ -185,7 +186,7 @@ export function buildPortableUpdatePayload(
   }];
 
   if (options.length === 0) {
-    return { text: discordText, markdown: discordText, telegramText: telegramTextWithQuestion, discordText };
+    return { text: discordText, markdown: discordText, qqText: discordText, telegramText: telegramTextWithQuestion, discordText };
   }
 
   const maxValues = data.pendingQuestion.multiple
@@ -203,6 +204,7 @@ export function buildPortableUpdatePayload(
   return {
     text: discordText,
     markdown: discordText,
+    qqText: discordText,
     telegramText: telegramTextWithQuestion,
     discordText,
     discordComponents: [

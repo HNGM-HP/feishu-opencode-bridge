@@ -1482,22 +1482,27 @@ async function main() {
         return;
       }
       const payload = buildPortableUpdatePayload(cardData, conversationId, platform);
+      const qqOnlyText = platform === 'qq'
+        && chatSessionStore.getSessionByConversation('qq', conversationId)?.qqOutputOnlyText === true;
       const nextMessageIds: string[] = [];
       const existingMessageId = existingMessageIds[0];
+      const outboundPayload = qqOnlyText
+        ? { qqText: payload.qqText, forcePlainText: true }
+        : payload;
 
       if (existingMessageId) {
-        const updated = await sender.updateCard(existingMessageId, payload);
+        const updated = await sender.updateCard(existingMessageId, outboundPayload);
         if (updated) {
           nextMessageIds.push(existingMessageId);
         } else {
-          const replacementMessageId = await sender.sendCard(conversationId, payload);
+          const replacementMessageId = await sender.sendCard(conversationId, outboundPayload);
           if (replacementMessageId) {
             void sender.deleteMessage(existingMessageId).catch(() => undefined);
             nextMessageIds.push(replacementMessageId);
           }
         }
       } else {
-        const newMessageId = await sender.sendCard(conversationId, payload);
+        const newMessageId = await sender.sendCard(conversationId, outboundPayload);
         if (newMessageId) {
           nextMessageIds.push(newMessageId);
         }

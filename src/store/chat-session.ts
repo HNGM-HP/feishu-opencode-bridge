@@ -23,6 +23,7 @@ export interface ChatSessionData {
   projectName?: string;
   defaultDirectory?: string;
   sessionOrderMode?: SessionOrderMode;
+  qqOutputOnlyText?: boolean;
   helpWithQc?: boolean;
   sessionWithCtl?: boolean;
   sessionWithChange?: boolean;
@@ -378,6 +379,7 @@ class ChatSessionStore {
       ...(options?.projectName ? { projectName: options.projectName } : {}),
       ...(current?.defaultDirectory ? { defaultDirectory: current.defaultDirectory } : {}),
       ...(current?.sessionOrderMode ? { sessionOrderMode: current.sessionOrderMode } : {}),
+      ...(typeof current?.qqOutputOnlyText === 'boolean' ? { qqOutputOnlyText: current.qqOutputOnlyText } : {}),
       ...(typeof current?.helpWithQc === 'boolean' ? { helpWithQc: current.helpWithQc } : {}),
       ...(typeof current?.sessionWithCtl === 'boolean' ? { sessionWithCtl: current.sessionWithCtl } : {}),
       ...(typeof current?.sessionWithChange === 'boolean' ? { sessionWithChange: current.sessionWithChange } : {}),
@@ -448,6 +450,7 @@ class ChatSessionStore {
       ...(options?.projectName ? { projectName: options.projectName } : {}),
       ...(current?.defaultDirectory ? { defaultDirectory: current.defaultDirectory } : {}),
       ...(current?.sessionOrderMode ? { sessionOrderMode: current.sessionOrderMode } : {}),
+      ...(typeof current?.qqOutputOnlyText === 'boolean' ? { qqOutputOnlyText: current.qqOutputOnlyText } : {}),
       ...(typeof current?.helpWithQc === 'boolean' ? { helpWithQc: current.helpWithQc } : {}),
       ...(typeof current?.sessionWithCtl === 'boolean' ? { sessionWithCtl: current.sessionWithCtl } : {}),
       ...(typeof current?.sessionWithChange === 'boolean' ? { sessionWithChange: current.sessionWithChange } : {}),
@@ -539,6 +542,7 @@ class ChatSessionStore {
       preferredEffort?: EffortLevel;
       defaultDirectory?: string;
       sessionOrderMode?: SessionOrderMode;
+      qqOutputOnlyText?: boolean;
       helpWithQc?: boolean;
       sessionWithCtl?: boolean;
       sessionWithChange?: boolean;
@@ -587,6 +591,14 @@ class ChatSessionStore {
       }
     }
 
+    if ('qqOutputOnlyText' in config) {
+      if (typeof config.qqOutputOnlyText === 'boolean') {
+        session.qqOutputOnlyText = config.qqOutputOnlyText;
+      } else {
+        delete session.qqOutputOnlyText;
+      }
+    }
+
     if ('helpWithQc' in config) {
       if (typeof config.helpWithQc === 'boolean') {
         session.helpWithQc = config.helpWithQc;
@@ -622,6 +634,7 @@ class ChatSessionStore {
       preferredEffort?: EffortLevel;
       defaultDirectory?: string;
       sessionOrderMode?: SessionOrderMode;
+      qqOutputOnlyText?: boolean;
       helpWithQc?: boolean;
       sessionWithCtl?: boolean;
       sessionWithChange?: boolean;
@@ -667,6 +680,14 @@ class ChatSessionStore {
         session.sessionOrderMode = config.sessionOrderMode;
       } else {
         delete session.sessionOrderMode;
+      }
+    }
+
+    if ('qqOutputOnlyText' in config) {
+      if (typeof config.qqOutputOnlyText === 'boolean') {
+        session.qqOutputOnlyText = config.qqOutputOnlyText;
+      } else {
+        delete session.qqOutputOnlyText;
       }
     }
 
