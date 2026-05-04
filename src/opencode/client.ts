@@ -1458,6 +1458,27 @@ class OpencodeClientWrapper extends EventEmitter {
     return result.data || [];
   }
 
+  async getSessionLastActivityTime(sessionId: string): Promise<number> {
+    const messages = await this.getSessionMessages(sessionId);
+    let latest = 0;
+
+    for (const item of messages) {
+      const info = item?.info as Record<string, unknown> | undefined;
+      const time = info?.time;
+      if (!time || typeof time !== 'object' || Array.isArray(time)) {
+        continue;
+      }
+
+      for (const value of Object.values(time as Record<string, unknown>)) {
+        if (typeof value === 'number' && Number.isFinite(value) && value > latest) {
+          latest = value;
+        }
+      }
+    }
+
+    return latest;
+  }
+
   // 获取配置（含模型列表）
   async getProviders(): Promise<{
     providers: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>;

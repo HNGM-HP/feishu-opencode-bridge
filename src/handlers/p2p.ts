@@ -327,6 +327,21 @@ export class P2PHandler {
     });
   }
 
+  private async resolveSessionLastActivityMap(sessions: OpencodeSession[]): Promise<Map<string, number>> {
+    const entries = await Promise.all(
+      sessions.map(async session => {
+        try {
+          const activityTime = await opencodeClient.getSessionLastActivityTime(session.id);
+          return [session.id, activityTime || (session.time?.updated ?? session.time?.created ?? 0)] as const;
+        } catch {
+          return [session.id, session.time?.updated ?? session.time?.created ?? 0] as const;
+        }
+      })
+    );
+
+    return new Map(entries);
+  }
+
   private sortSessionsForCreateChatDefault(sessions: OpencodeSession[]): OpencodeSession[] {
     return [...sessions].sort((a, b) => {
       const directoryCompare = this.getSessionDirectory(a).localeCompare(this.getSessionDirectory(b), 'zh-Hans-CN');
@@ -359,9 +374,19 @@ export class P2PHandler {
       try {
         const sessionOrderMode = commandHandler.getSessionOrderMode(chatId);
         const allSessions = await opencodeClient.listSessionsAcrossProjects();
-        sessions = sessionOrderMode === 'last_time'
-          ? this.sortSessionsForCreateChat(allSessions)
-          : this.sortSessionsForCreateChatDefault(allSessions);
+        if (sessionOrderMode === 'last_time') {
+          const sessionLastActivityMap = await this.resolveSessionLastActivityMap(allSessions);
+          sessions = [...allSessions].sort((left, right) => {
+            const leftTime = sessionLastActivityMap.get(left.id) ?? left.time?.updated ?? left.time?.created ?? 0;
+            const rightTime = sessionLastActivityMap.get(right.id) ?? right.time?.updated ?? right.time?.created ?? 0;
+            if (leftTime !== rightTime) {
+              return rightTime - leftTime;
+            }
+            return left.id.localeCompare(right.id, 'en');
+          });
+        } else {
+          sessions = this.sortSessionsForCreateChatDefault(allSessions);
+        }
         totalSessionCount = sessions.length;
 
         let previousDirectory = '';

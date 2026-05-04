@@ -327,6 +327,27 @@ export class CommandHandler {
     return `${workspaceLabel} / ${shortId} / ${compactTitle}`;
   }
 
+  private getSessionLastModifiedTime(session: Awaited<ReturnType<typeof opencodeClient.listSessions>>[number]): number {
+    return session.time?.updated ?? session.time?.created ?? 0;
+  }
+
+  private async resolveSessionLastActivityMap(
+    sessions: Awaited<ReturnType<typeof opencodeClient.listSessions>>
+  ): Promise<Map<string, number>> {
+    const entries = await Promise.all(
+      sessions.map(async session => {
+        try {
+          const activityTime = await opencodeClient.getSessionLastActivityTime(session.id);
+          return [session.id, activityTime || this.getSessionLastModifiedTime(session)] as const;
+        } catch {
+          return [session.id, this.getSessionLastModifiedTime(session)] as const;
+        }
+      })
+    );
+
+    return new Map(entries);
+  }
+
   private async buildSessionCtlOptions(chatId: string): Promise<{ options: SessionCtlSessionOption[]; totalSessionCount: number }> {
     const currentSessionId = chatSessionStore.getSessionId(chatId);
     const allSessions = await opencodeClient.listSessionsAcrossProjects();
@@ -345,18 +366,21 @@ export class CommandHandler {
     options.push({ label: '新建 OpenCode 会话', value: SESSION_CTL_NEW_VALUE });
 
     const sessionOrderMode = this.getSessionOrderMode(chatId);
+    const sessionLastActivityMap = sessionOrderMode === 'last_time'
+      ? await this.resolveSessionLastActivityMap(allSessions)
+      : null;
     const sortedSessions = [...allSessions].sort((a, b) => {
       if (sessionOrderMode === 'last_time') {
-        const left = a.time?.updated ?? a.time?.created ?? 0;
-        const right = b.time?.updated ?? b.time?.created ?? 0;
+        const left = sessionLastActivityMap?.get(a.id) ?? this.getSessionLastModifiedTime(a);
+        const right = sessionLastActivityMap?.get(b.id) ?? this.getSessionLastModifiedTime(b);
         if (left !== right) return right - left;
         return a.id.localeCompare(b.id, 'en');
       }
 
       const directoryCompare = (a.directory || '/').localeCompare((b.directory || '/'), 'zh-Hans-CN');
       if (directoryCompare !== 0) return directoryCompare;
-      const left = b.time?.updated ?? b.time?.created ?? 0;
-      const right = a.time?.updated ?? a.time?.created ?? 0;
+      const left = this.getSessionLastModifiedTime(b);
+      const right = this.getSessionLastModifiedTime(a);
       if (left !== right) return left - right;
       return a.id.localeCompare(b.id, 'en');
     });
@@ -1581,9 +1605,8 @@ export class CommandHandler {
 
     try {
       if (listAll) {
-        // 全量：聚合所有已知目录的会话
-        const storeKnownDirs = chatSessionStore.getKnownDirectories();
-        sessions = await opencodeClient.listAllSessions(storeKnownDirs);
+        // 全量：聚合 OpenCode 项目列表 + 已知目录中的会话
+        sessions = await opencodeClient.listSessionsAcrossProjects();
       } else {
         // 默认：只查当前项目目录的会话
         sessions = await opencodeClient.listSessions(currentDirectory ? { directory: currentDirectory } : undefined);
@@ -1641,7 +1664,7 @@ export class CommandHandler {
       const projectName = bindingInfo?.projectName;
       const chatDetail = bindingInfo ? bindingInfo.chatIds.join(', ') : '无';
       const status = bindingInfo ? 'OpenCode可用/已绑定' : 'OpenCode可用/未绑定';
-      const updatedAt = session.time?.updated ?? session.time?.created ?? 0;
+      const updatedAt = this.getSessionLastModifiedTime(session);
       rows.push({ directory, projectName, title, sessionId: session.id, chatDetail, status, statusRank: bindingInfo ? 0 : 1, updatedAt });
       localBindings.delete(session.id);
     }
@@ -1659,11 +1682,21 @@ export class CommandHandler {
         chatDetail: bindingInfo.chatIds.join(', '),
         status: '仅本地映射(可能已失活)',
         statusRank: 2,
-        updatedAt: 0,
+        updatedAt: chatSessionStore.getSession(bindingInfo.chatIds[0])?.createdAt ?? 0,
       });
     }
 
     const sessionOrderMode = this.getSessionOrderMode(chatId);
+    if (sessionOrderMode === 'last_time') {
+      const sessionLastActivityMap = await this.resolveSessionLastActivityMap(sessions);
+      for (const row of rows) {
+        const resolvedTime = sessionLastActivityMap.get(row.sessionId);
+        if (typeof resolvedTime === 'number' && resolvedTime > 0) {
+          row.updatedAt = resolvedTime;
+        }
+      }
+    }
+
     if (sessionOrderMode === 'last_time') {
       rows.sort((left, right) => {
         if (left.updatedAt !== right.updatedAt) return right.updatedAt - left.updatedAt;
