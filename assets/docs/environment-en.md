@@ -73,7 +73,7 @@ The `.env` file now only stores Admin panel startup parameters:
 | `GROUP_REQUIRE_MENTION` | No | `false` | Group chat only responds when explicitly @mentioned |
 | `OPENCODE_HOST` | No | `localhost` | OpenCode address |
 | `OPENCODE_PORT` | No | `4096` | OpenCode port |
-| `OPENCODE_AUTO_START` | No | `false` | Auto-start OpenCode on Bridge startup |
+| `OPENCODE_AUTO_START` | No | `true` | Auto-start OpenCode on Bridge startup |
 | `OPENCODE_AUTO_START_CMD` | No | `opencode serve` | Custom OpenCode startup command |
 
 ---

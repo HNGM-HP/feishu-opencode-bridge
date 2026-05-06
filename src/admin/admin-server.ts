@@ -18,7 +18,6 @@
  */
 
 import express from 'express';
-import crypto from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs';
@@ -28,12 +27,174 @@ import { configStore, type BridgeSettings } from '../store/config-store.js';
 import { logStore } from '../store/log-store.js';
 import type { RuntimeCronManager } from '../reliability/runtime-cron.js';
 import type { BridgeManager } from './bridge-manager.js';
+import { opencodeConfig } from '../config.js';
 import { createSessionRoutes } from './routes/session.js';
+import { registerWorkspaceGitRoutes } from './routes/workspace-git.js';
+import { registerWorkspaceFilesRoutes } from './routes/workspace-files.js';
+import { registerWorkspaceTerminalRoutes } from './routes/workspace-terminal.js';
+import { registerResourcesTerminalRoutes, setupResourcesTerminalWebSocket } from './routes/resources-terminal.js';
+import { registerChatRoutes } from './routes/chat.js';
+import { registerChatUploadRoutes } from './routes/chat-upload.js';
+import { createResourcesRoutes } from './routes/resources.js';
+import { getAutoStart, setAutoStart } from './autostart.js';
+import { initResourceSystem } from '../services/resources/index.js';
+import { opencodeClient } from '../opencode/client.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+function toRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as Record<string, unknown>;
+}
+
+function parseOptionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1') return true;
+    if (normalized === 'false' || normalized === '0') return false;
+  }
+  return undefined;
+}
+
+function extractEnabledModelsFromOpencodeConfig(config: unknown): string[] {
+  const root = toRecord(config);
+  if (!root) return [];
+
+  const providersRecord = toRecord(root.provider) || toRecord(root.providers);
+  if (!providersRecord) return [];
+
+  const selected = new Set<string>();
+  for (const [providerId, rawProvider] of Object.entries(providersRecord)) {
+    const providerRecord = toRecord(rawProvider);
+    if (!providerRecord) continue;
+
+    const rawModels = providerRecord.models;
+    if (Array.isArray(rawModels)) {
+      for (const item of rawModels) {
+        if (typeof item === 'string' && item.trim()) {
+          selected.add(`${providerId}/${item.trim()}`);
+          continue;
+        }
+        const modelRecord = toRecord(item);
+        const modelId = typeof modelRecord?.id === 'string' && modelRecord.id.trim()
+          ? modelRecord.id.trim()
+          : '';
+        if (modelId) {
+          selected.add(`${providerId}/${modelId}`);
+        }
+      }
+      continue;
+    }
+
+    const modelMap = toRecord(rawModels);
+    if (!modelMap) continue;
+
+    for (const [modelKey, rawModel] of Object.entries(modelMap)) {
+      if (rawModel === false || rawModel === null) {
+        continue;
+      }
+
+      const modelRecord = toRecord(rawModel);
+      const disabled = parseOptionalBoolean(modelRecord?.disabled);
+      if (disabled === true) {
+        continue;
+      }
+
+      const configId = typeof modelRecord?.id === 'string' && modelRecord.id.trim()
+        ? modelRecord.id.trim()
+        : modelKey.trim();
+      if (configId) {
+        selected.add(`${providerId}/${configId}`);
+      }
+    }
+  }
+
+  return Array.from(selected).sort((left, right) => left.localeCompare(right, 'en'));
+}
+
+function extractProviderId(provider: unknown): string | undefined {
+  const record = toRecord(provider);
+  const rawId = typeof record?.id === 'string' ? record.id.trim() : '';
+  return rawId || undefined;
+}
+
+function extractProviderModels(provider: unknown): Array<{ id: string; name: string }> {
+  const record = toRecord(provider);
+  const rawModels = record?.models;
+  const models: Array<{ id: string; name: string }> = [];
+  const dedupe = new Set<string>();
+
+  const pushModel = (rawModel: unknown, fallbackId?: string): void => {
+    const fallbackNormalized = typeof fallbackId === 'string' ? fallbackId.trim() : '';
+    if (!rawModel || typeof rawModel !== 'object') {
+      if (!fallbackNormalized) return;
+      const key = fallbackNormalized.toLowerCase();
+      if (dedupe.has(key)) return;
+      dedupe.add(key);
+      models.push({ id: fallbackNormalized, name: fallbackNormalized });
+      return;
+    }
+
+    const modelRecord = rawModel as Record<string, unknown>;
+    const modelId = typeof modelRecord.id === 'string' && modelRecord.id.trim()
+      ? modelRecord.id.trim()
+      : fallbackNormalized;
+    if (!modelId) return;
+
+    const modelName = typeof modelRecord.name === 'string' && modelRecord.name.trim()
+      ? modelRecord.name.trim()
+      : modelId;
+    const key = modelId.toLowerCase();
+    if (dedupe.has(key)) return;
+    dedupe.add(key);
+    models.push({ id: modelId, name: modelName });
+  };
+
+  if (Array.isArray(rawModels)) {
+    for (const rawModel of rawModels) {
+      pushModel(rawModel);
+    }
+  } else {
+    const modelMap = toRecord(rawModels);
+    if (modelMap) {
+      for (const [modelKey, rawModel] of Object.entries(modelMap)) {
+        pushModel(rawModel, modelKey);
+      }
+    }
+  }
+
+  return models.sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
+}
+
+function buildOpencodeAuthHeaders(): Record<string, string> {
+  if (!opencodeConfig.serverPassword) {
+    return {};
+  }
+
+  const username = opencodeConfig.serverUsername || 'opencode';
+  const authorization = Buffer.from(`${username}:${opencodeConfig.serverPassword}`).toString('base64');
+  return { Authorization: `Basic ${authorization}` };
+}
+
 // 开发模式检测（process.resourcesPath 是 Electron 特有属性）
 const isDev = process.env.NODE_ENV === 'development' || !(process as any).resourcesPath;
+
+/**
+ * 获取 process-manager.mjs 的绝对路径
+ * 兼容：开发环境 / 源码部署 / Electron 打包后
+ */
+function resolveProcessManagerPath(): string {
+  if ((process as any).resourcesPath && !isDev) {
+    // Electron 打包：scripts 在 resources/app/scripts/
+    return path.join((process as any).resourcesPath, 'app', 'scripts', 'process-manager.mjs');
+  }
+  // 开发 / 源码部署：从 dist/admin/ 向上两级到项目根
+  return path.resolve(__dirname, '../../scripts/process-manager.mjs');
+}
 
 // ──────────────────────────────────────────────
 // 需要重启才能生效的敏感配置项
@@ -71,7 +232,7 @@ const RESTART_REQUIRED_KEYS: (keyof BridgeSettings)[] = [
   'OPENCODE_SERVER_USERNAME',
   'OPENCODE_SERVER_PASSWORD',
   'OPENCODE_AUTO_START',
-  'OPENCODE_AUTO_START_CMD',
+  'OPENCODE_AUTO_START_FOREGROUND',
   'RELIABILITY_CRON_ENABLED',
   'RELIABILITY_CRON_API_ENABLED',
   'RELIABILITY_CRON_API_HOST',
@@ -106,80 +267,30 @@ async function probeTcpPort(host: string, port: number, timeoutMs = 2000): Promi
 
 export interface AdminServerOptions {
   port: number;
-  password: string; // 仅用于首次初始化
   cronManager?: RuntimeCronManager;
   startedAt?: Date;
   version?: string;
   bridgeManager?: BridgeManager;
 }
 
-export function createAdminServer(options: AdminServerOptions): { start: () => void; stop: () => void } {
+export function createAdminServer(options: AdminServerOptions): { start: () => Promise<void>; stop: () => void } {
   const app = express();
   const { port, cronManager, bridgeManager } = options;
   const startedAt = options.startedAt ?? new Date();
   const version = options.version ?? 'unknown';
 
-  // ── 密码初始化：首次启动从 env 读取，后续使用数据库密码
-  const envPassword = options.password;
-  let dbPassword = configStore.getAdminPassword();
-  if (!dbPassword && envPassword) {
-    configStore.setAdminPassword(envPassword);
-    dbPassword = envPassword;
-    console.log('[Admin] 首次启动，已从环境变量初始化管理员密码');
-  }
-
   app.use(express.json());
-
-  // ── POST /api/admin/reset-password（无需认证，用于密码恢复）
-  app.post('/api/admin/reset-password', (_req, res) => {
-    configStore.setAdminPassword('');
-    configStore.setPasswordChangedAt('');
-    res.json({ ok: true, message: '密码已重置，请重新设置密码' });
-  });
 
   // ── 静态前端文件（dist/public）
   const publicDir = path.resolve(__dirname, '../../dist/public');
   app.use(express.static(publicDir));
 
-  // ── 基础 Token 鉴权中间件（Bearer password）
-  // 每次请求从数据库读取密码，确保修改密码后立即生效
-  function authMiddleware(
-    req: express.Request,
-    res: express.Response,
-    next: express.NextFunction
-  ): void {
-    const currentPassword = configStore.getAdminPassword() || '';
-    const authHeader = req.headers.authorization ?? '';
-    const hasToken = authHeader.startsWith('Bearer ');
-    const token = hasToken ? authHeader.slice(7) : '';
-
-    // 密码为空 → 允许通过（首次设置场景）
-    // 前端会通过 /api/admin/password-status 检测密码状态并跳转到设置页面
-    if (!currentPassword) {
-      next();
-      return;
-    }
-
-    // 使用时序安全的密码比较，避免长度泄露
-    // 将两个 buffer padding 到相同长度后再比较
-    const tokenBuf = Buffer.from(token, 'utf-8');
-    const passBuf = Buffer.from(currentPassword, 'utf-8');
-    const maxLen = Math.max(tokenBuf.length, passBuf.length, 64);
-
-    const paddedToken = Buffer.alloc(maxLen);
-    const paddedPass = Buffer.alloc(maxLen);
-    tokenBuf.copy(paddedToken);
-    passBuf.copy(paddedPass);
-
-    if (!crypto.timingSafeEqual(paddedToken, paddedPass)) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    next();
-  }
-
+  // ── 管理后台不再启用账号 / 密码鉴权，所有请求直接放行
   const api = express.Router();
-  api.use(authMiddleware);
+
+  // ── Register Chat Routes (Phase A: Native Chat UI)
+  registerChatRoutes(app);
+  registerChatUploadRoutes(app);
 
   // ── GET /api/config
   api.get('/config', (_req, res) => {
@@ -337,49 +448,7 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       startedAt: startedAt.toISOString(),
       dbPath: configStore.getDbPath(),
       cronJobCount: cronManager?.listJobs().length ?? 0,
-      needsPasswordChange: configStore.needsPasswordChange(),
     });
-  });
-
-  // ── GET /api/admin/password-status
-  api.get('/admin/password-status', (_req, res) => {
-    res.json({
-      needsPasswordChange: configStore.needsPasswordChange(),
-      hasPassword: !!configStore.getAdminPassword(),
-    });
-  });
-
-  // ── PUT /api/admin/password
-  api.put('/admin/password', (req, res) => {
-    const { oldPassword, newPassword } = req.body;
-
-    if (!newPassword || newPassword.length < 8) {
-      res.status(400).json({ error: '新密码长度至少 8 位' });
-      return;
-    }
-
-    const currentPassword = configStore.getAdminPassword();
-    const isFirstSetup = !currentPassword;
-
-    // 首次设置密码：无需验证旧密码
-    if (isFirstSetup) {
-      configStore.setAdminPassword(newPassword);
-      configStore.setPasswordChangedAt(new Date().toISOString());
-      res.json({ ok: true, message: '密码设置成功', isFirstSetup: true });
-      return;
-    }
-
-    // 修改密码：需要验证旧密码
-    if (oldPassword !== currentPassword) {
-      res.status(401).json({ error: '原密码错误' });
-      return;
-    }
-
-    // 更新密码
-    configStore.setAdminPassword(newPassword);
-    configStore.setPasswordChangedAt(new Date().toISOString());
-
-    res.json({ ok: true, message: '密码修改成功，请使用新密码重新登录' });
   });
 
   // ── POST /api/admin/restart
@@ -389,16 +458,16 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
       return;
     }
 
-    res.json({ ok: true, message: '正在重启 Bridge 服务...' });
+    const result = await bridgeManager.restart();
 
-    // 异步重启，不阻塞响应
-    bridgeManager.restart().then(result => {
-      if (result.success) {
-        console.log(`[Admin] Bridge 重启成功，PID=${result.pid}`);
-      } else {
-        console.error(`[Admin] Bridge 重启失败: ${result.error}`);
-      }
-    });
+    if (result.success) {
+      console.log(`[Admin] Bridge 重启成功，PID=${result.pid}`);
+      res.json({ ok: true, pid: result.pid, message: 'Bridge 重启成功' });
+      return;
+    }
+
+    console.error(`[Admin] Bridge 重启失败: ${result.error}`);
+    res.status(500).json({ error: result.error || '重启失败' });
   });
 
   // ── POST /api/admin/stop-bridge（仅停止 Bridge 进程）
@@ -635,69 +704,83 @@ export function createAdminServer(options: AdminServerOptions): { start: () => v
   });
 
   // ── POST /api/opencode/start
-  api.post('/opencode/start', async (req, res) => {
+  // 始终使用后台无窗口模式（通过 process-manager start-opencode，幂等）
+  api.post('/opencode/start', async (_req, res) => {
     try {
-      const { visual = false } = req.body || {};
-
-      // 写入 server 配置
-      const opencodeConfigDir = path.join(os.homedir(), '.config', 'opencode');
-      fs.mkdirSync(opencodeConfigDir, { recursive: true });
-
-      const configPath = path.join(opencodeConfigDir, 'opencode.json');
-      let config: any = {};
-      if (fs.existsSync(configPath)) {
-        try {
-          config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-        } catch {
-          // 忽略解析错误
-        }
-      }
-
-      config.server = {
-        port: 4096,
-        hostname: '0.0.0.0',
-        cors: ['*'],
-      };
-      fs.writeFileSync(configPath, JSON.stringify(config, null, 2));
-
-      // 启动 OpenCode
-      // visual: true -> opencode (前台模式，显示 CLI 窗口 + web)
-      // visual: false -> opencode serve (后台模式，headless)
+      const { spawnSync: spawnSyncLocal } = await import('node:child_process');
+      const scriptPath = resolveProcessManagerPath();
       const isWindows = process.platform === 'win32';
 
-      if (isWindows) {
-        if (visual) {
-          // 前台模式：直接启动 opencode，显示 CLI 窗口
-          spawn('opencode', [], {
-            detached: true,
-            stdio: 'ignore',
-            shell: true,
-          });
-        } else {
-          // 后台模式：使用 VBS 静默启动，不显示窗口
-          const vbsContent = `
-Set objShell = CreateObject("WScript.Shell")
-objShell.Run "cmd /c opencode serve", 0, False
-`.trim();
-          const vbsPath = path.join(os.tmpdir(), 'opencode-start.vbs');
-          fs.writeFileSync(vbsPath, vbsContent, 'utf-8');
-          spawn('wscript', [vbsPath], {
-            detached: true,
-            stdio: 'ignore',
-            windowsHide: true,
-          });
-        }
-      } else {
-        const args = visual ? [] : ['serve'];
-        spawn('opencode', args, {
-          detached: true,
-          stdio: 'ignore',
-        });
+      const result = spawnSyncLocal(process.execPath, [scriptPath, 'start-opencode'], {
+        encoding: 'utf-8',
+        timeout: 20000,
+        windowsHide: isWindows,
+      });
+
+      const stdout = (result.stdout || '').trim();
+      const stderr = (result.stderr || '').trim();
+      if (stdout) console.log('[Admin] opencode start:', stdout);
+      if (stderr) console.warn('[Admin] opencode start stderr:', stderr);
+
+      if (result.status !== 0 || result.error) {
+        const msg = result.error?.message || stderr || '启动失败';
+        res.status(500).json({ error: msg });
+        return;
       }
 
-      res.json({ ok: true, message: visual ? 'OpenCode 已启动（可视化模式）' : 'OpenCode 已启动（后台模式）' });
+      // 判断是"已运行"还是"新启动"
+      const skipped = stdout.includes('已在运行');
+      res.json({
+        ok: true,
+        message: skipped ? 'OpenCode 已在后台运行（无需重复启动）' : 'OpenCode 已后台启动',
+      });
     } catch (error: any) {
       res.status(500).json({ error: '启动失败：' + error.message });
+    }
+  });
+
+  // ── POST /api/opencode/attach
+  // 在前台弹出 CMD 窗口执行 opencode attach <url>（Windows 专用）
+  api.post('/opencode/attach', (req, res) => {
+    const isWindows = process.platform === 'win32';
+    if (!isWindows) {
+      res.status(400).json({ error: '前台 attach 窗口仅支持 Windows 平台' });
+      return;
+    }
+
+    try {
+      const { port = 4096, host = 'localhost' } = req.body || {};
+      const attachUrl = `http://${host}:${port}`;
+
+      // ⚠️ Windows 弹窗坑：旧实现 spawn('cmd', ['/c', 'start ... cmd /k ...'], { windowsHide: true })
+      // 在打包后（Electron 主进程无控制台）等价于 CREATE_NO_WINDOW，会被传给后续的 cmd 子树，
+      // 导致 start 命令也无法分配可见控制台 → 用户点了按钮但什么都看不到。
+      //
+      // 这里改用 PowerShell 的 Start-Process：
+      //   - 外层 powershell.exe 仍 windowsHide:true，不污染界面，与
+      //     scripts/process-manager.mjs 隐藏 opencode serve 的策略一致；
+      //   - 由 Start-Process 显式 CreateProcess 一个新的可见 cmd 控制台来跑 attach，
+      //     不依赖父进程是否有 console，从而保留"自启动 opencode 后台无窗"能力的同时
+      //     恢复"前台 attach 窗口可见"行为。
+      spawn(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-Command',
+          `Start-Process cmd -ArgumentList '/k opencode attach ${attachUrl}'`,
+        ],
+        {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        }
+      ).unref();
+
+      console.log(`[Admin] OpenCode attach 窗口已拉起（${attachUrl}）`);
+      res.json({ ok: true, message: `OpenCode 前台窗口已打开（${attachUrl}）` });
+    } catch (error: any) {
+      res.status(500).json({ error: '打开前台窗口失败：' + error.message });
     }
   });
 
@@ -708,15 +791,7 @@ objShell.Run "cmd /c opencode serve", 0, False
     // 异步终止 OpenCode 进程
     setTimeout(() => {
       try {
-        // 获取脚本路径（兼容开发环境和 Electron 打包环境）
-        let scriptPath: string;
-        if ((process as any).resourcesPath && !isDev) {
-          // Electron 打包后：scripts 在 resources/app/scripts/
-          scriptPath = path.join((process as any).resourcesPath, 'app', 'scripts', 'process-manager.mjs');
-        } else {
-          // 开发环境或非 Electron 环境
-          scriptPath = path.resolve(__dirname, '../../scripts/process-manager.mjs');
-        }
+        const scriptPath = resolveProcessManagerPath();
         console.log('[Admin] 终止脚本路径:', scriptPath);
         console.log('[Admin] Node 路径:', process.execPath);
 
@@ -983,6 +1058,66 @@ objShell.Run "cmd /c opencode serve", 0, False
     }
   });
 
+  // ── GET /api/opencode/model-catalog
+  api.get('/opencode/model-catalog', async (_req, res) => {
+    try {
+      const providersResult = await opencodeClient.getProviders();
+      const providers = Array.isArray(providersResult.providers) ? providersResult.providers : [];
+
+      const items = providers
+        .map(provider => {
+          const record = provider as Record<string, unknown>;
+          const id = extractProviderId(provider);
+          if (!id) {
+            return null;
+          }
+
+          const name = typeof record.name === 'string' && record.name.trim()
+            ? record.name.trim()
+            : id;
+
+          return {
+            id,
+            name,
+            models: extractProviderModels(provider),
+          };
+        })
+        .filter((item): item is NonNullable<typeof item> => Boolean(item))
+        .sort((left, right) => left.name.localeCompare(right.name, 'zh-Hans-CN'));
+
+      res.json({ providers: items });
+    } catch (error: any) {
+      console.error('[Admin] 获取完整模型目录失败:', error.message);
+      res.status(502).json({ error: '获取完整模型目录失败：' + error.message });
+    }
+  });
+
+  // ── GET /api/opencode/enabled-models-sync
+  api.get('/opencode/enabled-models-sync', async (_req, res) => {
+    try {
+      let config: unknown;
+      try {
+        config = await opencodeClient.getConfig();
+      } catch {
+        const connected = await opencodeClient.connect();
+        if (!connected) {
+          throw new Error('OpenCode 当前不可连接，无法读取运行时配置');
+        }
+        config = await opencodeClient.getConfig();
+      }
+
+      const models = extractEnabledModelsFromOpencodeConfig(config);
+      res.json({
+        source: 'opencode_runtime_config',
+        models,
+        count: models.length,
+      });
+    } catch (error: any) {
+      console.error('[Admin] 同步 OpenCode 已启用模型失败:', error.message);
+      res.status(502).json({ error: '同步 OpenCode 已启用模型失败：' + error.message });
+    }
+  });
+
   // ── GET /api/logs（查询日志）
   api.get('/logs', (req, res) => {
     const { level, search, start, end, page = '1', limit = '100' } = req.query;
@@ -1013,6 +1148,15 @@ objShell.Run "cmd /c opencode serve", 0, False
 
   // ── Session 管理路由
   api.use('/sessions', createSessionRoutes());
+  registerWorkspaceGitRoutes(api);
+  registerWorkspaceFilesRoutes(api);
+  registerWorkspaceTerminalRoutes(api);
+
+  // ── Resources 管理路由（Skills, MCP, Agents, Providers）
+  api.use('/resources', createResourcesRoutes());
+
+  // ── Resources 终端路由（WebSocket终端用于OAuth登录）
+  registerResourcesTerminalRoutes(api);
 
   // ── POST /api/admin/shutdown（终止服务）
   api.post('/admin/shutdown', async (_req, res) => {
@@ -1030,8 +1174,7 @@ objShell.Run "cmd /c opencode serve", 0, False
         // 2. 终止 OpenCode 进程
         try {
           const { spawnSync } = await import('node:child_process');
-          const processManagerPath = path.resolve(__dirname, '../../scripts/process-manager.mjs');
-          spawnSync(process.execPath, [processManagerPath, 'kill-opencode'], {
+          spawnSync(process.execPath, [resolveProcessManagerPath(), 'kill-opencode'], {
             stdio: 'inherit',
             windowsHide: true,
           });
@@ -1050,23 +1193,28 @@ objShell.Run "cmd /c opencode serve", 0, False
     }, 500);
   });
 
-  // ── GET /api/admin/login-timeout（获取登录超时配置）
-  api.get('/admin/login-timeout', (_req, res) => {
-    const timeoutMinutes = configStore.getLoginTimeout();
-    res.json({ timeoutMinutes });
+  // ── GET /api/admin/autostart（查询开机自启状态）
+  api.get('/admin/autostart', (_req, res) => {
+    try {
+      res.json(getAutoStart());
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || '查询自启状态失败' });
+    }
   });
 
-  // ── PUT /api/admin/login-timeout（设置登录超时配置）
-  api.put('/admin/login-timeout', (req, res) => {
-    const { timeoutMinutes } = req.body;
-
-    if (typeof timeoutMinutes !== 'number' || timeoutMinutes < 0) {
-      res.status(400).json({ error: '超时时间必须为非负整数' });
+  // ── PUT /api/admin/autostart（启用/关闭开机自启）
+  api.put('/admin/autostart', (req, res) => {
+    const { enabled } = req.body || {};
+    if (typeof enabled !== 'boolean') {
+      res.status(400).json({ error: 'enabled 必须为布尔值' });
       return;
     }
-
-    configStore.setLoginTimeout(timeoutMinutes);
-    res.json({ ok: true, timeoutMinutes, message: '登录超时设置已保存' });
+    try {
+      setAutoStart(enabled);
+      res.json({ ok: true, ...getAutoStart() });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || '设置自启失败' });
+    }
   });
 
   // ──────────────────────────────────────────────
@@ -1365,7 +1513,10 @@ objShell.Run "cmd /c opencode serve", 0, False
   let server: ReturnType<typeof app.listen> | null = null;
 
   return {
-    start() {
+    async start() {
+      // ── 初始化资源系统（skills/mcp/agents/providers 目录与事件总线）
+      await initResourceSystem();
+
       server = app.listen(port, '0.0.0.0', () => {
     const interfaces = os.networkInterfaces();
     let lanIp = 'localhost';
@@ -1380,6 +1531,9 @@ objShell.Run "cmd /c opencode serve", 0, False
     }
     console.log(`[Admin] 可视化配置面板已启动: http://${lanIp}:${port}`);
   });
+
+      // ── 设置 WebSocket 终端服务器（用于 OAuth 登录）
+      setupResourcesTerminalWebSocket(server);
     },
     stop() {
       server?.close();

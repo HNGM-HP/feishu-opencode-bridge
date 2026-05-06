@@ -43,6 +43,18 @@ export interface DirectoryResolveError {
 
 export type DirectoryResolveResult = DirectoryResolved | DirectoryResolveError;
 
+/**
+ * 约束作用域：
+ * - 'platform'（默认）：平台接入（telegram/discord/qq/wecom/weixin/whatsapp/dingtalk/feishu/group/p2p
+ *   以及 /send 文件下发）必须强制 ALLOWED_DIRECTORIES 白名单，因为路径来自外部消息输入，不可信。
+ * - 'workspace'：AI 工作区（Web 管理面板内的文件树 / Git / 终端 / 新建项目对话框）。
+ *   调用方已通过管理面板身份认证，白名单和默认工作目录对其不适用 —— 只保留
+ *   格式校验、危险路径拦截、存在性/可访问性检查以及 realpath 规范化。
+ *
+ * 变更点：白名单与默认工作目录仅约束平台接入，与 AI 工作区权限脱钩。
+ */
+export type DirectoryPolicyScope = 'platform' | 'workspace';
+
 interface DirectoryResolveOptions {
   explicitDirectory?: string;
   aliasName?: string;
@@ -53,6 +65,10 @@ interface DirectoryResolveOptions {
   allowedDirectories?: string[];
   gitRootNormalization?: boolean;
   maxPathLength?: number;
+  /**
+   * 作用域，默认 'platform'。AI 工作区请传 'workspace' 以脱钩白名单约束。
+   */
+  scope?: DirectoryPolicyScope;
 }
 
 const isWindows = process.platform === 'win32';
@@ -147,6 +163,9 @@ export class DirectoryPolicy {
     const allowedDirectories = options?.allowedDirectories ?? directoryConfig.allowedDirectories;
     const gitRootNormalization = options?.gitRootNormalization ?? directoryConfig.gitRootNormalization;
     const maxPathLength = options?.maxPathLength ?? directoryConfig.maxPathLength;
+    const scope: DirectoryPolicyScope = options?.scope ?? 'platform';
+    // AI 工作区脱钩白名单：Web 管理面板已做过身份认证，允许浏览服务进程可访问的任意目录。
+    const enforceAllowlist = scope !== 'workspace';
 
     // 1) 优先级合并
     let raw = '';
@@ -238,27 +257,29 @@ export class DirectoryPolicy {
       };
     }
 
-    // 5) 允许目录校验
+    // 5) 允许目录校验（仅平台接入作用域生效；AI 工作区脱钩）
     const normalizedAllowed = this.normalizeAllowedDirectories(allowedDirectories);
-    if (normalizedAllowed.length > 0) {
-      if (!this.isPathAllowed(normalized, normalizedAllowed)) {
+    if (enforceAllowlist) {
+      if (normalizedAllowed.length > 0) {
+        if (!this.isPathAllowed(normalized, normalizedAllowed)) {
+          return {
+            ok: false,
+            code: 'not_allowed',
+            userMessage: this.buildAllowlistUserMessage(raw, 'not_allowed', allowedDirectories),
+            internalDetail: `不在允许范围: ${normalized}`,
+            ...(source ? { source } : {}),
+            raw,
+          };
+        }
+      } else if (source === 'explicit') {
         return {
           ok: false,
-          code: 'not_allowed',
-          userMessage: this.buildAllowlistUserMessage(raw, 'not_allowed', allowedDirectories),
-          internalDetail: `不在允许范围: ${normalized}`,
-          ...(source ? { source } : {}),
+          code: 'explicit_requires_allowlist',
+          userMessage: this.buildAllowlistUserMessage(raw, 'missing_allowlist', allowedDirectories),
+          internalDetail: 'explicit 输入需要 ALLOWED_DIRECTORIES',
           raw,
         };
       }
-    } else if (source === 'explicit') {
-      return {
-        ok: false,
-        code: 'explicit_requires_allowlist',
-        userMessage: this.buildAllowlistUserMessage(raw, 'missing_allowlist', allowedDirectories),
-        internalDetail: 'explicit 输入需要 ALLOWED_DIRECTORIES',
-        raw,
-      };
     }
 
     // 6) 存在性与可访问性
@@ -313,7 +334,7 @@ export class DirectoryPolicy {
       };
     }
 
-    if (normalizedAllowed.length > 0 && realpath !== normalized) {
+    if (enforceAllowlist && normalizedAllowed.length > 0 && realpath !== normalized) {
       if (!this.isPathAllowed(realpath, normalizedAllowed)) {
         return {
           ok: false,
@@ -342,8 +363,8 @@ export class DirectoryPolicy {
       }
     }
 
-    // 9) Git 根目录归一化后的允许目录复检
-    if (gitRoot && gitRoot !== realpath) {
+    // 9) Git 根目录归一化后的允许目录复检（仅平台接入作用域生效）
+    if (enforceAllowlist && gitRoot && gitRoot !== realpath) {
       if (normalizedAllowed.length > 0 && !this.isPathAllowed(gitRoot, normalizedAllowed)) {
         return {
           ok: false,

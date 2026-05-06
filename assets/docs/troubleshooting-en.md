@@ -28,7 +28,185 @@ Problem Occurs
 
 ---
 
-## 1. Feishu Issues
+## 1. Desktop App Installation Issues
+
+### 1.1 macOS: "App is damaged" Error
+
+**Problem**:
+```
+"OpenCode Bridge" is damaged and can't be opened. You should move it to the Trash.
+```
+
+**Reason**:
+- macOS security mechanism (Gatekeeper) blocks unsigned apps
+- This is a free open-source project without Apple Developer certificate
+- This is normal macOS protection behavior for all unsigned apps
+
+**Solutions** (choose one):
+
+#### Method 1: Right-click to Open (Simplest)
+```
+1. Find "OpenCode Bridge.app" in Finder
+2. Right-click on the app icon
+3. Hold the "Option" (⌥) key on your keyboard
+4. Double-click the "Open" menu item
+5. Click "Open" in the confirmation dialog
+```
+
+**After this one-time operation**, you can launch normally by double-clicking.
+
+#### Method 2: System Settings Override
+```
+1. Click "Cancel" to close the error dialog
+2. Open "System Settings" → "Privacy & Security"
+3. Scroll down to find "OpenCode Bridge was blocked" message
+4. Click "Open Anyway" button
+5. Enter administrator password to confirm again
+```
+
+#### Method 3: Command Line Remove Quarantine
+```bash
+# Open Terminal and execute
+xattr -cr /Applications/OpenCode\ Bridge.app
+
+# If app is in another location, replace with actual path
+xattr -cr "/path/to/OpenCode Bridge.app"
+```
+
+**How it works**:
+- `xattr` command views and modifies file extended attributes
+- `-c` flag clears all extended attributes
+- `-r` flag recursively processes all files in the app bundle
+- macOS marks downloaded files with `com.apple.quarantine` attribute; removing it bypasses Gatekeeper
+
+#### Method 4: Launch from Terminal
+```bash
+# Execute in Terminal (no arguments needed)
+open /Applications/OpenCode\ Bridge.app
+```
+
+---
+
+### 1.2 Windows: "Unrecognized App" Warning
+
+**Problem**:
+```
+Windows protected your PC
+Microsoft Defender SmartScreen blocked an unrecognized app from starting. Running this app might put your PC at risk.
+```
+
+**Solution**:
+```
+1. Click "More info" link
+2. Click "Run anyway" button
+```
+
+**Explanation**:
+- Windows Defender SmartScreen shows this warning for apps without digital signatures
+- This is normal protection mechanism, not a virus or malware
+- After confirming once, SmartScreen will remember this app and won't prompt again
+
+---
+
+### 1.3 Can't Access Management Panel After Launch
+
+**Symptom**: Desktop app is running, but browser cannot access `http://localhost:4098`
+
+**Troubleshooting Steps**:
+
+#### 1. Confirm app is running
+- **Windows**: Check system tray (bottom-right notification area) for OpenCode Bridge icon
+- **macOS**: Check top menu bar for tray icon
+
+#### 2. Check if port is in use
+```bash
+# Windows PowerShell
+netstat -ano | findstr :4098
+
+# macOS/Linux
+lsof -i :4098
+```
+
+If port is occupied, you can:
+1. Stop the process occupying the port
+2. Or modify `ADMIN_PORT` in `.env` file
+
+#### 3. Manually open management panel
+Enter directly in browser address bar:
+```
+http://localhost:4098
+```
+
+#### 4. Check log files
+- **Windows**:
+  ```
+  %APPDATA%\opencode-bridge\logs\service.log
+  %APPDATA%\opencode-bridge\logs\service.err
+  ```
+- **macOS**:
+  ```
+  ~/Library/Application Support/opencode-bridge/logs/service.log
+  ~/Library/Application Support/opencode-bridge/logs/service.err
+  ```
+
+#### 5. Restart app
+- Right-click tray icon → Select "Stop Service" → Wait 3 seconds → Select "Start Service"
+- Or exit the app completely and restart
+
+---
+
+### 1.4 App Launches But Exits Immediately
+
+**Possible Causes**:
+
+#### Cause 1: Corrupted configuration file
+```bash
+# Delete config file (will lose all settings, be careful)
+# Windows
+del %APPDATA%\opencode-bridge\data\config.db
+
+# macOS
+rm ~/Library/Application\ Support/opencode-bridge/data/config.db
+```
+
+#### Cause 2: OpenCode service not running
+1. Confirm OpenCode is installed and running
+2. Check if OpenCode default port (4096) is accessible
+```bash
+curl http://localhost:4096
+```
+
+#### Cause 3: Node.js version incompatibility
+- Ensure Node.js 20.0.0 or higher is installed
+- Download: https://nodejs.org/
+
+---
+
+### 1.5 How to Completely Uninstall
+
+**Windows**:
+```
+1. Uninstall via "Settings" → "Apps" → "OpenCode Bridge" → "Uninstall"
+2. Manually delete remaining files:
+   - %APPDATA%\opencode-bridge
+   - %LOCALAPPDATA%\opencode-bridge
+```
+
+**macOS**:
+```bash
+# 1. Quit app (right-click tray icon → Quit)
+# 2. Delete app
+sudo rm -rf /Applications/OpenCode\ Bridge.app
+
+# 3. Delete config files (optional)
+rm -rf ~/Library/Application\ Support/opencode-bridge
+rm -rf ~/Library/Caches/opencode-bridge
+rm -rf ~/Library/Preferences/com.github.hngm-hp.opencode-bridge.plist
+```
+
+---
+
+## 2. Feishu Issues
 
 | Symptom | Priority Check |
 |---------|----------------|

@@ -148,6 +148,7 @@ import {
 import { ElMessage } from 'element-plus'
 import { useConfigStore } from '../stores/config'
 import { configApi } from '../api/index'
+import { getActiveDateLocale, isEnglishLocale } from '../i18n/runtime'
 
 const store = useConfigStore()
 
@@ -235,6 +236,15 @@ function getHealthName(key: string): string {
 }
 
 function formatUptime(seconds: number): string {
+  if (isEnglishLocale()) {
+    if (seconds < 60) return `${seconds} sec`
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} min`
+    const hours = Math.floor(seconds / 3600)
+    if (hours < 24) return `${hours} hr`
+    const days = Math.floor(hours / 24)
+    return `${days} d ${hours % 24} hr`
+  }
+
   if (seconds < 60) return `${seconds}秒`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`
   const hours = Math.floor(seconds / 3600)
@@ -246,7 +256,7 @@ function formatUptime(seconds: number): string {
 function formatStartTime(iso?: string): string {
   if (!iso) return '-'
   const d = new Date(iso)
-  return d.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
+  return d.toLocaleString(getActiveDateLocale(), { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 </script>
 

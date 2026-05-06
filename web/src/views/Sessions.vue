@@ -8,6 +8,18 @@
         </div>
         <div class="header-actions">
           <el-button :icon="Plus" type="primary" @click="openBindDialog()">新增绑定</el-button>
+          <el-popover placement="bottom-end" :width="220" trigger="click">
+            <template #reference>
+              <el-button :icon="Setting">显示列</el-button>
+            </template>
+            <div class="column-toggle-list">
+              <label v-for="column in columnOptions" :key="column.key" class="column-toggle-item">
+                <el-checkbox v-model="columnVisibility[column.key]">
+                  {{ column.label }}
+                </el-checkbox>
+              </label>
+            </div>
+          </el-popover>
           <el-button :icon="Refresh" @click="loadData(true)" :loading="loading">刷新</el-button>
         </div>
       </div>
@@ -87,34 +99,68 @@
       <el-table
         :data="pagedSessions"
         stripe
+        border
         v-loading="loading"
         empty-text="暂无会话数据"
         row-key="id"
         @selection-change="handleSelectionChange"
+        @sort-change="handleSortChange"
       >
         <el-table-column type="selection" width="50" />
 
-        <el-table-column label="Session ID" min-width="180">
+        <el-table-column
+          v-if="columnVisibility.id"
+          prop="id"
+          label="Session ID"
+          min-width="180"
+          resizable
+          sortable="custom"
+        >
           <template #default="{ row }">
             <div class="session-id" :title="row.id">
-              {{ row.id.slice(0, 12) }}...
+              {{ row.id }}
             </div>
           </template>
         </el-table-column>
 
-        <el-table-column label="标题" min-width="150">
+        <el-table-column
+          v-if="columnVisibility.title"
+          prop="title"
+          label="标题"
+          min-width="150"
+          resizable
+          show-overflow-tooltip
+          sortable="custom"
+        >
           <template #default="{ row }">
             <span class="title-text">{{ row.title || '未命名会话' }}</span>
           </template>
         </el-table-column>
 
-        <el-table-column label="工作目录" min-width="180">
+        <el-table-column
+          v-if="columnVisibility.directory"
+          prop="directory"
+          label="工作目录"
+          min-width="180"
+          resizable
+          show-overflow-tooltip
+          sortable="custom"
+        >
           <template #default="{ row }">
             <span class="dir-text">{{ row.directory || row.projectPath || '-' }}</span>
           </template>
         </el-table-column>
 
-        <el-table-column label="绑定状态" width="120" align="center">
+        <el-table-column
+          v-if="columnVisibility.bindStatus"
+          prop="isBound"
+          label="绑定状态"
+          width="120"
+          min-width="90"
+          align="center"
+          resizable
+          sortable="custom"
+        >
           <template #default="{ row }">
             <el-tag v-if="row.localOnly" type="warning" size="small">仅本地</el-tag>
             <el-tag v-else :type="row.isBound ? 'success' : 'info'" size="small">
@@ -123,12 +169,19 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="绑定详情" min-width="200">
+        <el-table-column
+          v-if="columnVisibility.bindings"
+          prop="bindings"
+          label="绑定详情"
+          min-width="200"
+          resizable
+          sortable="custom"
+        >
           <template #default="{ row }">
             <div v-if="row.bindings.length > 0" class="bindings-list">
               <div v-for="(b, idx) in row.bindings" :key="idx" class="binding-item">
                 <el-tag size="small" effect="plain" class="platform-tag">{{ getPlatformName(b.platform) }}</el-tag>
-                <span class="conv-id" :title="b.conversationId">{{ b.conversationId.slice(0, 16) }}...</span>
+                <span class="conv-id" :title="b.conversationId">{{ b.conversationId }}</span>
                 <el-tag v-if="b.chatType" :type="b.chatType === 'p2p' ? 'success' : 'info'" size="small" class="chat-type">
                   {{ b.chatType === 'p2p' ? '私聊' : '群聊' }}
                 </el-tag>
@@ -138,7 +191,20 @@
           </template>
         </el-table-column>
 
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column
+          v-if="columnVisibility.updatedAt"
+          prop="updatedAt"
+          label="最后修改时间"
+          min-width="176"
+          resizable
+          sortable="custom"
+        >
+          <template #default="{ row }">
+            <span class="time-text">{{ formatDateTime(row.updatedAt) }}</span>
+          </template>
+        </el-table-column>
+
+        <el-table-column label="操作" width="200" min-width="160" fixed="right" resizable>
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="openBindDialog(undefined, row.id)">
               {{ row.isBound ? '更改' : '绑定' }}
@@ -181,12 +247,12 @@
             <el-option
               v-for="s in openCodeSessions"
               :key="s.id"
-              :label="s.title ? `${s.title} (${s.id.slice(0, 8)}...)` : s.id"
+              :label="s.title ? `${s.title} (${s.id})` : s.id"
               :value="s.id"
             >
               <div class="session-option">
                 <span>{{ s.title || '未命名会话' }}</span>
-                <span class="session-option-id">{{ s.id.slice(0, 8) }}...</span>
+                <span class="session-option-id">{{ s.id }}</span>
                 <el-tag v-if="s.isBound" type="success" size="small" class="bound-tag">已绑定</el-tag>
               </div>
             </el-option>
@@ -198,7 +264,7 @@
             <el-option v-for="p in platforms" :key="p.id" :label="p.name" :value="p.id" />
           </el-select>
           <div class="form-hint" v-if="bindForm.platform === 'feishu'">
-            飞书 API 限制：仅支持扫描群聊，无法获取私聊列表
+            飞书 API 无法自动枚举私聊；群聊可直接选择，私聊请手动输入会话 ID 并指定类型。
           </div>
         </el-form-item>
 
@@ -231,7 +297,7 @@
           </el-select>
           <div class="form-hint">
             <template v-if="!bindForm.platform">请先选择平台，系统将自动加载该平台的聊天列表</template>
-            <template v-else-if="bindForm.platform === 'feishu'">飞书 API 限制：仅支持扫描群聊，无法获取私聊列表</template>
+            <template v-else-if="bindForm.platform === 'feishu'">飞书 API 无法自动枚举私聊；群聊可直接选择，私聊请手动输入会话 ID 并指定类型</template>
             <template v-else-if="platformChats.length === 0 && !loadingPlatformChats">该平台暂无可用聊天，请手动输入会话 ID</template>
             <template v-else>选择平台聊天或手动输入会话 ID</template>
           </div>
@@ -242,13 +308,13 @@
         </el-form-item>
 
         <el-form-item label="会话类型">
-          <el-input v-model="bindForm.chatType" disabled placeholder="选择聊天后自动识别">
-            <template #append>
-              <el-tag :type="bindForm.chatType === 'p2p' ? 'success' : bindForm.chatType === 'group' ? 'info' : 'info'" size="small">
-                {{ bindForm.chatType === 'p2p' ? '私聊' : bindForm.chatType === 'group' ? '群聊' : '未指定' }}
-              </el-tag>
-            </template>
-          </el-input>
+          <el-select v-model="bindForm.chatType" placeholder="选择会话类型" clearable style="width:100%">
+            <el-option label="私聊" value="p2p" />
+            <el-option label="群聊" value="group" />
+          </el-select>
+          <div class="form-hint">
+            选择聊天时会自动带出类型；如果是手动输入会话 ID，尤其飞书私聊，请在这里手动指定。
+          </div>
         </el-form-item>
 
         <el-form-item label="工作目录">
@@ -269,9 +335,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch, reactive } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus, Refresh, Search } from '@element-plus/icons-vue'
+import { Plus, Refresh, Search, Setting } from '@element-plus/icons-vue'
 import {
   sessionApi,
   type PlatformInfo,
@@ -296,8 +362,33 @@ const filterPlatform = ref('')
 const searchText = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
+const sortState = ref<{ prop: SortableSessionColumn | ''; order: 'ascending' | 'descending' | null }>({
+  prop: '',
+  order: null,
+})
 
 const selectedRows = ref<OpenCodeSession[]>([])
+
+type SortableSessionColumn = 'id' | 'title' | 'directory' | 'isBound' | 'bindings' | 'updatedAt'
+type ColumnVisibilityKey = 'id' | 'title' | 'directory' | 'bindStatus' | 'bindings' | 'updatedAt'
+
+const columnVisibility = reactive<Record<ColumnVisibilityKey, boolean>>({
+  id: true,
+  title: true,
+  directory: true,
+  bindStatus: true,
+  bindings: true,
+  updatedAt: false,
+})
+
+const columnOptions: Array<{ key: ColumnVisibilityKey; label: string }> = [
+  { key: 'id', label: 'Session ID' },
+  { key: 'title', label: '标题' },
+  { key: 'directory', label: '工作目录' },
+  { key: 'bindStatus', label: '绑定状态' },
+  { key: 'bindings', label: '绑定详情' },
+  { key: 'updatedAt', label: '最后修改时间' },
+]
 
 // 防抖
 let searchTimer: ReturnType<typeof setTimeout> | null = null
@@ -350,7 +441,14 @@ const filteredSessions = computed(() => {
     )
   }
 
-  return result
+  if (!sortState.value.prop || !sortState.value.order) {
+    return result
+  }
+
+  const direction = sortState.value.order === 'ascending' ? 1 : -1
+  const sorted = [...result]
+  sorted.sort((left, right) => compareSessions(left, right, sortState.value.prop as SortableSessionColumn, direction))
+  return sorted
 })
 
 const total = computed(() => filteredSessions.value.length)
@@ -476,7 +574,68 @@ function handleSelectionChange(rows: OpenCodeSession[]) {
   selectedRows.value = rows
 }
 
-function openBindDialog(binding?: undefined, sessionId?: string) {
+function handleSortChange(payload: { prop: string; order: 'ascending' | 'descending' | null }) {
+  const prop = payload.prop as SortableSessionColumn | ''
+  sortState.value = {
+    prop,
+    order: payload.order,
+  }
+  currentPage.value = 1
+}
+
+function compareSessions(
+  left: OpenCodeSession,
+  right: OpenCodeSession,
+  prop: SortableSessionColumn,
+  direction: 1 | -1,
+) {
+  const compareText = (a: string, b: string) => a.localeCompare(b, 'zh-Hans-CN')
+
+  switch (prop) {
+    case 'id':
+      return compareText(left.id || '', right.id || '') * direction
+    case 'title':
+      return compareText(left.title || '', right.title || '') * direction
+    case 'directory':
+      return compareText(left.directory || left.projectPath || '', right.directory || right.projectPath || '') * direction
+    case 'isBound': {
+      const leftRank = left.localOnly ? 2 : left.isBound ? 1 : 0
+      const rightRank = right.localOnly ? 2 : right.isBound ? 1 : 0
+      if (leftRank !== rightRank) {
+        return (leftRank - rightRank) * direction
+      }
+      return compareText(left.id || '', right.id || '') * direction
+    }
+    case 'bindings': {
+      const bindingCountDiff = left.bindings.length - right.bindings.length
+      if (bindingCountDiff !== 0) {
+        return bindingCountDiff * direction
+      }
+      const leftBindings = left.bindings.map(item => `${item.platform}:${item.conversationId}`).join('|')
+      const rightBindings = right.bindings.map(item => `${item.platform}:${item.conversationId}`).join('|')
+      return compareText(leftBindings, rightBindings) * direction
+    }
+    case 'updatedAt': {
+      const leftTime = left.updatedAt || 0
+      const rightTime = right.updatedAt || 0
+      if (leftTime !== rightTime) {
+        return (leftTime - rightTime) * direction
+      }
+      return compareText(left.id || '', right.id || '') * direction
+    }
+    default:
+      return 0
+  }
+}
+
+function formatDateTime(timestamp?: number) {
+  if (!timestamp) {
+    return '-'
+  }
+  return new Date(timestamp).toLocaleString('zh-CN', { hour12: false })
+}
+
+function openBindDialog(_binding?: undefined, sessionId?: string) {
   bindForm.value = {
     platform: '',
     conversationId: '',
@@ -526,7 +685,7 @@ async function handleSubmitBind() {
     })
     ElMessage.success('绑定已创建')
     bindDialogVisible.value = false
-    loadData()
+    loadData(true)
   } catch (e: any) {
     ElMessage.error('创建失败: ' + (e.response?.data?.error || e.message))
   } finally {
@@ -553,7 +712,7 @@ async function handleUnbindAll(row: OpenCodeSession) {
       row.bindings.map(b => ({ platform: b.platform, conversationId: b.conversationId }))
     )
     ElMessage.success(`已解除 ${result.successCount} 个绑定`)
-    loadData()
+    loadData(true)
   } catch (e: any) {
     ElMessage.error('解除绑定失败: ' + e.message)
   }
@@ -591,7 +750,7 @@ async function handleDeleteSession(row: OpenCodeSession) {
     }
 
     ElMessage.success('Session 已删除')
-    loadData()
+    loadData(true)
   } catch (e: any) {
     ElMessage.error('删除失败: ' + e.message)
   }
@@ -621,7 +780,7 @@ async function handleBatchUnbind() {
     const result = await sessionApi.batchOperation('unbind', bindingsToDelete)
     ElMessage.success(`已解除 ${result.successCount} 个绑定`)
     selectedRows.value = []
-    loadData()
+    loadData(true)
   } catch (e: any) {
     ElMessage.error('批量解绑失败: ' + e.message)
   }
@@ -661,7 +820,7 @@ async function handleBatchDelete() {
 
     ElMessage.success(`已删除 ${selectedCount} 个 Session`)
     selectedRows.value = []
-    loadData()
+    loadData(true)
   } catch (e: any) {
     ElMessage.error('批量删除失败: ' + e.message)
   }
@@ -688,6 +847,17 @@ async function handleBatchDelete() {
 
 .filter-card { margin-bottom: 16px; }
 .data-card { margin-bottom: 20px; }
+
+.column-toggle-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.column-toggle-item {
+  display: flex;
+  align-items: center;
+}
 
 .batch-actions {
   display: flex;
@@ -716,6 +886,12 @@ async function handleBatchDelete() {
   text-overflow: ellipsis;
   white-space: nowrap;
   display: block;
+}
+
+.time-text {
+  font-size: 12px;
+  color: #606266;
+  white-space: nowrap;
 }
 
 .bindings-list { display: flex; flex-direction: column; gap: 4px; }

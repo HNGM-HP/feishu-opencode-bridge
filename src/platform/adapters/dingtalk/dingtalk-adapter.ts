@@ -87,6 +87,8 @@ export class DingtalkAdapter implements PlatformAdapter {
     this.connections.clear();
     this.abortControllers.clear();
     this.isActive = false;
+    this.messageCallbacks.length = 0;
+    this.actionCallbacks.length = 0;
 
     console.log('[钉钉] 已停止');
   }

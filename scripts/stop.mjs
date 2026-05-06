@@ -20,6 +20,7 @@ const scriptDir = path.dirname(scriptFile);
 const rootDir = path.resolve(scriptDir, '..');
 const logsDir = path.join(rootDir, 'logs');
 const pidFile = path.join(logsDir, 'bridge.pid');
+const opencodePidFile = path.join(logsDir, 'opencode.pid');
 const processManagerPath = path.join(rootDir, 'scripts', 'process-manager.mjs');
 
 function isWindows() {
@@ -45,6 +46,8 @@ function main() {
     } catch (e) {
       console.error('[stop] 终止 OpenCode 进程异常:', e.message);
     }
+    // 清理 opencode PID 文件
+    fs.rmSync(opencodePidFile, { force: true });
     console.log('[stop] OpenCode 进程清理完成');
   }
 

@@ -1,12 +1,12 @@
 import { spawn } from 'node:child_process';
-import pkg from '../package.json' with { type: 'json' };
+import { VERSION } from './utils/version.js';
 import { initLogger } from './utils/logger.js';
 import { logStore } from './store/log-store.js';
 import { createAdminServer } from './admin/admin-server.js';
 import { feishuClient, type FeishuMessageEvent } from './feishu/client.js';
 // 平台适配器动态加载，不再静态导入
 import type { PlatformSender, PlatformAdapter } from './platform/types.js';
-import { loadAllConfigured, getSenderByPlatform, getCachedAdapter, getConfiguredPlatforms } from './platform/loader.js';
+import { loadAllConfigured, getSenderByPlatform, getCachedAdapter, getConfiguredPlatforms, clearCache } from './platform/loader.js';
 import { opencodeClient, type PermissionRequestEvent } from './opencode/client.js';
 import { streamStateManager, type ToolRuntimeState, type TimelineSegment, type StreamTimelineState } from './store/stream-state.js';
 import { buildTelegramText, buildPortableUpdateText, buildPortableUpdatePayload } from './utils/text-builder.js';
@@ -513,7 +513,7 @@ async function main() {
   initLogger(logStore);
 
   console.log('╔════════════════════════════════════════════════╗');
-  console.log('║   飞书 × OpenCode 桥接服务 v' + pkg.version + '     ║');
+  console.log('║   飞书 × OpenCode 桥接服务 v' + VERSION + '     ║');
   console.log('╚════════════════════════════════════════════════╝');
 
   // 0. 动态加载已配置的平台适配器（避免全量加载 SDK）
@@ -521,52 +521,116 @@ async function main() {
   console.log(`[Platform] 已配置的平台: ${configuredPlatforms.join(', ') || '无'}`);
   await loadAllConfigured();
 
-  // 1. 如果启用了 OpenCode 自动启动，先清理旧进程并启动
-  let opencodeChildProcess: import('node:child_process').ChildProcess | undefined;
+  // 1. 如果启用了 OpenCode 自动启动，通过 process-manager 幂等启动后台服务
   if (opencodeConfig.autoStart) {
     try {
-      const { cleanupOpenCodeProcesses } = await import('./utils/process-cleanup.js');
-      await cleanupOpenCodeProcesses();
-
-      // 等待 3 秒确保 OpenCode 进程完全退出
-      await new Promise(resolve => setTimeout(resolve, 3000));
-
-      const { spawn } = await import('node:child_process');
-      // Windows 下需要 shell: true 才能正确执行带参数的命令
+      console.log('[Index] 正在启动 OpenCode serve（后台模式）...');
+      const { spawnSync, spawn } = await import('node:child_process');
+      const { fileURLToPath } = await import('node:url');
+      const pathMod = await import('node:path');
       const isWindows = process.platform === 'win32';
-      const cmdParts = opencodeConfig.autoStartCmd.split(' ');
-      opencodeChildProcess = spawn(cmdParts[0], cmdParts.slice(1), {
-        stdio: 'ignore',
-        detached: true,
-        shell: isWindows,
+
+      // 确定 process-manager 路径（兼容开发/打包两种环境）
+      // 开发模式检测（process.resourcesPath 是 Electron 特有属性）
+      const isDev = process.env.NODE_ENV === 'development' || !(process as any).resourcesPath;
+      let processManagerPath: string;
+      if ((process as any).resourcesPath && !isDev) {
+        // Electron 打包后：scripts 在 resources/app/scripts/
+        processManagerPath = pathMod.join((process as any).resourcesPath, 'app', 'scripts', 'process-manager.mjs');
+      } else {
+        // 开发环境：src/index.ts 位于项目根下的 src/；构建后：dist/index.js 位于项目根下的 dist/
+        // 这两种布局到项目根的相对层级一致，因此统一回退一层即可定位 scripts/。
+        const selfDir = pathMod.dirname(fileURLToPath(import.meta.url));
+        processManagerPath = pathMod.resolve(selfDir, '../scripts/process-manager.mjs');
+      }
+
+      // 检查 process-manager 是否存在
+      console.log(`[Index] process-manager 路径: ${processManagerPath}`);
+
+      // 使用 start-opencode（幂等：已在运行则跳过）
+      const startResult = spawnSync(process.execPath, [processManagerPath, 'start-opencode'], {
+        encoding: 'utf-8',
         windowsHide: isWindows,
+        timeout: 15000,
+        stdio: 'pipe',
       });
 
-      opencodeChildProcess.on('error', (err) => {
-        console.error('[Index] OpenCode 子进程错误:', err);
-      });
+      if (startResult.stdout?.trim()) {
+        console.log('[Index] OpenCode 启动输出:', startResult.stdout.trim());
+      }
+      if (startResult.stderr?.trim()) {
+        console.warn('[Index] OpenCode 启动错误:', startResult.stderr.trim());
+      }
 
-      opencodeChildProcess.on('exit', (code) => {
-        console.log(`[Index] OpenCode 子进程已退出，code=${code}`);
-      });
+      if (startResult.status !== 0) {
+        console.error(`[Index] OpenCode 自动启动失败，退出码: ${startResult.status}（将继续启动 Bridge）`);
+        if (startResult.error) {
+          console.error('[Index] 错误详情:', startResult.error.message);
+        }
+      } else {
+        console.log('[Index] OpenCode serve 启动成功');
+      }
 
-      console.log(`[Index] OpenCode 已自动启动，PID=${opencodeChildProcess.pid}`);
+      // 如果开启了前台模式，等待 opencode serve 的端口就绪后再弹出 attach 窗口（Windows 专用）
+      // 做法：
+      //   1. 轮询 TCP（最多 15s），等待 http://localhost:<port> 可连接
+      //   2. 通过 PowerShell 的 Start-Process 拉起一个新的可见 CMD 控制台跑 opencode attach
+      //      —— 不能再用 `cmd /c start ... + windowsHide:true`：父进程无 console 时
+      //         CREATE_NO_WINDOW 会传染到 start，导致弹窗失败。
+      //         核心约束：后台 opencode serve 由 process-manager 用 Start-Process -WindowStyle Hidden
+      //         启动且不能弹任何 CMD，本块只影响"前台 attach 窗口"，与之相互独立。
+      if (opencodeConfig.autoStartForeground && isWindows) {
+        void (async () => {
+          const { probeTcpPort } = await import('./reliability/process-guard.js');
+          const host = opencodeConfig.host;
+          const port = opencodeConfig.port;
+          const attachUrl = `http://${host}:${port}`;
+          const deadline = Date.now() + 15000;
+
+          let ready = false;
+          while (Date.now() < deadline) {
+            const probe = await probeTcpPort(host, port, 1000);
+            if (probe.isOpen) {
+              ready = true;
+              break;
+            }
+            await new Promise(r => setTimeout(r, 500));
+          }
+
+          if (!ready) {
+            console.warn(`[Index] OpenCode serve 端口未就绪（${attachUrl}），跳过前台 attach 窗口`);
+            return;
+          }
+
+          try {
+            spawn(
+              'powershell.exe',
+              [
+                '-NoProfile',
+                '-NonInteractive',
+                '-Command',
+                `Start-Process cmd -ArgumentList '/k opencode attach ${attachUrl}'`,
+              ],
+              {
+                detached: true,
+                stdio: 'ignore',
+                windowsHide: true,
+              }
+            ).unref();
+            console.log(`[Index] OpenCode 前台窗口已拉起（${attachUrl}）`);
+          } catch (err) {
+            console.warn('[Index] 拉起 OpenCode 前台窗口失败:', err);
+          }
+        })();
+      }
     } catch (error) {
       console.warn('[Index] 启动 OpenCode 失败:', error);
     }
   }
 
-  // 注册进程退出时的清理逻辑，确保子进程不会变成孤儿进程
+  // 注册进程退出时的清理逻辑（后台 opencode serve 由 process-manager 独立管理，不在此清理）
   const cleanupChildProcess = () => {
-    if (opencodeChildProcess && opencodeChildProcess.pid) {
-      try {
-        // 由于子进程是 detached，需要显式终止
-        process.kill(opencodeChildProcess.pid, 'SIGTERM');
-        console.log(`[Index] 已发送 SIGTERM 到 OpenCode 子进程 (PID=${opencodeChildProcess.pid})`);
-      } catch {
-        // 进程可能已经退出，忽略错误
-      }
-    }
+    // 已迁移到 process-manager 管理，此处保留钩子供将来扩展
   };
 
   // 监听主进程退出事件
@@ -602,18 +666,24 @@ async function main() {
   }
 
   // 2. 先启动 Admin Server（确保管理面板可用，即使 OpenCode 未运行）
-  if (!process.env.BRIDGE_SPAWNED_BY_ADMIN) {
-    const adminPort = parseInt(process.env.ADMIN_PORT ?? '4098', 10);
-    const adminPassword = process.env.ADMIN_PASSWORD ?? '';
+  // 若 TUI 配置 WEB_ADMIN_DISABLED=true 或运行时 env BRIDGE_DISABLE_ADMIN=1，
+  // 则跳过 admin server 启动 —— 平台适配器仍会正常工作（仅 web 不可用）。
+  const { configStore: _cs } = await import('./store/config-store.js');
+  const _adminDisabledByCfg = (_cs.get().WEB_ADMIN_DISABLED ?? '') === 'true';
+  const _adminDisabledByEnv = process.env.BRIDGE_DISABLE_ADMIN === '1';
+  const adminDisabled = _adminDisabledByCfg || _adminDisabledByEnv;
+  if (!process.env.BRIDGE_SPAWNED_BY_ADMIN && !adminDisabled) {
+    const adminPort = parseInt(process.env.ADMIN_PORT ?? _cs.get().ADMIN_PORT ?? '4098', 10);
     const adminServer = createAdminServer({
       port: adminPort,
-      password: adminPassword,
       cronManager: undefined, // cronManager 在后面初始化
       startedAt: new Date(),
-      version: pkg.version,
+      version: VERSION,
     });
     adminServer.start();
     console.log(`[Admin] 管理面板已启动: http://localhost:${adminPort}`);
+  } else if (adminDisabled) {
+    console.log('[Admin] Web 管理面板已通过配置禁用（接入平台仍正常运行）');
   }
 
   // 3. 连接 OpenCode（失败不退出，允许用户在管理面板中诊断）
@@ -1221,6 +1291,57 @@ async function main() {
     streamStateManager.setErrorNotice(sessionID, '');
   };
 
+  const FEISHU_RENDER_DEDUPE_WINDOW_MS = 15_000;
+  const feishuRecentRenderCache = new Map<string, {
+    status: StreamCardData['status'];
+    signature: string;
+    messageIds: string[];
+    updatedAt: number;
+  }>();
+  const qqProgressState = new Map<string, {
+    sentThinking: string;
+    lastThinkingChunk: string;
+    finalSent: boolean;
+  }>();
+
+  const pruneFeishuRecentRenderCache = (): void => {
+    const now = Date.now();
+    for (const [key, value] of feishuRecentRenderCache.entries()) {
+      if (now - value.updatedAt > FEISHU_RENDER_DEDUPE_WINDOW_MS) {
+        feishuRecentRenderCache.delete(key);
+      }
+    }
+  };
+
+  const getQQProgressState = (bufferKey: string): { sentThinking: string; lastThinkingChunk: string; finalSent: boolean } => {
+    let state = qqProgressState.get(bufferKey);
+    if (!state) {
+      state = {
+        sentThinking: '',
+        lastThinkingChunk: '',
+        finalSent: false,
+      };
+      qqProgressState.set(bufferKey, state);
+    }
+    return state;
+  };
+
+  const getIncrementalSuffix = (fullText: string, sentText: string): string => {
+    if (!fullText) {
+      return '';
+    }
+    if (!sentText) {
+      return fullText;
+    }
+    if (fullText.startsWith(sentText)) {
+      return fullText.slice(sentText.length);
+    }
+    if (sentText.startsWith(fullText)) {
+      return '';
+    }
+    return fullText;
+  };
+
   const formatProviderError = (raw: unknown): string => {
     if (!raw || typeof raw !== 'object') {
       return '模型执行失败';
@@ -1388,6 +1509,58 @@ async function main() {
       showThinking: false,
     };
 
+    if (platform === 'qq') {
+      const sender = getSenderByPlatform(platform);
+      if (!sender) {
+        console.error('[outputBuffer] 无法获取 QQ sender');
+        return;
+      }
+
+      const onlyText = chatSessionStore.getSessionByConversation('qq', conversationId)?.qqOutputOnlyText === true;
+      const progress = getQQProgressState(buffer.key);
+
+      const thinkingDelta = getIncrementalSuffix(current.thinking, progress.sentThinking);
+      const normalizedThinkingDelta = thinkingDelta.trim();
+
+      if (normalizedThinkingDelta && normalizedThinkingDelta !== progress.lastThinkingChunk) {
+        const safeThinkingDelta = normalizedThinkingDelta.replace(/```/g, '` ` `');
+        const thinkingPayload = onlyText
+          ? `思考过程：\n${normalizedThinkingDelta}`
+          : `**思考过程**\n\`\`\`text\n${safeThinkingDelta}\n\`\`\``;
+        await sender.sendCard(conversationId, onlyText
+          ? { qqText: thinkingPayload, forcePlainText: true }
+          : { markdown: thinkingPayload, qqText: thinkingPayload });
+        progress.sentThinking = current.thinking;
+        progress.lastThinkingChunk = normalizedThinkingDelta;
+      } else if (current.thinking.length > progress.sentThinking.length) {
+        progress.sentThinking = current.thinking;
+      }
+
+      if (buffer.status !== 'running' && !progress.finalSent) {
+        const finalCardData: StreamCardData = {
+          ...cardData,
+          thinking: '',
+          segments: (cardData.segments ?? []).filter(segment => segment.type !== 'reasoning'),
+        };
+        const finalPayload = buildPortableUpdatePayload(finalCardData, conversationId, 'qq');
+        await sender.sendCard(
+          conversationId,
+          onlyText
+            ? { qqText: finalPayload.qqText, forcePlainText: true }
+            : { markdown: finalPayload.markdown, qqText: finalPayload.qqText }
+        );
+        progress.finalSent = true;
+      }
+
+      if (buffer.status !== 'running') {
+        qqProgressState.delete(buffer.key);
+        streamStateManager.clear(buffer.key);
+        clearPartSnapshotsForSession(buffer.sessionId);
+        outputBuffer.clear(buffer.key);
+      }
+      return;
+    }
+
     if (platform !== 'feishu') {
       const sender = getSenderByPlatform(platform);
       if (!sender) {
@@ -1395,22 +1568,27 @@ async function main() {
         return;
       }
       const payload = buildPortableUpdatePayload(cardData, conversationId, platform);
+      const qqOnlyText = platform === 'qq'
+        && chatSessionStore.getSessionByConversation('qq', conversationId)?.qqOutputOnlyText === true;
       const nextMessageIds: string[] = [];
       const existingMessageId = existingMessageIds[0];
+      const outboundPayload = qqOnlyText
+        ? { qqText: payload.qqText, forcePlainText: true }
+        : payload;
 
       if (existingMessageId) {
-        const updated = await sender.updateCard(existingMessageId, payload);
+        const updated = await sender.updateCard(existingMessageId, outboundPayload);
         if (updated) {
           nextMessageIds.push(existingMessageId);
         } else {
-          const replacementMessageId = await sender.sendCard(conversationId, payload);
+          const replacementMessageId = await sender.sendCard(conversationId, outboundPayload);
           if (replacementMessageId) {
             void sender.deleteMessage(existingMessageId).catch(() => undefined);
             nextMessageIds.push(replacementMessageId);
           }
         }
       } else {
-        const newMessageId = await sender.sendCard(conversationId, payload);
+        const newMessageId = await sender.sendCard(conversationId, outboundPayload);
         if (newMessageId) {
           nextMessageIds.push(newMessageId);
         }
@@ -1449,6 +1627,39 @@ async function main() {
       }
     );
 
+    pruneFeishuRecentRenderCache();
+    const renderSignature = JSON.stringify(cards);
+    const cachedRender = feishuRecentRenderCache.get(buffer.key);
+
+    if (
+      existingMessageIds.length === 0 &&
+      cachedRender &&
+      cachedRender.messageIds.length > 0 &&
+      Date.now() - cachedRender.updatedAt <= FEISHU_RENDER_DEDUPE_WINDOW_MS
+    ) {
+      existingMessageIds = [...cachedRender.messageIds];
+      outputBuffer.setMessageId(buffer.key, existingMessageIds[0]);
+      streamStateManager.setCardMessageIds(buffer.key, existingMessageIds);
+    }
+
+    if (
+      cachedRender &&
+      cachedRender.status === status &&
+      cachedRender.signature === renderSignature &&
+      cachedRender.messageIds.length > 0 &&
+      Date.now() - cachedRender.updatedAt <= FEISHU_RENDER_DEDUPE_WINDOW_MS
+    ) {
+      outputBuffer.setMessageId(buffer.key, cachedRender.messageIds[0]);
+      streamStateManager.setCardMessageIds(buffer.key, [...cachedRender.messageIds]);
+
+      if (buffer.status !== 'running') {
+        streamStateManager.clear(buffer.key);
+        clearPartSnapshotsForSession(buffer.sessionId);
+        outputBuffer.clear(buffer.key);
+      }
+      return;
+    }
+
     const nextMessageIds: string[] = [];
 
     const feishuAdapter = getCachedAdapter('feishu');
@@ -1467,14 +1678,8 @@ async function main() {
           nextMessageIds.push(existingMessageId);
           continue;
         }
-
-        const replacementMessageId = await sender.sendCard(conversationId, card);
-        if (replacementMessageId) {
-          void sender.deleteMessage(existingMessageId).catch(() => undefined);
-          nextMessageIds.push(replacementMessageId);
-        } else {
-          nextMessageIds.push(existingMessageId);
-        }
+        console.warn(`[outputBuffer] 飞书卡片更新失败，保留原卡避免重复发卡: buffer=${buffer.key}, msgId=${existingMessageId}`);
+        nextMessageIds.push(existingMessageId);
         continue;
       }
 
@@ -1495,6 +1700,12 @@ async function main() {
     if (nextMessageIds.length > 0) {
       outputBuffer.setMessageId(buffer.key, nextMessageIds[0]);
       streamStateManager.setCardMessageIds(buffer.key, nextMessageIds);
+      feishuRecentRenderCache.set(buffer.key, {
+        status,
+        signature: renderSignature,
+        messageIds: [...nextMessageIds],
+        updatedAt: Date.now(),
+      });
     } else {
       streamStateManager.setCardMessageIds(buffer.key, []);
     }
@@ -1522,15 +1733,17 @@ async function main() {
   const reliabilityLifecycle = bootstrapReliabilityLifecycle();
 
   // 4. 监听飞书消息（通过路由器分发）
-  feishuClient.on('message', async (event) => {
+  const onFeishuMessage = async (event: FeishuMessageEvent) => {
     await reliabilityLifecycle.onInboundMessage();
     await rootRouter.onMessage(event);
-  });
+  };
+  feishuClient.on('message', onFeishuMessage);
 
-  feishuClient.on('chatUnavailable', (chatId: string) => {
+  const onFeishuChatUnavailable = (chatId: string) => {
     console.warn(`[Index] 检测到不可用群聊，移除会话绑定: ${chatId}`);
     chatSessionStore.removeSession(chatId);
-  });
+  };
+  feishuClient.on('chatUnavailable', onFeishuChatUnavailable);
 
   // 5. 监听飞书卡片动作（通过路由器分发）
   feishuClient.setCardActionHandler(async (event) => {
@@ -1836,7 +2049,7 @@ async function main() {
   await lifecycleHandler.cleanUpOnStart();
 
   console.log('✅ 服务已就绪');
-  
+
   // 优雅退出处理
   let shuttingDown = false;
   const gracefulShutdown = async (signal: string) => {
@@ -1845,23 +2058,14 @@ async function main() {
     }
     shuttingDown = true;
 
+    // 内嵌模式下（Admin 进程内 Bridge 重启）不能让整个进程退出，
+    // 否则 Admin HTTP 服务一并被杀，导致"立即重启"实际只关闭不启动。
+    const isEmbeddedStop = signal === 'EMBEDDED_STOP';
+
     console.log(`\n[${signal}] 正在关闭服务...`);
 
-    // 1. 优先终止 OpenCode 子进程（如果由 Bridge 启动）
-    if (opencodeChildProcess) {
-      try {
-        console.log('[Shutdown] 正在终止 OpenCode 子进程...');
-        opencodeChildProcess.kill('SIGTERM');
-        // 等待子进程退出
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        if (!opencodeChildProcess.killed) {
-          opencodeChildProcess.kill('SIGKILL');
-          console.log('[Shutdown] 已强制终止 OpenCode 子进程');
-        }
-      } catch (e) {
-        console.error('[Shutdown] 终止 OpenCode 子进程失败:', e);
-      }
-    }
+    // 1. OpenCode serve 由 process-manager 独立管理，Bridge 关闭时不自动终止它
+    //    （如需完全关闭，可通过 Web 面板"终止服务"或 stop.mjs --with-opencode）
 
     // 2. 停止 reliability 调度和救援资源
     try {
@@ -1915,6 +2119,34 @@ async function main() {
       console.error('[System] 清理资源失败:', e);
     }
 
+    // 7. 清理本轮 main() 注册到 feishuClient 的 EventEmitter 监听，避免 embedded restart 叠加
+    try {
+      feishuClient.off('message', onFeishuMessage);
+      feishuClient.off('chatUnavailable', onFeishuChatUnavailable);
+    } catch (e) {
+      console.error('[飞书] 清理事件监听失败:', e);
+    }
+
+    // 8. 清理平台适配器缓存，避免重启后复用旧实例导致 callback 累积
+    try {
+      clearCache();
+    } catch (e) {
+      console.error('[PlatformLoader] 清理适配器缓存失败:', e);
+    }
+
+    if (isEmbeddedStop) {
+      // 内嵌模式：不退出进程，只清理本次 main() 注册的信号监听器，
+      // 并重置 runningInstance，保证下一次 startBridge() 会真正重新启动。
+      try {
+        process.off('SIGINT', sigintHandler);
+        process.off('SIGTERM', sigtermHandler);
+        process.off('SIGUSR2', sigusr2Handler);
+      } catch { /* ignore */ }
+      runningInstance = null;
+      console.log('✅ 服务已安全关闭（内嵌模式，保留 Admin 进程）');
+      return;
+    }
+
     // 延迟退出以确保所有清理完成
     setTimeout(() => {
       console.log('✅ 服务已安全关闭');
@@ -1922,15 +2154,13 @@ async function main() {
     }, 500);
   };
 
-  process.on('SIGINT', () => {
-    void gracefulShutdown('SIGINT');
-  });
-  process.on('SIGTERM', () => {
-    void gracefulShutdown('SIGTERM');
-  });
-  process.on('SIGUSR2', () => {
-    void gracefulShutdown('SIGUSR2');
-  }); // nodemon 重启信号
+  const sigintHandler = () => { void gracefulShutdown('SIGINT'); };
+  const sigtermHandler = () => { void gracefulShutdown('SIGTERM'); };
+  const sigusr2Handler = () => { void gracefulShutdown('SIGUSR2'); }; // nodemon 重启信号
+
+  process.on('SIGINT', sigintHandler);
+  process.on('SIGTERM', sigtermHandler);
+  process.on('SIGUSR2', sigusr2Handler);
 
   // 返回停止函数，供进程合并模式下使用
   return {
@@ -1957,7 +2187,11 @@ export async function stopBridge(): Promise<void> {
   }
 }
 
-if (process.env.VITEST !== 'true' && process.env.BRIDGE_EMBEDDED_MODE !== '1') {
+if (
+  process.env.VITEST !== 'true' &&
+  process.env.BRIDGE_EMBEDDED_MODE !== '1' &&
+  process.env.BRIDGE_CLI_MODE !== '1'
+) {
   main().catch(error => {
     console.error('Fatal Error:', error);
     process.exit(1);

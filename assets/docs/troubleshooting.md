@@ -27,7 +27,185 @@
 
 ---
 
-## 1. 飞书相关
+## 1. 桌面应用安装问题
+
+### 1.1 macOS 提示"已损坏"
+
+**问题现象**：
+```
+"OpenCode Bridge" 已损坏，无法打开。你应该将它移到废纸篓。
+```
+
+**原因说明**：
+- macOS 的安全机制（Gatekeeper）阻止了未签名的应用运行
+- 本项目为开源免费项目，未购买 Apple Developer 证书进行代码签名
+- 这是 macOS 对所有未签名应用的正常保护行为
+
+**解决方案**（任选其一）：
+
+#### 方法 1：右键强制打开（最简单）
+```
+1. 在 Finder 中找到 "OpenCode Bridge.app"
+2. 右键点击应用图标
+3. 按住键盘上的 "Option"（⌥）键
+4. 双击 "打开" 菜单项
+5. 在弹出的确认对话框中点击 "打开"
+```
+
+**一次性操作后**，以后就可以正常双击启动了。
+
+#### 方法 2：系统设置解除限制
+```
+1. 点击 "取消" 关闭错误对话框
+2. 打开 "系统设置" → "隐私与安全性"
+3. 向下滚动找到 "OpenCode Bridge 被阻止" 的提示
+4. 点击 "仍要打开" 按钮
+5. 再次输入管理员密码确认
+```
+
+#### 方法 3：命令行移除隔离属性
+```bash
+# 打开终端（Terminal），执行以下命令
+xattr -cr /Applications/OpenCode\ Bridge.app
+
+# 如果应用在其他位置，替换为实际路径
+xattr -cr "/path/to/OpenCode Bridge.app"
+```
+
+**原理解释**：
+- `xattr` 命令用于查看和修改文件的扩展属性
+- `-c` 参数清除所有扩展属性
+- `-r` 参数递归处理应用包内的所有文件
+- macOS 通过 `com.apple.quarantine` 属性标记下载的文件，移除后 Gatekeeper 不再拦截
+
+#### 方法 4：终端直接启动
+```bash
+# 在终端中执行（无需任何参数）
+open /Applications/OpenCode\ Bridge.app
+```
+
+---
+
+### 1.2 Windows 提示"未识别的应用"
+
+**问题现象**：
+```
+Windows 已保护你的电脑
+Microsoft Defender SmartScreen 筛选器已阻止无法识别的应用启动。运行此应用可能会导致你的电脑存在风险。
+```
+
+**解决方案**：
+```
+1. 点击 "更多信息" 链接
+2. 点击 "仍要运行" 按钮
+```
+
+**原因说明**：
+- Windows Defender SmartScreen 对没有数字签名的应用会显示此警告
+- 这是正常的保护机制，不是病毒或恶意软件
+- 确认一次后，SmartScreen 会记住此应用，下次不再提示
+
+---
+
+### 1.3 应用启动后无法访问管理面板
+
+**现象**：桌面应用已启动，但浏览器无法访问 `http://localhost:4098`
+
+**排查步骤**：
+
+#### 1. 确认应用是否运行
+- **Windows**：查看系统托盘（右下角通知区域）是否有 OpenCode Bridge 图标
+- **macOS**：查看顶部菜单栏是否有托盘图标
+
+#### 2. 检查端口是否被占用
+```bash
+# Windows PowerShell
+netstat -ano | findstr :4098
+
+# macOS/Linux
+lsof -i :4098
+```
+
+如果端口被占用，可以：
+1. 停止占用端口的进程
+2. 或修改 `.env` 文件中的 `ADMIN_PORT` 配置
+
+#### 3. 手动打开管理面板
+直接在浏览器地址栏输入：
+```
+http://localhost:4098
+```
+
+#### 4. 查看日志文件
+- **Windows**：
+  ```
+  %APPDATA%\opencode-bridge\logs\service.log
+  %APPDATA%\opencode-bridge\logs\service.err
+  ```
+- **macOS**：
+  ```
+  ~/Library/Application Support/opencode-bridge/logs/service.log
+  ~/Library/Application Support/opencode-bridge/logs/service.err
+  ```
+
+#### 5. 重启应用
+- 右键托盘图标 → 选择 "停止服务" → 等待 3 秒 → 选择 "启动服务"
+- 或直接退出应用后重新启动
+
+---
+
+### 1.4 应用启动但立即退出
+
+**可能原因**：
+
+#### 原因 1：配置文件损坏
+```bash
+# 删除配置文件（会丢失所有配置，请谨慎操作）
+# Windows
+del %APPDATA%\opencode-bridge\data\config.db
+
+# macOS
+rm ~/Library/Application\ Support/opencode-bridge/data/config.db
+```
+
+#### 原因 2：依赖的 OpenCode 服务未运行
+1. 确认 OpenCode 已安装并运行
+2. 检查 OpenCode 的默认端口（4096）是否可访问
+```bash
+curl http://localhost:4096
+```
+
+#### 原因 3：Node.js 版本不兼容
+- 确保系统安装了 Node.js 20.0.0 或更高版本
+- 下载地址：https://nodejs.org/
+
+---
+
+### 1.5 如何完全卸载
+
+**Windows**：
+```
+1. 通过 "设置" → "应用" → "OpenCode Bridge" → "卸载"
+2. 手动删除残留文件：
+   - %APPDATA%\opencode-bridge
+   - %LOCALAPPDATA%\opencode-bridge
+```
+
+**macOS**：
+```bash
+# 1. 退出应用（右键托盘图标 → 退出）
+# 2. 删除应用
+sudo rm -rf /Applications/OpenCode\ Bridge.app
+
+# 3. 删除配置文件（可选）
+rm -rf ~/Library/Application\ Support/opencode-bridge
+rm -rf ~/Library/Caches/opencode-bridge
+rm -rf ~/Library/Preferences/com.github.hngm-hp.opencode-bridge.plist
+```
+
+---
+
+## 2. 飞书相关
 
 | 现象 | 优先检查 |
 |------|----------|

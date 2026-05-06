@@ -8,6 +8,28 @@
         </div>
       </template>
 
+      <!-- 语言设置 -->
+      <div class="section">
+        <h3>界面语言</h3>
+        <div class="status-row">
+          <span>当前语言：</span>
+          <el-select v-model="selectedLocale" style="width: 180px" @change="handleLanguageChange">
+            <el-option label="中文（默认）" value="zh-CN" />
+            <el-option label="English" value="en-US" />
+          </el-select>
+        </div>
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          class="timeout-tip"
+        >
+          英文翻译通过外挂语言包覆盖，切换后立即生效。
+        </el-alert>
+      </div>
+
+      <el-divider />
+
       <!-- Bridge 服务控制 -->
       <div class="section">
         <h3>Bridge 服务</h3>
@@ -25,6 +47,21 @@
           <el-button type="danger" :loading="shuttingDown" @click="handleShutdown">
             终止服务
           </el-button>
+        </div>
+        <div class="status-row" style="margin-top: 12px">
+          <span>开机自启：</span>
+          <el-switch
+            v-model="autoStartEnabled"
+            :loading="autoStartBusy"
+            :disabled="!autoStartSupported || autoStartBusy"
+            @change="handleToggleAutoStart"
+          />
+          <el-text v-if="!autoStartSupported" type="info" size="small" style="margin-left: 8px">
+            当前部署模式不支持（请在打包版客户端中配置）
+          </el-text>
+          <el-text v-else type="info" size="small" style="margin-left: 8px">
+            {{ autoStartHint }}
+          </el-text>
         </div>
       </div>
 
@@ -76,6 +113,8 @@
             刷新
           </el-button>
         </div>
+
+        <!-- 安装 / 升级 -->
         <div class="button-row">
           <el-button
             :loading="installingOpenCode"
@@ -91,19 +130,18 @@
           >
             升级 OpenCode
           </el-button>
-          <template v-if="!opencodeStatus?.portOpen">
-            <el-select v-model="startMode" style="width: 140px" placeholder="启动方式">
-              <el-option label="可视化启动" value="visual" />
-              <el-option label="后台启动" value="headless" />
-            </el-select>
-            <el-button
-              type="success"
-              :loading="startingOpenCode"
-              @click="handleStartOpenCode"
-            >
-              启动 OpenCode
-            </el-button>
-          </template>
+        </div>
+
+        <!-- 启动 / 停止 + 前台窗口 -->
+        <div class="button-row" style="margin-top: 8px;">
+          <el-button
+            v-if="!opencodeStatus?.portOpen"
+            type="success"
+            :loading="startingOpenCode"
+            @click="handleStartOpenCode"
+          >
+            后台启动
+          </el-button>
           <el-button
             v-else
             type="danger"
@@ -112,39 +150,19 @@
           >
             终止 OpenCode
           </el-button>
-        </div>
-      </div>
-
-      <el-divider />
-
-      <!-- 登录设置 -->
-      <div class="section">
-        <h3>登录设置</h3>
-        <div class="status-row">
-          <span>登录超时：</span>
-          <el-input-number
-            v-model="loginTimeout"
-            :min="0"
-            :max="1440"
-            :step="10"
-            :disabled="savingTimeout"
-            style="width: 150px"
-          />
-          <span class="timeout-unit">分钟（0 表示不限制）</span>
-        </div>
-        <div class="button-row">
-          <el-button type="primary" :loading="savingTimeout" @click="handleSaveTimeout">
-            保存设置
+          <!-- 打开前台窗口按钮（Windows 专用，始终可点） -->
+          <el-button
+            :loading="attachingOpenCode"
+            :disabled="!opencodeStatus?.portOpen"
+            @click="handleAttachOpenCode"
+          >
+            <el-icon style="margin-right:4px"><Monitor /></el-icon>
+            打开前台窗口
           </el-button>
         </div>
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          class="timeout-tip"
-        >
-          设置登录后无操作自动退出时间，0 表示永不超时。
-        </el-alert>
+        <div class="field-tip" style="margin-top:6px">
+          「打开前台窗口」将在新 CMD 窗口中执行 <code>opencode attach http://localhost:4096</code>（Windows 专用）
+        </div>
       </div>
 
       <el-divider />
@@ -227,12 +245,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Setting } from '@element-plus/icons-vue'
+import { Setting, Monitor } from '@element-plus/icons-vue'
 import { configApi } from '../api/index'
 import type { ServiceStatus, BridgeStatus, OpenCodeStatus, OpenCodeUpdateCheck } from '../api/index'
 import { useConfigStore } from '../stores/config'
+import { appLocale, setAppLocale } from '../i18n/runtime'
 
 const store = useConfigStore()
 const status = ref<ServiceStatus | null>(null)
@@ -240,20 +259,31 @@ const bridgeStatus = ref<BridgeStatus | null>(null)
 const opencodeStatus = ref<OpenCodeStatus | null>(null)
 const opencodeUpdateCheck = ref<OpenCodeUpdateCheck | null>(null)
 const bridgeUpdateCheck = ref<{ hasUpdate: boolean; currentVersion: string; latestVersion: string | null } | null>(null)
-const loginTimeout = ref(0)
 
 const restarting = ref(false)
 const shuttingDown = ref(false)
+const autoStartEnabled = ref(false)
+const autoStartSupported = ref(true)
+const autoStartPlatform = ref<string>('')
+const autoStartBusy = ref(false)
+const autoStartHint = computed(() => {
+  switch (autoStartPlatform.value) {
+    case 'win32': return '通过注册表 HKCU\\...\\Run 写入'
+    case 'darwin': return '通过 ~/Library/LaunchAgents 写入'
+    case 'linux': return '通过 ~/.config/autostart 写入'
+    default: return ''
+  }
+})
 const showShutdownDialog = ref(false)
 const installingOpenCode = ref(false)
 const upgradingOpenCode = ref(false)
 const startingOpenCode = ref(false)
 const stoppingOpenCode = ref(false)
+const attachingOpenCode = ref(false)
 const upgrading = ref(false)
 const checkingOpenCodeUpdate = ref(false)
 const checkingBridgeUpdate = ref(false)
-const savingTimeout = ref(false)
-const startMode = ref<'visual' | 'headless'>('headless')
+const selectedLocale = ref<'zh-CN' | 'en-US'>(appLocale.value)
 
 // 判断是否有 OpenCode 更新
 const hasOpenCodeUpdate = computed(() => {
@@ -270,12 +300,46 @@ async function loadStatus() {
     status.value = store.status
     bridgeStatus.value = await configApi.getBridgeStatus()
     opencodeStatus.value = await configApi.getOpenCodeStatus()
-    const timeoutRes = await configApi.getLoginTimeout()
-    loginTimeout.value = timeoutRes.timeoutMinutes
   } catch (e: any) {
     console.error('加载状态失败:', e)
   }
+
+  try {
+    const auto = await configApi.getAutoStart()
+    autoStartEnabled.value = auto.enabled
+    autoStartSupported.value = auto.supported
+    autoStartPlatform.value = auto.platform
+  } catch (e: any) {
+    console.error('加载自启状态失败:', e)
+    autoStartSupported.value = false
+  }
 }
+
+async function handleToggleAutoStart(value: string | number | boolean) {
+  const next = Boolean(value)
+  // el-switch 已经把 v-model 翻成新值；调用失败要回滚
+  autoStartBusy.value = true
+  try {
+    const result = await configApi.setAutoStart(next)
+    autoStartEnabled.value = result.enabled
+    ElMessage.success(next ? '已设置开机自启' : '已关闭开机自启')
+  } catch (e: any) {
+    autoStartEnabled.value = !next
+    ElMessage.error('设置失败：' + (e.response?.data?.error || e.message))
+  } finally {
+    autoStartBusy.value = false
+  }
+}
+
+function handleLanguageChange(value: 'zh-CN' | 'en-US'): void {
+  setAppLocale(value)
+  selectedLocale.value = value
+  ElMessage.success(value === 'en-US' ? 'Interface language switched to English' : '界面语言已切换为中文')
+}
+
+watch(appLocale, value => {
+  selectedLocale.value = value
+})
 
 async function checkOpenCodeUpdate() {
   checkingOpenCodeUpdate.value = true
@@ -353,18 +417,6 @@ async function handleShutdownAll() {
   }
 }
 
-async function handleSaveTimeout() {
-  savingTimeout.value = true
-  try {
-    await configApi.setLoginTimeout(loginTimeout.value)
-    ElMessage.success('登录超时设置已保存')
-  } catch (e: any) {
-    ElMessage.error('保存失败: ' + (e.response?.data?.error || e.message))
-  } finally {
-    savingTimeout.value = false
-  }
-}
-
 async function handleInstallOpenCode() {
   installingOpenCode.value = true
   try {
@@ -400,14 +452,26 @@ async function handleUpgradeOpenCode() {
 async function handleStartOpenCode() {
   startingOpenCode.value = true
   try {
-    const visual = startMode.value === 'visual'
-    const result = await configApi.startOpenCode(visual)
+    const result = await configApi.startOpenCode()
     ElMessage.success(result.message)
     setTimeout(refreshOpenCodeStatus, 2000)
   } catch (e: any) {
     ElMessage.error('启动失败: ' + (e.response?.data?.error || e.message))
   } finally {
     startingOpenCode.value = false
+  }
+}
+
+async function handleAttachOpenCode() {
+  attachingOpenCode.value = true
+  try {
+    const result = await configApi.attachOpenCode()
+    ElMessage.success(result.message)
+  } catch (e: any) {
+    const errMsg = e.response?.data?.error || e.message
+    ElMessage.error('打开前台窗口失败: ' + errMsg)
+  } finally {
+    attachingOpenCode.value = false
   }
 }
 
@@ -457,6 +521,7 @@ async function handleUpgrade() {
 }
 
 onMounted(async () => {
+  selectedLocale.value = appLocale.value
   await loadStatus()
   await checkOpenCodeUpdate()
   await checkBridgeUpdate()
@@ -508,6 +573,19 @@ onMounted(async () => {
 
 .upgrade-tip, .timeout-tip {
   margin-top: 12px;
+}
+
+.field-tip {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+}
+
+.field-tip code {
+  background: #f0f0f0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11px;
 }
 
 .dialog-footer {

@@ -3,6 +3,7 @@ import * as path from 'path';
 import type { EffortLevel } from '../commands/effort.js';
 
 export type ChatSessionType = 'p2p' | 'group';
+export type SessionOrderMode = 'default' | 'last_time';
 
 export interface ChatSessionData {
   chatId: string;
@@ -21,6 +22,11 @@ export interface ChatSessionData {
   resolvedDirectory?: string;
   projectName?: string;
   defaultDirectory?: string;
+  sessionOrderMode?: SessionOrderMode;
+  qqOutputOnlyText?: boolean;
+  helpWithQc?: boolean;
+  sessionWithCtl?: boolean;
+  sessionWithChange?: boolean;
   reminderSent?: boolean;
   interactionHistory: InteractionRecord[];
 }
@@ -353,6 +359,13 @@ class ChatSessionStore {
       || this.inferChatTypeFromTitle(title)
       || this.inferChatTypeFromTitle(current?.title);
 
+    const preservedInteractionHistory = Array.isArray(current?.interactionHistory)
+      ? current.interactionHistory.map(record => ({
+          ...record,
+          botFeishuMsgIds: Array.isArray(record.botFeishuMsgIds) ? [...record.botFeishuMsgIds] : [],
+        }))
+      : [];
+
     const data: ChatSessionData = {
       chatId: conversationId,
       sessionId,
@@ -365,10 +378,17 @@ class ChatSessionStore {
       ...(options?.resolvedDirectory ? { resolvedDirectory: options.resolvedDirectory } : {}),
       ...(options?.projectName ? { projectName: options.projectName } : {}),
       ...(current?.defaultDirectory ? { defaultDirectory: current.defaultDirectory } : {}),
+      ...(current?.sessionOrderMode ? { sessionOrderMode: current.sessionOrderMode } : {}),
+      ...(typeof current?.qqOutputOnlyText === 'boolean' ? { qqOutputOnlyText: current.qqOutputOnlyText } : {}),
+      ...(typeof current?.helpWithQc === 'boolean' ? { helpWithQc: current.helpWithQc } : {}),
+      ...(typeof current?.sessionWithCtl === 'boolean' ? { sessionWithCtl: current.sessionWithCtl } : {}),
+      ...(typeof current?.sessionWithChange === 'boolean' ? { sessionWithChange: current.sessionWithChange } : {}),
       ...(current?.preferredModel ? { preferredModel: current.preferredModel } : {}),
       ...(current?.preferredAgent ? { preferredAgent: current.preferredAgent } : {}),
       ...(current?.preferredEffort ? { preferredEffort: current.preferredEffort } : {}),
-      interactionHistory: [],
+      ...(current?.lastFeishuUserMsgId ? { lastFeishuUserMsgId: current.lastFeishuUserMsgId } : {}),
+      ...(current?.lastFeishuAiMsgId ? { lastFeishuAiMsgId: current.lastFeishuAiMsgId } : {}),
+      interactionHistory: preservedInteractionHistory,
     };
 
     this.removeExistingBindingsForSession(sessionId, key);
@@ -410,6 +430,13 @@ class ChatSessionStore {
       || this.inferChatTypeFromTitle(title)
       || this.inferChatTypeFromTitle(current?.title);
 
+    const preservedInteractionHistory = Array.isArray(current?.interactionHistory)
+      ? current.interactionHistory.map(record => ({
+          ...record,
+          botFeishuMsgIds: Array.isArray(record.botFeishuMsgIds) ? [...record.botFeishuMsgIds] : [],
+        }))
+      : [];
+
     const data: ChatSessionData = {
       chatId,
       sessionId,
@@ -422,10 +449,17 @@ class ChatSessionStore {
       ...(options?.resolvedDirectory ? { resolvedDirectory: options.resolvedDirectory } : {}),
       ...(options?.projectName ? { projectName: options.projectName } : {}),
       ...(current?.defaultDirectory ? { defaultDirectory: current.defaultDirectory } : {}),
+      ...(current?.sessionOrderMode ? { sessionOrderMode: current.sessionOrderMode } : {}),
+      ...(typeof current?.qqOutputOnlyText === 'boolean' ? { qqOutputOnlyText: current.qqOutputOnlyText } : {}),
+      ...(typeof current?.helpWithQc === 'boolean' ? { helpWithQc: current.helpWithQc } : {}),
+      ...(typeof current?.sessionWithCtl === 'boolean' ? { sessionWithCtl: current.sessionWithCtl } : {}),
+      ...(typeof current?.sessionWithChange === 'boolean' ? { sessionWithChange: current.sessionWithChange } : {}),
       ...(current?.preferredModel ? { preferredModel: current.preferredModel } : {}),
       ...(current?.preferredAgent ? { preferredAgent: current.preferredAgent } : {}),
       ...(current?.preferredEffort ? { preferredEffort: current.preferredEffort } : {}),
-      interactionHistory: [],
+      ...(current?.lastFeishuUserMsgId ? { lastFeishuUserMsgId: current.lastFeishuUserMsgId } : {}),
+      ...(current?.lastFeishuAiMsgId ? { lastFeishuAiMsgId: current.lastFeishuAiMsgId } : {}),
+      interactionHistory: preservedInteractionHistory,
     };
 
     this.removeExistingBindingsForSession(sessionId, namespacedKey);
@@ -507,6 +541,11 @@ class ChatSessionStore {
       preferredAgent?: string;
       preferredEffort?: EffortLevel;
       defaultDirectory?: string;
+      sessionOrderMode?: SessionOrderMode;
+      qqOutputOnlyText?: boolean;
+      helpWithQc?: boolean;
+      sessionWithCtl?: boolean;
+      sessionWithChange?: boolean;
     }
   ): void {
     const session = this.getChatDataLegacyOrNamespaced(chatId);
@@ -543,6 +582,46 @@ class ChatSessionStore {
         delete session.defaultDirectory;
       }
     }
+
+    if ('sessionOrderMode' in config) {
+      if (config.sessionOrderMode) {
+        session.sessionOrderMode = config.sessionOrderMode;
+      } else {
+        delete session.sessionOrderMode;
+      }
+    }
+
+    if ('qqOutputOnlyText' in config) {
+      if (typeof config.qqOutputOnlyText === 'boolean') {
+        session.qqOutputOnlyText = config.qqOutputOnlyText;
+      } else {
+        delete session.qqOutputOnlyText;
+      }
+    }
+
+    if ('helpWithQc' in config) {
+      if (typeof config.helpWithQc === 'boolean') {
+        session.helpWithQc = config.helpWithQc;
+      } else {
+        delete session.helpWithQc;
+      }
+    }
+
+    if ('sessionWithCtl' in config) {
+      if (typeof config.sessionWithCtl === 'boolean') {
+        session.sessionWithCtl = config.sessionWithCtl;
+      } else {
+        delete session.sessionWithCtl;
+      }
+    }
+
+    if ('sessionWithChange' in config) {
+      if (typeof config.sessionWithChange === 'boolean') {
+        session.sessionWithChange = config.sessionWithChange;
+      } else {
+        delete session.sessionWithChange;
+      }
+    }
     this.save();
   }
 
@@ -554,6 +633,11 @@ class ChatSessionStore {
       preferredAgent?: string;
       preferredEffort?: EffortLevel;
       defaultDirectory?: string;
+      sessionOrderMode?: SessionOrderMode;
+      qqOutputOnlyText?: boolean;
+      helpWithQc?: boolean;
+      sessionWithCtl?: boolean;
+      sessionWithChange?: boolean;
     }
   ): void {
     const session = this.getSessionByConversation(platform, conversationId);
@@ -588,6 +672,46 @@ class ChatSessionStore {
         session.defaultDirectory = config.defaultDirectory;
       } else {
         delete session.defaultDirectory;
+      }
+    }
+
+    if ('sessionOrderMode' in config) {
+      if (config.sessionOrderMode) {
+        session.sessionOrderMode = config.sessionOrderMode;
+      } else {
+        delete session.sessionOrderMode;
+      }
+    }
+
+    if ('qqOutputOnlyText' in config) {
+      if (typeof config.qqOutputOnlyText === 'boolean') {
+        session.qqOutputOnlyText = config.qqOutputOnlyText;
+      } else {
+        delete session.qqOutputOnlyText;
+      }
+    }
+
+    if ('helpWithQc' in config) {
+      if (typeof config.helpWithQc === 'boolean') {
+        session.helpWithQc = config.helpWithQc;
+      } else {
+        delete session.helpWithQc;
+      }
+    }
+
+    if ('sessionWithCtl' in config) {
+      if (typeof config.sessionWithCtl === 'boolean') {
+        session.sessionWithCtl = config.sessionWithCtl;
+      } else {
+        delete session.sessionWithCtl;
+      }
+    }
+
+    if ('sessionWithChange' in config) {
+      if (typeof config.sessionWithChange === 'boolean') {
+        session.sessionWithChange = config.sessionWithChange;
+      } else {
+        delete session.sessionWithChange;
       }
     }
 
@@ -718,6 +842,36 @@ class ChatSessionStore {
       }
       this.save();
     }
+  }
+
+  ensureInteraction(chatId: string, record: InteractionRecord): void {
+    const session = this.getChatDataLegacyOrNamespaced(chatId);
+    if (!session) {
+      return;
+    }
+
+    if (!session.interactionHistory) {
+      session.interactionHistory = [];
+    }
+
+    const existing = session.interactionHistory.find(item => item.userFeishuMsgId === record.userFeishuMsgId);
+    if (existing) {
+      return;
+    }
+
+    session.interactionHistory.push({
+      ...record,
+      botFeishuMsgIds: Array.isArray(record.botFeishuMsgIds) ? [...record.botFeishuMsgIds] : [],
+    });
+
+    this.updateLegacyPointers(session);
+
+    if (session.interactionHistory.length > 20) {
+      session.interactionHistory.shift();
+      this.updateLegacyPointers(session);
+    }
+
+    this.save();
   }
 
   removeSession(chatId: string): void {

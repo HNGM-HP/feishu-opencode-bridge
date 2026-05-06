@@ -6,16 +6,16 @@
  * 支持附件下载：photo、document、video、audio
  */
 
-import type { Bot, InlineKeyboard, Context } from 'grammy';
-import type {
-  PlatformAdapter,
-  PlatformSender,
-  PlatformMessageEvent,
-  PlatformActionEvent,
-  PlatformAttachment,
-} from '../types.js';
-import { telegramConfig } from '../../config.js';
 import type { File as TelegramFile } from '@grammyjs/types';
+import type { Bot, Context, InlineKeyboard } from 'grammy';
+import { telegramConfig } from '../../config.js';
+import type {
+  PlatformActionEvent,
+  PlatformAdapter,
+  PlatformAttachment,
+  PlatformMessageEvent,
+  PlatformSender,
+} from '../types.js';
 
 // 动态导入缓存：仅在启用时加载 grammy
 type GrammyModule = typeof import('grammy');
@@ -290,6 +290,8 @@ export class TelegramAdapter implements PlatformAdapter {
       this.bot.stop();
       this.bot = null;
       this.isActive = false;
+      this.messageCallbacks.length = 0;
+      this.actionCallbacks.length = 0;
       this.messageConversationMap.clear();
       console.log('[Telegram] 适配器已停止');
     }

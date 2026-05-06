@@ -402,7 +402,11 @@ class FeishuClient extends EventEmitter {
     });
 
     // 创建事件分发器
-    this.eventDispatcher = new lark.EventDispatcher({
+    this.eventDispatcher = this.createEventDispatcher();
+  }
+
+  private createEventDispatcher(): lark.EventDispatcher {
+    return new lark.EventDispatcher({
       encryptKey: feishuConfig.encryptKey,
       verificationToken: feishuConfig.verificationToken,
     });
@@ -1337,6 +1341,9 @@ class FeishuClient extends EventEmitter {
       this.wsClient.close();
       this.wsClient = null;
     }
+    this.eventDispatcher = this.createEventDispatcher();
+    this.cardActionHandler = undefined;
+    this.cardUpdateQueue.clear();
     this.connectionState = 'disconnected';
     console.log('[飞书] 已断开连接');
   }

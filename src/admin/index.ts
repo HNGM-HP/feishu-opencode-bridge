@@ -15,19 +15,17 @@ import '../config.js';
 // 设置内嵌模式环境变量，防止 Bridge 自动启动
 process.env.BRIDGE_EMBEDDED_MODE = '1';
 
-import pkg from '../../package.json' with { type: 'json' };
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createAdminServer } from './admin-server.js';
 import { bridgeManager, type BridgeStatus } from './bridge-manager.js';
-import { configStore } from '../store/config-store.js';
 import { initLogger } from '../utils/logger.js';
 import { logStore } from '../store/log-store.js';
+import { VERSION } from '../utils/version.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ADMIN_PORT = parseInt(process.env.ADMIN_PORT ?? '4098', 10);
-const VERSION = pkg.version;
 
 // 开发模式检测（process.resourcesPath 是 Electron 特有属性）
 const isDev = process.env.NODE_ENV === 'development' || !(process as any).resourcesPath;
@@ -79,10 +77,9 @@ async function main() {
   console.log('║     OpenCode Bridge Admin v' + VERSION + '          ║');
   console.log('╚════════════════════════════════════════════════╝');
 
-  // 启动 Admin Server
+  // 启动 Admin Server（已移除账号 / 密码鉴权）
   const adminServer = createAdminServer({
     port: ADMIN_PORT,
-    password: process.env.ADMIN_PASSWORD ?? '',
     startedAt: new Date(),
     version: VERSION,
     bridgeManager,
@@ -127,5 +124,12 @@ async function main() {
 
 main().catch((err) => {
   console.error('[Admin] 启动失败:', err);
+  if (err?.code === 'MODULE_NOT_FOUND' || String(err?.message || '').includes('better-sqlite3')) {
+    console.error('[Admin] 原生模块加载失败，诊断信息:');
+    console.error(`[Admin] platform=${process.platform} arch=${process.arch} node=${process.versions.node}`);
+    if (process.platform === 'darwin') {
+      console.error('[Admin] macOS: 请确认安装包与 CPU 架构匹配，或执行 xattr -cr 移除安全隔离');
+    }
+  }
   process.exit(1);
 });

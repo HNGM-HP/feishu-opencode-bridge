@@ -1,6 +1,6 @@
 {
   "name": "opencode-bridge",
-  "version": "2.9.59",
+  "version": "3.1.0",
   "type": "module",
   "description": "Feishu / Discord × OpenCode bridge service with runtime cron and reliability tooling",
   "main": "dist-electron/main.js",
@@ -33,7 +33,7 @@
     "build:web": "cd web && pnpm install && pnpm run build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build:all": "npm run build:web && npm run build && npm run build:electron",
-    "rebuild": "electron-rebuild -f -w better-sqlite3 -v",
+    "rebuild": "electron-rebuild -f -w better-sqlite3",
     "pack": "electron-builder --dir",
     "dist": "electron-builder --publish never",
     "dist:win": "electron-builder --win --publish never",
@@ -66,39 +66,47 @@
     "url": "https://github.com/HNGM-HP/opencode-bridge/issues"
   },
   "dependencies": {
+    "@hapi/boom": "^10.0.1",
+    "@inquirer/prompts": "^8.4.2",
     "@larksuiteoapi/node-sdk": "^1.36.3",
     "@opencode-ai/sdk": "latest",
     "@wecom/aibot-node-sdk": "^1.0.4",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
+    "axios": "^1.13.6",
     "better-sqlite3": "^12.8.0",
+    "chokidar": "^5.0.0",
     "dingtalk-stream": "^2.1.4",
     "discord.js": "^14.25.1",
     "dotenv": "^16.4.5",
-        "express": "^5.2.1",
+    "express": "^5.2.1",
     "grammy": "^1.41.1",
+    "gray-matter": "^4.0.3",
+    "multer": "^2.1.1",
     "node-cron": "^4.2.1",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "simple-git": "^3.36.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
     "@grammyjs/types": "^3.25.0",
-    "@hapi/boom": "^10.0.1",
     "@types/axios": "^0.14.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
+    "@types/multer": "^2.1.0",
     "@types/node": "^22.10.0",
     "@types/pino": "^7.0.5",
     "@types/qrcode": "^1.5.6",
+    "@types/supertest": "^6.0.3",
     "@types/ws": "^8.18.1",
-    "axios": "^1.13.6",
     "electron": "^34.5.8",
     "electron-builder": "^25.1.8",
     "electron-rebuild": "^3.2.9",
     "pino": "^10.3.1",
     "puppeteer": "^24.40.0",
+    "supertest": "^7.2.2",
     "tsx": "^4.19.0",
-    "typescript": "^5.6.0",
-    "vitest": "^4.0.18",
-    "ws": "^8.20.0"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.5"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -115,10 +123,7 @@
       "dist-electron/**/*",
       "assets/**/*",
       "package.json",
-      "node_modules/**/*",
       "!**/*.ts",
-      "!**/node_modules/*/{CHANGELOG.md,README.md,readme.md,LICENSE,license}",
-      "!**/node_modules/.bin",
       "!**/*.{iml,o,hprof,orig,pyc,pyo,rbc,swp,csproj,sln,xproj}",
       "!.editorconfig",
       "!**/._*",
@@ -127,9 +132,6 @@
       "!web/src"
     ],
     "asar": true,
-    "asarUnpack": [
-      "**/node_modules/better-sqlite3/**/*"
-    ],
     "extraResources": [
       {
         "from": "dist",
@@ -150,6 +152,33 @@
         "to": "app/scripts",
         "filter": [
           "**/*"
+        ]
+      },
+      {
+        "from": "node_modules",
+        "to": "app/node_modules",
+        "filter": [
+          "**/*",
+          "!*/{CHANGELOG.md,README.md,readme.md,LICENSE,license}",
+          "!.bin/**",
+          "!@esbuild{,/**}",
+          "!@img{,/**}",
+          "!@rolldown{,/**}",
+          "!@types{,/**}",
+          "!7zip-bin{,/**}",
+          "!app-builder-bin{,/**}",
+          "!chromium-bidi{,/**}",
+          "!devtools-protocol{,/**}",
+          "!electron{,/**}",
+          "!electron-builder{,/**}",
+          "!electron-rebuild{,/**}",
+          "!esbuild{,/**}",
+          "!lightningcss-*{,/**}",
+          "!puppeteer{,/**}",
+          "!puppeteer-core{,/**}",
+          "!tsx{,/**}",
+          "!typescript{,/**}",
+          "!vitest{,/**}"
         ]
       }
     ],
@@ -187,11 +216,12 @@
       ],
       "icon": "assets/icon-1024.png",
       "category": "public.app-category.productivity",
-      "hardenedRuntime": true,
-      "gatekeeperAssess": false,
       "extendInfo": {
         "NSHighResolutionCapable": true,
-        "CFBundleShortVersionString": "${version}"
+        "CFBundleShortVersionString": "${version}",
+        "NSAppleEventsUsageDescription": "需要与系统交互以提供服务。",
+        "NSCameraUsageDescription": "需要访问摄像头以提供相关功能。",
+        "NSMicrophoneUsageDescription": "需要访问麦克风以提供相关功能。"
       }
     },
     "dmg": {

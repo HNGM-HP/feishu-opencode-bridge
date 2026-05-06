@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs';
-import crypto from 'node:crypto';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -557,7 +556,7 @@ function ensureEnvFile() {
 
   const pureEnvContent = `ADMIN_PORT=4098\n`;
   fs.writeFileSync(envPath, pureEnvContent, 'utf-8');
-  console.log('[deploy] 📄 已生成极简版 .env 文件。首次访问 Web 管理面板时需设置管理员密码。');
+  console.log('[deploy] 📄 已生成极简版 .env 文件，可直接通过 Web 管理面板进行配置（无需登录）。');
 }
 
 function ensureLogDir() {
@@ -695,7 +694,6 @@ async function runBeginnerGuide() {
   // 读取生成的 .env 文件获取面板信息
   const envConfig = parseDotEnvFile();
   const adminPort = envConfig.ADMIN_PORT || '4098';
-  const adminPassword = envConfig.ADMIN_PASSWORD || '未设置';
 
   // 获取本机局域网 IP
   const interfaces = os.networkInterfaces();
@@ -713,9 +711,8 @@ async function runBeginnerGuide() {
 
   console.log('\n📋 后续步骤：\n');
   console.log('1️⃣  启动服务：在菜单中选择「2) 启动后台进程」');
-  console.log('2️⃣  访问配置面板：使用浏览器访问下方地址');
+  console.log('2️⃣  访问配置面板：使用浏览器访问下方地址（无需登录）');
   console.log(`    🔗 http://${lanIp}:${adminPort}`);
-  console.log(`    🔑 管理员密码：${adminPassword}`);
   console.log('\n3️⃣  在 Web 面板中配置飞书 App ID / App Secret 等平台凭据');
   console.log('4️⃣  保存配置后服务会自动提示是否需要重启\n');
   console.log('💡 提示：所有配置项（飞书、Discord、高可用、Cron 任务等）');
@@ -1241,59 +1238,6 @@ function printLinuxStatus() {
   console.log(`[deploy] 提示: 若服务正在运行，请使用浏览器访问 http://<机器IP>:${port}`);
 }
 
-// ──────────────────────────────────────────────
-// 重置管理员密码
-// ──────────────────────────────────────────────
-
-function resolveDataDir() {
-  const explicit = process.env.OPENCODE_BRIDGE_CONFIG_DIR?.trim();
-  if (explicit) {
-    return path.resolve(explicit);
-  }
-  return path.join(rootDir, 'data');
-}
-
-async function resetAdminPassword() {
-  const dataDir = resolveDataDir();
-  const dbPath = path.join(dataDir, 'config.db');
-
-  if (!fs.existsSync(dbPath)) {
-    console.log('[deploy] 数据库文件不存在，密码将在首次启动时从 .env 初始化');
-    return;
-  }
-
-  // 生成新密码
-  const newPassword = crypto.randomBytes(8).toString('hex');
-
-  // 使用 better-sqlite3 直接操作数据库
-  try {
-    // 动态导入 better-sqlite3
-    const Database = (await import('better-sqlite3')).default;
-    const db = new Database(dbPath);
-
-    // 更新密码并清除 password_changed_at（强制用户再次修改）
-    db.prepare(`
-      INSERT INTO admin_meta (key, value) VALUES ('admin_password', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(newPassword);
-
-    db.prepare(`
-      INSERT INTO admin_meta (key, value) VALUES ('password_changed_at', ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    `).run(new Date().toISOString());
-
-    db.close();
-
-    console.log(`[deploy] ✅ 管理员密码已重置为: ${newPassword}`);
-    console.log('[deploy] 请使用新密码登录 Web 管理面板');
-    console.log('[deploy] 登录后系统会要求您修改密码');
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[deploy] 重置密码失败: ${message}`);
-    console.error('[deploy] 请确保服务已停止后重试');
-  }
-}
-
 async function showMenu() {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -1314,13 +1258,11 @@ async function showMenu() {
         console.log('5) 停止 systemd 服务');
         console.log('6) 卸载 systemd 服务');
         console.log('7) 查看运行状态');
-        console.log('8) 重置管理员密码');
         console.log('0) 退出');
       } else {
         console.log('1) 一键部署');
         console.log('2) 启动后台进程');
         console.log('3) 停止后台进程');
-        console.log('4) 重置管理员密码');
         console.log('0) 退出');
       }
 
@@ -1350,9 +1292,6 @@ async function showMenu() {
             case '7':
               printLinuxStatus();
               break;
-            case '8':
-              await resetAdminPassword();
-              break;
             case '0':
               return;
             default:
@@ -1368,9 +1307,6 @@ async function showMenu() {
               break;
             case '3':
               await stopBackgroundProcess(rl);
-              break;
-            case '4':
-              await resetAdminPassword();
               break;
             case '0':
               return;
@@ -1395,7 +1331,6 @@ function printUsage() {
   console.log('  deploy           一键部署');
   console.log('  start            启动后台进程');
   console.log('  stop             停止后台进程');
-  console.log('  reset-password   重置管理员密码');
   console.log('  menu             打开交互菜单（默认）');
   if (isLinux()) {
     console.log('  service-install  安装并启动 systemd 服务');
@@ -1439,9 +1374,6 @@ async function main() {
         break;
       case 'status':
         printLinuxStatus();
-        break;
-      case 'reset-password':
-        await resetAdminPassword();
         break;
       case 'help':
       case '--help':

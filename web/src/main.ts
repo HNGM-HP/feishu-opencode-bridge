@@ -1,20 +1,19 @@
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
-import ElementPlus from 'element-plus'
-import 'element-plus/dist/index.css'
-import * as ElementPlusIconsVue from '@element-plus/icons-vue'
+// EP component CSS is auto-imported per-component by unplugin-vue-components
+// Only load the base/reset styles that EP needs globally
+import 'element-plus/theme-chalk/el-message.css'
+import 'element-plus/theme-chalk/el-message-box.css'
+import 'element-plus/theme-chalk/base.css'
 import { router } from './router/index'
 import App from './App.vue'
+import { installRuntimeLocaleOverlay } from './i18n/runtime'
 
 const app = createApp(App)
 const pinia = createPinia()
 
 app.use(pinia)
 app.use(router)
-app.use(ElementPlus)
-
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-  app.component(key, component)
-}
 
 app.mount('#app')
+installRuntimeLocaleOverlay()

@@ -1,47 +1,56 @@
 <template>
-  <el-container class="app-container">
+  <el-config-provider :locale="elementPlusLocale">
+    <el-container class="app-container">
     <!-- 侧边栏 -->
     <el-aside width="220px" class="sidebar">
       <div class="logo">
         <el-icon size="24"><Monitor /></el-icon>
-        <span>Bridge 配置中心</span>
+        <span>Bridge</span>
       </div>
-      <el-menu :router="true" :default-active="route.path" class="nav-menu">
-        <el-menu-item index="/dashboard">
+      <el-menu :router="true" :default-active="activeMenu" class="nav-menu">
+        <el-menu-item index="/dashboard" data-tour="nav-dashboard">
           <el-icon><DataAnalysis /></el-icon>
           <span>系统状态</span>
         </el-menu-item>
-        <el-menu-item index="/platforms">
+        <el-menu-item index="/chat" data-tour="nav-chat">
+          <el-icon><ChatLineSquare /></el-icon>
+          <span>AI 工作区</span>
+        </el-menu-item>
+        <el-menu-item index="/platforms" data-tour="nav-platforms">
           <el-icon><ChatDotRound /></el-icon>
           <span>平台接入</span>
         </el-menu-item>
-        <el-menu-item index="/sessions">
+        <el-menu-item index="/sessions" data-tour="nav-sessions">
           <el-icon><Link /></el-icon>
           <span>Session 管理</span>
         </el-menu-item>
-        <el-menu-item index="/opencode">
+        <el-menu-item index="/opencode" data-tour="nav-opencode">
           <el-icon><Connection /></el-icon>
           <span>OpenCode 对接</span>
         </el-menu-item>
-        <el-menu-item index="/reliability">
+        <el-menu-item index="/reliability" data-tour="nav-reliability">
           <el-icon><Warning /></el-icon>
           <span>高可用配置</span>
         </el-menu-item>
-        <el-menu-item index="/routing">
+        <el-menu-item index="/routing" data-tour="nav-routing">
           <el-icon><Setting /></el-icon>
           <span>核心行为</span>
         </el-menu-item>
-        <el-menu-item index="/cron">
+        <el-menu-item index="/cron" data-tour="nav-cron">
           <el-icon><Timer /></el-icon>
           <span>Cron 任务管理</span>
           <el-badge v-if="store.cronJobCount > 0" :value="store.runningJobCount" type="success" class="cron-badge" />
         </el-menu-item>
-        <el-menu-item index="/logs">
+        <el-menu-item index="/logs" data-tour="nav-logs">
           <el-icon><Document /></el-icon>
           <span>日志管理</span>
           <el-badge v-if="errorLogCount > 0" :value="errorLogCount" type="danger" class="cron-badge" />
         </el-menu-item>
-        <el-menu-item index="/settings">
+        <el-menu-item index="/resources" data-tour="nav-resources">
+          <el-icon><Box /></el-icon>
+          <span>资源管理</span>
+        </el-menu-item>
+        <el-menu-item index="/settings" data-tour="nav-settings">
           <el-icon><Setting /></el-icon>
           <span>系统设置</span>
         </el-menu-item>
@@ -54,30 +63,15 @@
           <el-text size="small" type="info">运行 {{ formatUptime(status.uptime) }}</el-text>
         </div>
         <div class="footer-row">
-          <el-button
-            size="small"
-            :icon="Key"
-            @click="handleChangePassword"
-            class="footer-btn"
-          >
-            修改密码
-          </el-button>
-          <el-button
-            type="danger"
-            size="small"
-            :icon="SwitchButton"
-            @click="handleLogout"
-            class="footer-btn"
-            plain
-          >
-            退出
-          </el-button>
+          <HelpMenu />
         </div>
       </div>
     </el-aside>
 
+    <OnboardingWizard />
+
     <!-- 内容区 -->
-    <el-main class="main-content">
+    <el-main :class="['main-content', { 'main-content--workspace': isChatRoute }]">
       <!-- 待重启提示横幅 -->
       <el-alert
         v-if="store.pendingRestart"
@@ -101,27 +95,32 @@
         <el-icon class="is-loading" size="40"><Loading /></el-icon>
       </div>
     </el-main>
-  </el-container>
+    </el-container>
 
-  <!-- 重启确认弹窗 -->
-  <el-dialog v-model="restartDialogVisible" title="确认重启服务" width="420px">
-    <p>重启将中断当前所有连接，服务将在 1 秒后退出（需配合 PM2/systemd 自动拉起）。</p>
-    <p v-if="store.pendingRestartKeys.length">待生效配置：<strong>{{ store.pendingRestartKeys.join('、') }}</strong></p>
-    <template #footer>
-      <el-button @click="restartDialogVisible = false">取消</el-button>
-      <el-button type="warning" :loading="restarting" @click="confirmRestart">确认重启</el-button>
-    </template>
-  </el-dialog>
+    <!-- 重启确认弹窗 -->
+    <el-dialog v-model="restartDialogVisible" title="确认重启服务" width="420px">
+      <p>重启将中断当前所有连接，服务将在 1 秒后退出（需配合 PM2/systemd 自动拉起）。</p>
+      <p v-if="store.pendingRestartKeys.length">待生效配置：<strong>{{ store.pendingRestartKeys.join('、') }}</strong></p>
+      <template #footer>
+        <el-button @click="restartDialogVisible = false">取消</el-button>
+        <el-button type="warning" :loading="restarting" @click="confirmRestart">确认重启</el-button>
+      </template>
+    </el-dialog>
+  </el-config-provider>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { computed, ref, onMounted, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { DataAnalysis, Loading, Document, SwitchButton, Key, Link } from '@element-plus/icons-vue'
+import { DataAnalysis, Loading, Document, Link, ChatLineSquare, ChatDotRound, Connection, Warning, Setting, Timer, Monitor, Box } from '@element-plus/icons-vue'
 import { useConfigStore } from './stores/config'
 import { configApi } from './api/index'
 import type { ServiceStatus } from './api/index'
+import { appLocale, elementPlusLocale, isEnglishLocale, translateUiText } from './i18n/runtime'
+import OnboardingWizard from './components/onboarding/OnboardingWizard.vue'
+import HelpMenu from './components/onboarding/HelpMenu.vue'
+import { useOnboarding } from './composables/useOnboarding'
 
 const route = useRoute()
 const router = useRouter()
@@ -129,86 +128,49 @@ const store = useConfigStore()
 const status = ref<ServiceStatus | null>(null)
 const restartDialogVisible = ref(false)
 const restarting = ref(false)
-const loginError = ref(false)
 const errorLogCount = ref(0)
 
-// 登录超时相关
-const loginTimeoutMinutes = ref(0)
-const lastActivityTime = ref(Date.now())
-let timeoutCheckInterval: ReturnType<typeof setInterval> | null = null
+const isChatRoute = computed(() => route.path === '/chat' || route.path.startsWith('/chat/'))
+const activeMenu = computed(() => isChatRoute.value ? '/chat' : route.path)
+
+const onboarding = useOnboarding()
 
 async function loadAppData() {
-  if (route.path === '/login' || !localStorage.getItem('admin_token')) return
   try {
     await store.initializeAll()
     status.value = store.status
     // 加载日志统计
     const logStats = await configApi.getLogStats()
     errorLogCount.value = logStats.error
-    // 加载登录超时配置
-    const timeoutRes = await configApi.getLoginTimeout()
-    loginTimeoutMinutes.value = timeoutRes.timeoutMinutes
-    startTimeoutChecker()
-  } catch (e: any) {
-    if (e.response?.status === 401) {
-      loginError.value = true
-      router.push('/login')
-    }
+  } catch {
+    // 忽略加载错误，不再做鉴权跳转
   }
-}
-
-// 启动超时检查器
-function startTimeoutChecker() {
-  stopTimeoutChecker()
-  if (loginTimeoutMinutes.value <= 0) return // 0 表示不限制
-
-  // 每分钟检查一次
-  timeoutCheckInterval = setInterval(() => {
-    const timeoutMs = loginTimeoutMinutes.value * 60 * 1000
-    const elapsed = Date.now() - lastActivityTime.value
-    if (elapsed >= timeoutMs) {
-      ElMessage.warning('登录已超时，请重新登录')
-      handleLogout()
-    }
-  }, 60000) // 每分钟检查一次
-}
-
-// 停止超时检查器
-function stopTimeoutChecker() {
-  if (timeoutCheckInterval) {
-    clearInterval(timeoutCheckInterval)
-    timeoutCheckInterval = null
-  }
-}
-
-// 更新活动时间
-function updateActivity() {
-  lastActivityTime.value = Date.now()
 }
 
 onMounted(() => {
   loadAppData()
-  // 监听用户活动
-  document.addEventListener('click', updateActivity)
-  document.addEventListener('keydown', updateActivity)
-  document.addEventListener('mousemove', updateActivity)
+  // 首次安装引导：未完成时弹出向导，已完成则不打扰
+  void onboarding.bootstrap()
 })
 
-onUnmounted(() => {
-  stopTimeoutChecker()
-  document.removeEventListener('click', updateActivity)
-  document.removeEventListener('keydown', updateActivity)
-  document.removeEventListener('mousemove', updateActivity)
-})
-
-// 监听路由变化，登录成功后跳转到 Dashboard 时加载数据
-watch(() => route.path, (newPath, oldPath) => {
-  if (oldPath === '/login' && newPath !== '/login' && localStorage.getItem('admin_token')) {
-    loadAppData()
-  }
-})
+watch(
+  [() => route.meta.title, appLocale],
+  ([title]) => {
+    const pageTitle = typeof title === 'string' && title.trim()
+      ? `${translateUiText(title)} · OpenCode Bridge`
+      : 'OpenCode Bridge'
+    document.title = pageTitle
+  },
+  { immediate: true }
+)
 
 function formatUptime(seconds: number): string {
+  if (isEnglishLocale()) {
+    if (seconds < 60) return `${seconds} sec`
+    if (seconds < 3600) return `${Math.floor(seconds / 60)} min`
+    return `${Math.floor(seconds / 3600)} hr`
+  }
+
   if (seconds < 60) return `${seconds}秒`
   if (seconds < 3600) return `${Math.floor(seconds / 60)}分钟`
   return `${Math.floor(seconds / 3600)}小时`
@@ -229,16 +191,6 @@ async function confirmRestart() {
   } finally {
     restarting.value = false
   }
-}
-
-function handleLogout() {
-  localStorage.removeItem('admin_token')
-  stopTimeoutChecker()
-  router.push('/login')
-}
-
-function handleChangePassword() {
-  router.push('/change-password')
 }
 
 function goToSettings() {
@@ -304,6 +256,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   padding: 24px;
   overflow-y: auto;
   background: #f5f7fa;
+}
+
+.main-content--workspace {
+  padding: 0;
+  overflow: hidden;
 }
 
 .restart-banner { margin-bottom: 20px; }

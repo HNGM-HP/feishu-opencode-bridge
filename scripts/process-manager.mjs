@@ -4,14 +4,29 @@
  * 跨平台进程管理工具
  *
  * 用法:
- *   node process-manager.mjs kill-bridge      # 终止所有 Bridge 进程
- *   node process-manager.mjs kill-opencode    # 终止所有 OpenCode 进程
- *   node process-manager.mjs list-bridge      # 列出所有 Bridge 进程
- *   node process-manager.mjs list-opencode    # 列出所有 OpenCode 进程
+ *   node process-manager.mjs kill-bridge        # 终止所有 Bridge 进程
+ *   node process-manager.mjs kill-opencode      # 终止所有 OpenCode 进程
+ *   node process-manager.mjs list-bridge        # 列出所有 Bridge 进程
+ *   node process-manager.mjs list-opencode      # 列出所有 OpenCode 进程
+ *   node process-manager.mjs start-opencode     # 后台启动 opencode serve（幂等）
+ *   node process-manager.mjs status-opencode    # 检查 opencode serve 运行状态
  */
 
-import { spawnSync } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { spawn, spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import process from 'node:process';
+
+// ==================== 路径常量 ====================
+
+const scriptFile = fileURLToPath(import.meta.url);
+const scriptDir = path.dirname(scriptFile);
+const rootDir = path.resolve(scriptDir, '..');
+const logsDir = path.join(rootDir, 'logs');
+const opencodePidFile = path.join(logsDir, 'opencode.pid');
+const opencodeLogFile = path.join(logsDir, 'opencode.log');
+const opencodeErrFile = path.join(logsDir, 'opencode.err');
 
 // ==================== 平台检测 ====================
 
@@ -351,11 +366,13 @@ function printUsage() {
 跨平台进程管理工具
 
 用法:
-  node process-manager.mjs kill-bridge      # 终止所有 Bridge 进程
-  node process-manager.mjs kill-opencode    # 终止所有 OpenCode 进程
-  node process-manager.mjs list-bridge      # 列出所有 Bridge 进程
-  node process-manager.mjs list-opencode    # 列出所有 OpenCode 进程
-  node process-manager.mjs help             # 显示此帮助信息
+  node process-manager.mjs kill-bridge        # 终止所有 Bridge 进程
+  node process-manager.mjs kill-opencode      # 终止所有 OpenCode 进程
+  node process-manager.mjs list-bridge        # 列出所有 Bridge 进程
+  node process-manager.mjs list-opencode      # 列出所有 OpenCode 进程
+  node process-manager.mjs start-opencode     # 后台启动 opencode serve（幂等）
+  node process-manager.mjs status-opencode    # 检查 opencode serve 运行状态
+  node process-manager.mjs help               # 显示此帮助信息
 
 选项:
   --exclude-pid <pid>  排除指定 PID（用于防止自杀）
@@ -462,6 +479,36 @@ function main() {
       break;
     }
 
+    case 'start-opencode': {
+      console.log('[process-manager] 正在启动 opencode serve...');
+      const result = startOpenCodeServe();
+      if (result.skipped) {
+        console.log(`[process-manager] opencode serve 已在运行 (PID: ${result.pid})`);
+      } else if (result.started) {
+        console.log(`[process-manager] opencode serve 已启动 (PID: ${result.pid})`);
+        console.log(`[process-manager] 日志文件：${opencodeLogFile}`);
+      } else {
+        console.error(`[process-manager] opencode serve 启动失败：${result.reason}`);
+        process.exit(1);
+      }
+      break;
+    }
+
+    case 'status-opencode': {
+      const alivePid = readAlivePid(opencodePidFile);
+      if (alivePid !== null) {
+        console.log(`[process-manager] opencode serve 运行中 (PID: ${alivePid})`);
+      } else {
+        const scanPids = findOpenCodeProcesses();
+        if (scanPids.length > 0) {
+          console.log(`[process-manager] opencode serve 运行中（扫描到 PID: ${scanPids.join(', ')}，但 PID 文件缺失）`);
+        } else {
+          console.log('[process-manager] opencode serve 未运行');
+        }
+      }
+      break;
+    }
+
     case 'help':
     case '--help':
     case '-h':
@@ -469,6 +516,285 @@ function main() {
       printUsage();
       break;
   }
+}
+
+// ==================== OpenCode 启动 ====================
+
+/**
+ * 在 Windows 下定位 opencode 可执行方式
+ * 返回 { type: 'node-script', nodeExe, script } 或 { type: 'shell', cmd: 'opencode' }
+ */
+function resolveOpenCodeExecutable() {
+  if (!isWindows()) {
+    return { type: 'shell', cmd: 'opencode' };
+  }
+
+  // 1. 优先通过 npm root -g 找到真正的 JS 入口，用 node.exe 直接启动
+  //    避免通过 .cmd 包装层（windowsHide 对 cmd.exe 子进程不稳定）
+  try {
+    const npmRootResult = spawnSync('npm', ['root', '-g'], {
+      encoding: 'utf-8',
+      windowsHide: true,
+      shell: true,  // npm 在 Windows 是 npm.cmd，需要 shell
+      timeout: 8000,
+      // 防止 shell 命令弹窗，重定向输出
+      stdio: 'pipe',
+    });
+    if (!npmRootResult.error && npmRootResult.status === 0) {
+      const globalRoot = npmRootResult.stdout.trim();
+      const candidates = [
+        path.join(globalRoot, 'opencode-ai', 'bin', 'opencode'),
+        path.join(globalRoot, '@opencode-ai', 'opencode', 'bin', 'opencode'),
+        path.join(globalRoot, 'opencode', 'bin', 'opencode'),
+      ];
+      for (const candidate of candidates) {
+        if (fs.existsSync(candidate)) {
+          return { type: 'node-script', nodeExe: process.execPath, script: candidate };
+        }
+      }
+    }
+  } catch {
+    // ignore, fall through
+  }
+
+  // 2. 尝试 where opencode 找到 .cmd 或 .exe 路径
+  try {
+    const whereResult = spawnSync('where', ['opencode'], {
+      encoding: 'utf-8',
+      windowsHide: true,
+      shell: true,  // where 是内置命令，需要 shell
+      timeout: 5000,
+      stdio: 'pipe',
+    });
+    if (!whereResult.error && whereResult.status === 0) {
+      const lines = whereResult.stdout.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      // 优先选 .exe 或 .cmd，找到第一条即用
+      const found = lines[0];
+      if (found) {
+        // 如果是 .cmd 包装脚本，尝试从同目录的 node_modules 找 JS 入口
+        if (found.toLowerCase().endsWith('.cmd')) {
+          // npm bin 目录通常是 node_modules\.bin 的上一级
+          const binDir = path.dirname(found);
+          const globalRoot = path.resolve(binDir, '..', 'node_modules');
+          const candidates = [
+            path.join(globalRoot, 'opencode-ai', 'bin', 'opencode'),
+            path.join(globalRoot, '@opencode-ai', 'opencode', 'bin', 'opencode'),
+          ];
+          for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) {
+              return { type: 'node-script', nodeExe: process.execPath, script: candidate };
+            }
+          }
+        }
+        return { type: 'direct', exe: found };
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // 3. 最终回退：让 shell 自行解析（可能弹窗，但保证能跑）
+  return { type: 'shell', cmd: 'opencode' };
+}
+
+/**
+ * 检查指定 PID 对应的进程是否仍在运行
+ */
+function isPidRunning(pid) {
+  try {
+    if (isWindows()) {
+      const result = spawnSync('tasklist', ['/FO', 'CSV', '/NH', '/FI', `PID eq ${pid}`], {
+        encoding: 'utf-8',
+        windowsHide: true,
+        timeout: 5000,
+      });
+      return !result.error && result.stdout.includes(`"${pid}"`);
+    } else {
+      process.kill(pid, 0);  // signal 0 = 仅检查进程是否存在
+      return true;
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 读取 PID 文件，若进程仍在运行则返回 PID，否则返回 null
+ */
+function readAlivePid(pidFilePath) {
+  try {
+    const content = fs.readFileSync(pidFilePath, 'utf-8').trim();
+    const pid = parseInt(content, 10);
+    if (!isNaN(pid) && pid > 0 && isPidRunning(pid)) {
+      return pid;
+    }
+  } catch {
+    // 文件不存在或读取失败
+  }
+  return null;
+}
+
+/**
+ * 后台启动 opencode serve（幂等 - 如已运行则跳过）
+ * @param {object} options
+ * @param {string} [options.pidFilePath]
+ * @param {string} [options.logFile]
+ * @param {string} [options.errFile]
+ * @returns {{ started: boolean, pid: number | null, skipped: boolean, reason: string }}
+ */
+function startOpenCodeServe(options = {}) {
+  const pidFilePath = options.pidFilePath ?? opencodePidFile;
+  const logFile = options.logFile ?? opencodeLogFile;
+  const errFile = options.errFile ?? opencodeErrFile;
+
+  // 幂等检查：PID 文件存在且进程健在
+  const alivePid = readAlivePid(pidFilePath);
+  if (alivePid !== null) {
+    return { started: false, pid: alivePid, skipped: true, reason: `already_running` };
+  }
+
+  // 也通过进程扫描检查（防止 PID 文件丢失但进程还在的情况）
+  const scanPids = findOpenCodeProcesses();
+  if (scanPids.length > 0) {
+    // 补写 PID 文件
+    try {
+      fs.mkdirSync(path.dirname(pidFilePath), { recursive: true });
+      fs.writeFileSync(pidFilePath, String(scanPids[0]), 'utf-8');
+    } catch { /* ignore */ }
+    return { started: false, pid: scanPids[0], skipped: true, reason: `already_running_no_pidfile` };
+  }
+
+  // 确保日志目录存在
+  fs.mkdirSync(path.dirname(pidFilePath), { recursive: true });
+
+  const exe = resolveOpenCodeExecutable();
+  let child;
+  let windowsHiddenPid = null;
+
+  try {
+    const stdoutFd = fs.openSync(logFile, 'a');
+    const stderrFd = fs.openSync(errFile, 'a');
+
+    if (isWindows() && (exe.type === 'node-script' || exe.type === 'direct')) {
+      // Windows 关键修复：不能用 Node 的 windowsHide:true（CREATE_NO_WINDOW），
+      // 因为 opencode JS 脚本内部会再 spawn 平台二进制 opencode-windows-x64\bin\opencode.exe，
+      // 父进程没 console → Windows 会为这个孙进程重新分配一个可见的黑窗。
+      //
+      // 改用 PowerShell 的 Start-Process -WindowStyle Hidden（STARTF_USESHOWWINDOW + SW_HIDE），
+      // 它会分配一个隐藏的 console，孙进程继承这个隐藏 console，不会弹窗。
+      // 通过 -PassThru 拿到真实 node.exe / opencode.exe 的 PID。
+      //
+      // ⚠️ 绝对不能传 -RedirectStandardOutput/-RedirectStandardError 给 Start-Process！
+      // 那会让 PS 内部切到 UseShellExecute=false，子进程的 stdio 变成管道，
+      // 继而导致孙 opencode.exe 没有可继承的 console → 再次弹出黑窗。
+      // 因此这里不再落盘 opencode 的 stdout/stderr（无日志文件也比黑窗强；
+      // 排查时用 opencode attach 前台窗口即可看实时输出）。
+      fs.closeSync(stdoutFd);
+      fs.closeSync(stderrFd);
+
+      const filePath = exe.type === 'node-script' ? exe.nodeExe : exe.exe;
+      const argList = exe.type === 'node-script'
+        ? [exe.script, 'serve']
+        : ['serve'];
+
+      windowsHiddenPid = startHiddenOnWindows({ filePath, argList });
+    } else if (exe.type === 'node-script') {
+      // 非 Windows 不会走到这里，但保留以防万一
+      child = spawn(exe.nodeExe, [exe.script, 'serve'], {
+        detached: true,
+        stdio: ['ignore', stdoutFd, stderrFd],
+        windowsHide: true,
+      });
+      child.unref();
+      fs.closeSync(stdoutFd);
+      fs.closeSync(stderrFd);
+    } else if (exe.type === 'direct') {
+      child = spawn(exe.exe, ['serve'], {
+        detached: true,
+        stdio: ['ignore', stdoutFd, stderrFd],
+        windowsHide: true,
+      });
+      child.unref();
+      fs.closeSync(stdoutFd);
+      fs.closeSync(stderrFd);
+    } else {
+      // Unix / 回退: opencode serve
+      const args = ['serve'];
+      child = spawn(exe.cmd, args, {
+        detached: true,
+        stdio: ['ignore', stdoutFd, stderrFd],
+        shell: true,  // ← 使用 shell 以解析 PATH
+        windowsHide: isWindows(),
+      });
+      child.unref();
+      fs.closeSync(stdoutFd);
+      fs.closeSync(stderrFd);
+    }
+  } catch (e) {
+    return { started: false, pid: null, skipped: false, reason: `spawn_error: ${e.message}` };
+  }
+
+  // 保存 PID
+  const pid = windowsHiddenPid ?? child?.pid ?? null;
+  if (pid) {
+    fs.writeFileSync(pidFilePath, String(pid), 'utf-8');
+  }
+
+  return { started: true, pid, skipped: false, reason: 'launched' };
+}
+
+/**
+ * Windows 下用 PowerShell Start-Process -WindowStyle Hidden 启动进程，
+ * 既能保证真正隐藏（父+孙 console 程序都不弹窗），又能通过 -PassThru 拿到 PID。
+ *
+ * ⚠️ 此函数严格复刻用户已验证可工作的 PS 脚本模板：
+ *     Start-Process -WindowStyle Hidden -FilePath $nodeExe -ArgumentList ... -PassThru
+ * 不要在这里加 -RedirectStandardOutput / -RedirectStandardError —— 一旦加上，
+ * PS 会切到 UseShellExecute=false，SW_HIDE 对孙进程失效，opencode.exe 会弹出黑窗。
+ *
+ * @param {{ filePath: string, argList: string[] }} opts
+ * @returns {number}
+ */
+function startHiddenOnWindows({ filePath, argList }) {
+  // PowerShell 单引号字符串只需把 ' 转义成 ''
+  const psEscape = (s) => String(s).replace(/'/g, "''");
+  // ArgumentList 每个元素单独作为 PS 字符串
+  const argListLiteral = argList.length === 0
+    ? "@()"
+    : argList.map((a) => `'${psEscape(a)}'`).join(',');
+
+  const psCommand = [
+    `$ErrorActionPreference='Stop'`,
+    `$p = Start-Process -WindowStyle Hidden -FilePath '${psEscape(filePath)}' `
+      + `-ArgumentList ${argListLiteral} `
+      + `-PassThru`,
+    `Write-Output $p.Id`,
+  ].join('; ');
+
+  const result = spawnSync('powershell.exe', [
+    '-NoProfile',
+    '-NonInteractive',
+    '-ExecutionPolicy', 'Bypass',
+    '-WindowStyle', 'Hidden',
+    '-Command', psCommand,
+  ], {
+    encoding: 'utf-8',
+    windowsHide: true,
+    timeout: 15000,
+  });
+
+  if (result.error) {
+    throw new Error(`powershell launch failed: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    throw new Error(`powershell exit ${result.status}: ${result.stderr || result.stdout}`);
+  }
+  const pidStr = String(result.stdout || '').trim().split(/\s+/).pop();
+  const pid = Number.parseInt(pidStr, 10);
+  if (!pid || Number.isNaN(pid)) {
+    throw new Error(`could not parse PID from powershell output: ${result.stdout}`);
+  }
+  return pid;
 }
 
 // 导出供其他模块使用
@@ -479,6 +805,8 @@ export {
   findOpenCodeProcesses,
   stopProcesses,
   waitForExit,
+  startOpenCodeServe,
+  readAlivePid,
 };
 
 // 作为 CLI 直接执行

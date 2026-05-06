@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "server": {
+    "host": "localhost",
+    "port": 4096,
+    "auth": {
+      "username": "opencode"
+    }
+  }
+}

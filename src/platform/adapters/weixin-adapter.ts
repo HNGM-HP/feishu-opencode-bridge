@@ -183,6 +183,8 @@ export class WeixinAdapter implements PlatformAdapter {
     pausedAccounts.clear();
 
     this.isActive = false;
+    this.messageCallbacks.length = 0;
+    this.actionCallbacks.length = 0;
     console.log('[Weixin] Stopped');
   }
 

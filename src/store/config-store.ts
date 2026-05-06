@@ -7,10 +7,41 @@
  * 3. 首次启动时若无 DB 则返回空对象，由 config.ts 决定是否迁移 .env
  */
 
-import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import type Database from 'better-sqlite3';
+
+let DatabaseCtor: typeof Database;
+
+try {
+  DatabaseCtor = (await import('better-sqlite3')).default;
+} catch (err: any) {
+  const msg = [
+    '[ConfigStore] FATAL: 无法加载 better-sqlite3 原生模块。',
+    `[ConfigStore] 平台: ${process.platform} 架构: ${process.arch} Node: ${process.versions.node}`,
+    `[ConfigStore] 错误: ${err?.message || err}`,
+  ];
+  if (process.platform === 'darwin') {
+    msg.push(
+      '[ConfigStore] macOS 排查建议:',
+      '  1. 确认下载的安装包与 CPU 架构匹配 (arm64 = Apple Silicon, x64 = Intel)',
+      '  2. 执行: xattr -cr "/Applications/OpenCode Bridge.app"  (移除安全隔离)',
+      '  3. 删除配置数据库后重试: rm ~/Library/Application\\ Support/opencode-bridge/data/config.db',
+    );
+  }
+  if (process.platform === 'linux' && process.env.ELECTRON_RUN_AS_NODE === '1') {
+    msg.push(
+      '[ConfigStore] Linux Electron 环境排查建议:',
+      '  1. 确认已执行 electron-rebuild: npm run rebuild',
+      '  2. 检查 .node 文件权限: ls -la node_modules/better-sqlite3/prebuilds/',
+    );
+  }
+  for (const line of msg) {
+    console.error(line);
+  }
+  throw err;
+}
 
 // ──────────────────────────────────────────────
 // 数据结构：与 .env.example 完整对应的扁平 KV 类型
@@ -74,7 +105,9 @@ export interface BridgeSettings {
   OPENCODE_HOST?: string;
   OPENCODE_PORT?: string;
   OPENCODE_AUTO_START?: string;
+  /** @deprecated 不再使用，保留供旧配置读取 */
   OPENCODE_AUTO_START_CMD?: string;
+  OPENCODE_AUTO_START_FOREGROUND?: string;
   OPENCODE_SERVER_USERNAME?: string;
   OPENCODE_SERVER_PASSWORD?: string;
   OPENCODE_CONFIG_FILE?: string;
@@ -154,9 +187,20 @@ export interface BridgeSettings {
   // 附件
   ATTACHMENT_MAX_SIZE?: string;
 
+  // 非多模态模型图片预处理（借用 opencode 内已配置的多模态 model 做 OCR）
+  IMAGE_VISION_PREPROCESS?: string;     // 'true' | 'false'
+  VISION_OCR_MODEL?: string;            // 'providerID/modelID'
+  VISION_OCR_PROMPT?: string;           // OCR 引导提示词
+
   // 模型（扩展字段，.env.example 未列出但 config.ts 引用）
   DEFAULT_PROVIDER?: string;
   DEFAULT_MODEL?: string;
+  CHAT_MODEL_WHITELIST?: string;      // JSON 数组：["provider/model", ...]
+
+  // CLI / TUI 向导相关（仅 CLI 使用，web 端不展示）
+  CLI_LANG?: string;            // 'zh' | 'en'
+  WEB_ADMIN_DISABLED?: string;  // 'true' 时无头模式启动不开 web 管理面板
+  ADMIN_PORT?: string;          // web 管理面板端口（默认 4098）
 }
 
 // ──────────────────────────────────────────────
@@ -186,7 +230,7 @@ class ConfigStore {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    this.db = new Database(this.dbPath);
+    this.db = new DatabaseCtor(this.dbPath);
     this.initSchema();
   }
 
@@ -299,68 +343,32 @@ class ConfigStore {
       .run();
   }
 
+  // 注：管理后台已彻底移除账号 / 密码鉴权及登录超时机制，
+  // 原 getAdminPassword / setAdminPassword / needsPasswordChange /
+  // getPasswordChangedAt / setPasswordChangedAt /
+  // getLoginTimeout / setLoginTimeout 等接口已删除。
+  // admin_meta 表中遗留的相关字段不再读写，老数据会被自然忽略。
+
   // ──────────────────────────────────────────────
-  // 密码管理
+  // 首次安装引导（onboarding）状态
   // ──────────────────────────────────────────────
 
-  /** 获取管理员密码（数据库存储） */
-  getAdminPassword(): string | null {
+  /** 是否已完成或跳过首次安装引导 */
+  isOnboardingCompleted(): boolean {
     const row = this.db
-      .prepare<[], { value: string }>(`SELECT value FROM admin_meta WHERE key = 'admin_password'`)
+      .prepare<[], { value: string }>(`SELECT value FROM admin_meta WHERE key = 'onboarding_completed'`)
       .get();
-    const value = row?.value;
-    return value && value !== '' ? value : null;
+    return row?.value === '1';
   }
 
-  /** 设置管理员密码 */
-  setAdminPassword(password: string): void {
+  /** 设置引导完成标记（true=完成或跳过；false=重置以便重新展示） */
+  setOnboardingCompleted(completed: boolean): void {
     this.db
       .prepare(
-        `INSERT INTO admin_meta (key, value) VALUES ('admin_password', ?)
+        `INSERT INTO admin_meta (key, value) VALUES ('onboarding_completed', ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`
       )
-      .run(password);
-  }
-
-  /** 获取密码修改时间 */
-  getPasswordChangedAt(): string | null {
-    const row = this.db
-      .prepare<[], { value: string }>(`SELECT value FROM admin_meta WHERE key = 'password_changed_at'`)
-      .get();
-    return row?.value || null;
-  }
-
-  /** 设置密码修改时间 */
-  setPasswordChangedAt(timestamp: string): void {
-    this.db
-      .prepare(
-        `INSERT INTO admin_meta (key, value) VALUES ('password_changed_at', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      )
-      .run(timestamp);
-  }
-
-  /** 判断是否需要修改密码（首次登录） */
-  needsPasswordChange(): boolean {
-    return this.getPasswordChangedAt() === null;
-  }
-
-  /** 获取登录超时时间（分钟），0 表示不限制 */
-  getLoginTimeout(): number {
-    const row = this.db
-      .prepare<[], { value: string }>(`SELECT value FROM admin_meta WHERE key = 'login_timeout_minutes'`)
-      .get();
-    return row ? parseInt(row.value, 10) : 0;
-  }
-
-  /** 设置登录超时时间（分钟） */
-  setLoginTimeout(minutes: number): void {
-    this.db
-      .prepare(
-        `INSERT INTO admin_meta (key, value) VALUES ('login_timeout_minutes', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      )
-      .run(String(minutes));
+      .run(completed ? '1' : '0');
   }
 
   getDbPath(): string {

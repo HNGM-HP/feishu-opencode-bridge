@@ -5,9 +5,10 @@ import { outputBuffer } from '../opencode/output-buffer.js';
 import { questionHandler, type PendingQuestion } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
 import { parseCommand } from '../commands/parser.js';
-import type { EffortLevel } from '../commands/effort.js';
+import { normalizeEffortLevel, KNOWN_EFFORT_LEVELS, type EffortLevel } from '../commands/effort.js';
 import { commandHandler } from './command.js';
 import { modelConfig, attachmentConfig } from '../config.js';
+import { preprocessVisionParts, type VisionPart } from '../services/vision-ocr.js';
 import { DirectoryPolicy } from '../utils/directory-policy.js';
 import { buildSessionTimestamp } from '../utils/session-title.js';
 import { buildStreamCard } from '../feishu/cards-stream.js';
@@ -399,21 +400,9 @@ export class GroupHandler {
         parts.push({ type: 'text', text: effectiveText });
       }
 
-      if (attachments && attachments.length > 0) {
-        const prepared = await this.prepareAttachmentParts(messageId, attachments);
-        if (prepared.warnings.length > 0) {
-          await feishuClient.reply(messageId, `⚠️ 附件警告:\n${prepared.warnings.join('\n')}`);
-        }
-        parts.push(...prepared.parts);
-      }
-
-      if (parts.length === 0) {
-        await feishuClient.reply(messageId, '未检测到有效内容');
-        outputBuffer.setStatus(`chat:${chatId}`, 'completed');
-        return;
-      }
-
-      // 提取 providerId 和 modelId
+      // ── 提前解析 providerId/modelId/directory ──
+      // prepareAttachmentParts 需要这些上下文来判断主模型是否支持 image 输入，
+      // 并在不支持时把图片交给 opencode 内的多模态 model 做 OCR（见 vision-ocr 服务）。
       let providerId: string | undefined;
       let modelId: string | undefined;
 
@@ -436,12 +425,9 @@ export class GroupHandler {
         }
       }
 
-      // 异步触发 OpenCode 请求，后续输出通过事件流持续推送
-      const variant = promptEffort || config?.preferredEffort;
-      // 从 store 获取会话的工作目录，传递给 OpenCode 以切换 Instance 上下文
+      // 从 store 获取会话的工作目录，作为 OCR 临时 session 的上下文
       const sessionData = chatSessionStore.getSession(chatId);
       let directory = sessionData?.resolvedDirectory;
-      // 如果 store 没有记录（老会话），尝试从 OpenCode 聚合查询并回写缓存
       if (!directory) {
         try {
           const storeKnownDirs = chatSessionStore.getKnownDirectories();
@@ -449,17 +435,91 @@ export class GroupHandler {
           const matched = sessions.find(s => s.id === sessionId);
           if (matched?.directory) {
             directory = matched.directory;
-            // 回写缓存，后续消息不再重复查询
             chatSessionStore.updateResolvedDirectory(chatId, directory);
           }
         } catch (error) {
-          // 获取失败不阻塞消息发送，但记录调试日志
           console.debug('[Group] 获取会话目录失败，将使用默认目录:', error instanceof Error ? error.message : String(error));
         }
       }
+
+      if (attachments && attachments.length > 0) {
+        const prepared = await this.prepareAttachmentParts(messageId, attachments);
+        if (prepared.warnings.length > 0) {
+          await feishuClient.reply(messageId, `⚠️ 附件警告:\n${prepared.warnings.join('\n')}`);
+        }
+        parts.push(...prepared.parts);
+      }
+
+      if (parts.length === 0) {
+        await feishuClient.reply(messageId, '未检测到有效内容');
+        outputBuffer.setStatus(`chat:${chatId}`, 'completed');
+        return;
+      }
+
+      // 异步触发 OpenCode 请求，后续输出通过事件流持续推送
+      let variant = promptEffort || config?.preferredEffort;
+
+      // 验证 variant 是否与当前模型兼容
+      if (variant && providerId && modelId) {
+        try {
+          const providersPayload = await opencodeClient.getProviders();
+          const providers = Array.isArray(providersPayload.providers) ? providersPayload.providers : [];
+          const providerLower = providerId.toLowerCase();
+          const modelLower = modelId.toLowerCase();
+
+          for (const provider of providers) {
+            if (!provider || typeof provider !== 'object') continue;
+            const providerRecord = provider as Record<string, unknown>;
+            const providerIdRaw = typeof providerRecord.id === 'string' ? providerRecord.id.trim() : '';
+            if (!providerIdRaw || providerIdRaw.toLowerCase() !== providerLower) continue;
+
+            const modelsRaw = providerRecord.models;
+            const modelList = Array.isArray(modelsRaw)
+              ? modelsRaw
+              : (modelsRaw && typeof modelsRaw === 'object' ? Object.values(modelsRaw) : []);
+
+            for (const modelItem of modelList) {
+              if (!modelItem || typeof modelItem !== 'object') continue;
+              const modelRecord = modelItem as Record<string, unknown>;
+              const modelIdRaw = typeof modelRecord.id === 'string'
+                ? modelRecord.id.trim()
+                : (typeof modelRecord.modelID === 'string' ? modelRecord.modelID.trim() : '');
+              if (!modelIdRaw || modelIdRaw.toLowerCase() !== modelLower) continue;
+
+              // 解析模型支持的 variants
+              const variants = modelRecord.variants;
+              if (variants && typeof variants === 'object' && !Array.isArray(variants)) {
+                const supportedVariants: EffortLevel[] = [];
+                for (const key of Object.keys(variants as Record<string, unknown>)) {
+                  const normalized = normalizeEffortLevel(key);
+                  if (normalized && normalized !== 'none' && !supportedVariants.includes(normalized)) {
+                    supportedVariants.push(normalized);
+                  }
+                }
+                // 如果当前 variant 不在支持列表中，清除它
+                if (supportedVariants.length > 0 && !supportedVariants.includes(variant)) {
+                  variant = undefined;
+                }
+              }
+              break;
+            }
+            break;
+          }
+        } catch (error) {
+          console.debug('[Group] 获取模型支持的 variants 失败，跳过验证:', error instanceof Error ? error.message : String(error));
+        }
+      }
+
+      // ── 非多模态主模型图片回退：主模型不支持 image 时用 OCR 文本替换图片 part ──
+      const dispatchParts = await preprocessVisionParts(
+        parts as VisionPart[],
+        { providerId, modelId, directory },
+        '飞书',
+      ) as OpencodePartInput[];
+
       await opencodeClient.sendMessagePartsAsync(
         sessionId,
-        parts,
+        dispatchParts,
         {
           providerId,
           modelId,
@@ -490,11 +550,15 @@ export class GroupHandler {
   }
 
   // 处理附件
+  //
+  // 注意：图片 → 文本的 OCR 替换不在此函数内进行，统一由上层在发消息前调用
+  // `preprocessVisionParts(parts, {providerId, modelId, directory}, '飞书')` 完成。
+  // 这样可以保证飞书 / Chat API / 其它平台的图片回退行为一致，且嗅探只跑一次。
   private async prepareAttachmentParts(
     messageId: string,
-    attachments: FeishuAttachment[]
-  ): Promise<{ parts: OpencodeFilePartInput[]; warnings: string[] }> {
-    const parts: OpencodeFilePartInput[] = [];
+    attachments: FeishuAttachment[],
+  ): Promise<{ parts: OpencodePartInput[]; warnings: string[] }> {
+    const parts: OpencodePartInput[] = [];
     const warnings: string[] = [];
 
     await fs.mkdir(ATTACHMENT_BASE_DIR, { recursive: true }).catch(() => undefined);
@@ -516,7 +580,7 @@ export class GroupHandler {
         const extFromType = attachment.fileType ? normalizeExtension(attachment.fileType) : '';
         const extFromContent = contentType ? extensionFromContentType(contentType) : '';
         let ext = normalizeExtension(extFromName || extFromType || extFromContent);
-        
+
         if (!ext && attachment.type === 'image') {
             ext = '.jpg';
         }
@@ -536,14 +600,14 @@ export class GroupHandler {
             await resource.writeFile(filePath);
             const buffer = await fs.readFile(filePath);
             const base64 = buffer.toString('base64');
-            
+
             let mime = contentType ? contentType.split(';')[0].trim() : '';
             if (!mime || mime === 'application/octet-stream') {
                 mime = mimeFromExtension(ext);
             }
-            
+
             const dataUrl = `data:${mime};base64,${base64}`;
-            
+
             parts.push({
                 type: 'file',
                 mime,

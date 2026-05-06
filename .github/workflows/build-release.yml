@@ -48,10 +48,14 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install Xcode tools (macOS)
+      - name: Setup build tools (macOS)
         if: matrix.platform == 'mac'
         run: |
-          xcode-select --print-path || xcode-select --install 2>/dev/null || true
+          # xcode-select --install opens a GUI dialog and always fails in CI.
+          # GitHub macOS runners already have CLT pre-installed; just verify.
+          xcode-select --print-path
+          xcrun --show-sdk-path
+          echo "SDKROOT=$(xcrun --show-sdk-path)" >> $GITHUB_ENV
 
       - name: Install pnpm
         run: npm install -g pnpm
@@ -81,13 +85,16 @@ jobs:
         run: pnpm run build:all
 
       - name: Rebuild native modules for Electron
-        env:
-          npm_config_python: python3
+        shell: bash
         run: |
           echo "Node version: $(node --version)"
           echo "npm version: $(npm --version)"
-          echo "Python version: $(python3 --version)"
-          pnpm run rebuild
+          PYTHON_BIN=$(command -v python3 || command -v python)
+          echo "Python: $PYTHON_BIN"
+          "$PYTHON_BIN" --version
+          ELECTRON_VERSION=$(node -p "require('./node_modules/electron/package.json').version")
+          echo "Rebuilding better-sqlite3 against Electron $ELECTRON_VERSION"
+          pnpm exec electron-rebuild -f -w better-sqlite3 --version "$ELECTRON_VERSION" --python "$PYTHON_BIN"
 
       - name: Build Electron app (Windows)
         if: matrix.platform == 'win'

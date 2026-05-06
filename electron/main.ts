@@ -13,6 +13,7 @@
 
 import { app, Tray, Menu, nativeImage, shell, dialog } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { spawn, spawnSync, ChildProcess } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import http from 'node:http';
@@ -24,6 +25,114 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 let backendProcess: ChildProcess | null = null;
 // 托盘图标
 let tray: Tray | null = null;
+
+// ---------------------------------------------------------------------------
+// 日志落盘（修复：GUI 启动时 stdout/stderr 没地方看的问题）
+// ---------------------------------------------------------------------------
+// 所有 [Electron] / [Backend] / [Backend Error] / [Admin] 输出都会写入
+// <userData>/logs/electron-main.log，并在进程崩溃、启动失败时保留足够上下文，
+// 让用户无需命令行运行 exe 即可定位问题。
+let logStream: fs.WriteStream | null = null;
+let logFilePath = '';
+// 保留最近的后端输出，弹窗时直接显示最后几行，省去翻日志的步骤
+const recentBackendOutput: string[] = [];
+const MAX_RECENT_LINES = 40;
+
+// 日志轮转参数：单文件上限 1MB，保留 .1 / .2 共 3 份，总占用 ≤ 3MB
+const LOG_MAX_BYTES = 1 * 1024 * 1024; // 1 MB
+const LOG_BACKUPS   = 2;               // .1 和 .2，循环覆盖
+let logBytesWritten = 0;               // 追踪当前文件本次累计写入量（近似值）
+
+/** 将旧日志文件循环后移：.2 删除，.1→.2，当前→.1，重建当前 */
+function rotateLogFile(): void {
+  try { logStream?.end(); } catch { /* ignore */ }
+  logStream = null;
+
+  // 循环右移备份：先删最老的 .2，再逐级重命名
+  for (let i = LOG_BACKUPS; i >= 1; i--) {
+    const older = `${logFilePath}.${i}`;
+    const newer = i === 1 ? logFilePath : `${logFilePath}.${i - 1}`;
+    try { fs.unlinkSync(older); } catch { /* 不存在时忽略 */ }
+    try { fs.renameSync(newer, older); } catch { /* 不存在时忽略 */ }
+  }
+
+  logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+  logBytesWritten = 0;
+}
+
+function initFileLogger(): void {
+  try {
+    const logsDir = path.join(app.getPath('userData'), 'logs');
+    fs.mkdirSync(logsDir, { recursive: true });
+    logFilePath = path.join(logsDir, 'electron-main.log');
+
+    // 启动时若当前文件已超限，立即轮转一次，避免带着上次的大文件继续追加
+    try {
+      const st = fs.statSync(logFilePath);
+      if (st.size > LOG_MAX_BYTES) {
+        // 临时创建 stream 指向旧文件，rotateLogFile 会关闭并移走它
+        logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+        rotateLogFile();
+      }
+    } catch {
+      // 文件不存在，忽略
+    }
+
+    if (!logStream) {
+      logStream = fs.createWriteStream(logFilePath, { flags: 'a' });
+    }
+
+    const header = `\n===== OpenCode Bridge started at ${new Date().toISOString()} =====\n` +
+      `pid=${process.pid} platform=${process.platform} electron=${process.versions.electron}\n` +
+      `userData=${app.getPath('userData')}\n` +
+      `execPath=${process.execPath}\n`;
+    logStream.write(header);
+    logBytesWritten += Buffer.byteLength(header);
+
+    // 劫持 console 的四个常用方法，让任何 console.log/error 同时落盘
+    const origLog = console.log.bind(console);
+    const origErr = console.error.bind(console);
+    const origWarn = console.warn.bind(console);
+    const origInfo = console.info.bind(console);
+
+    const writeLine = (level: string, args: unknown[]) => {
+      const line = `[${new Date().toISOString()}] [${level}] ` +
+        args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ') + '\n';
+      try {
+        // 运行时超限检测：写入前先检查，确保单次长会话也不会无限增长
+        if (logBytesWritten + Buffer.byteLength(line) > LOG_MAX_BYTES) {
+          rotateLogFile();
+        }
+        logStream?.write(line);
+        logBytesWritten += Buffer.byteLength(line);
+      } catch { /* ignore */ }
+    };
+
+    console.log = (...args: unknown[]) => { writeLine('log', args); origLog(...args); };
+    console.error = (...args: unknown[]) => { writeLine('error', args); origErr(...args); };
+    console.warn = (...args: unknown[]) => { writeLine('warn', args); origWarn(...args); };
+    console.info = (...args: unknown[]) => { writeLine('info', args); origInfo(...args); };
+
+    // 捕获未处理异常，否则主进程崩溃时用户只看到弹窗没有线索
+    process.on('uncaughtException', (err) => {
+      console.error('[Electron] uncaughtException:', err?.stack || err);
+    });
+    process.on('unhandledRejection', (reason) => {
+      console.error('[Electron] unhandledRejection:', reason);
+    });
+  } catch (err) {
+    // 日志系统自身失败不应该阻止主程序启动
+    // eslint-disable-next-line no-console
+    console.error('[Electron] Failed to init file logger:', err);
+  }
+}
+
+function rememberBackendLine(line: string): void {
+  recentBackendOutput.push(line);
+  if (recentBackendOutput.length > MAX_RECENT_LINES) {
+    recentBackendOutput.shift();
+  }
+}
 
 // 开发模式检测
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
@@ -50,16 +159,29 @@ function startBackend() {
     return;
   }
 
-  // 获取应用根目录
-  const appPath = isDev ? path.resolve(__dirname, '..') : app.getAppPath();
-  // 启动 Admin 独立进程，它会管理 Bridge 子进程
-  const backendPath = path.join(appPath, 'dist/admin/index.js');
+  let backendPath: string;
+  if (isDev) {
+    backendPath = path.resolve(__dirname, '../dist/admin/index.js');
+  } else {
+    backendPath = path.join(process.resourcesPath, 'app', 'dist', 'admin', 'index.js');
+  }
 
   const dataPath = getUserDataPath();
   console.log('[Electron] __dirname:', __dirname);
-  console.log('[Electron] App path:', appPath);
+  console.log('[Electron] isDev:', isDev);
+  console.log('[Electron] process.resourcesPath:', process.resourcesPath);
+  console.log('[Electron] App path:', app.getAppPath());
   console.log('[Electron] Data directory:', dataPath);
   console.log('[Electron] Starting backend from:', backendPath);
+  console.log(`[Electron] platform=${process.platform} arch=${process.arch} electron=${process.versions.electron} node=${process.versions.node}`);
+
+  if (!fs.existsSync(backendPath)) {
+    const msg = `[Backend] FATAL: 后端入口不存在: ${backendPath}\n` +
+      `[Backend] 请检查应用安装是否完整。如果是 macOS，尝试: xattr -cr "/Applications/OpenCode Bridge.app"`;
+    rememberBackendLine(msg);
+    console.error(msg);
+    return;
+  }
 
   backendProcess = spawn(process.execPath, [backendPath], {
     env: {
@@ -70,21 +192,45 @@ function startBackend() {
       OPENCODE_BRIDGE_CONFIG_DIR: dataPath,
       // 设置工作目录
       NODE_ENV: isDev ? 'development' : 'production',
+      // 把版本号通过 env 传给 backend（打包后 backend 跑在 ELECTRON_RUN_AS_NODE 模式，
+      // 读不到 asar 内的 package.json；由主进程用 app.getVersion() 读取后注入）
+      APP_VERSION: app.getVersion(),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
     cwd: dataPath, // 设置工作目录
   });
 
   backendProcess.stdout?.on('data', (data) => {
-    console.log(`[Backend] ${data.toString().trim()}`);
+    const text = data.toString();
+    for (const line of text.split(/\r?\n/)) {
+      if (!line) continue;
+      const formatted = `[Backend] ${line}`;
+      rememberBackendLine(formatted);
+      console.log(formatted);
+    }
   });
 
   backendProcess.stderr?.on('data', (data) => {
-    console.error(`[Backend Error] ${data.toString().trim()}`);
+    const text = data.toString();
+    for (const line of text.split(/\r?\n/)) {
+      if (!line) continue;
+      const formatted = `[Backend Error] ${line}`;
+      rememberBackendLine(formatted);
+      console.error(formatted);
+    }
   });
 
-  backendProcess.on('exit', (code) => {
-    console.log(`[Backend] Exited with code ${code}`);
+  // 关键：监听 spawn 自身的失败（exe 找不到、权限不足等），原代码会静默
+  backendProcess.on('error', (err) => {
+    const msg = `[Backend] spawn error: ${err?.stack || err}`;
+    rememberBackendLine(msg);
+    console.error(msg);
+  });
+
+  backendProcess.on('exit', (code, signal) => {
+    const msg = `[Backend] Exited with code=${code} signal=${signal ?? 'null'}`;
+    rememberBackendLine(msg);
+    console.log(msg);
     backendProcess = null;
   });
 }
@@ -187,77 +333,6 @@ function createTray() {
       label: '打开数据目录',
       click: () => {
         shell.openPath(getUserDataPath());
-      },
-    },
-    { type: 'separator' },
-    {
-      label: '重置管理密码',
-      click: async () => {
-        const result = await dialog.showMessageBox(null, {
-          type: 'warning',
-          title: '重置管理密码',
-          message: '确定要重置管理密码吗？',
-          detail: '重置后需要重新设置密码才能访问管理面板。\n密码文件位于数据目录中的 config.db。',
-          buttons: ['确定重置', '取消'],
-          defaultId: 1,
-          cancelId: 1,
-        });
-
-        if (result.response === 0) {
-          // 通过 HTTP API 重置密码
-          try {
-            const req = http.request({
-              hostname: 'localhost',
-              port: ADMIN_PORT,
-              path: '/api/admin/reset-password',
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-              },
-            }, (res) => {
-              let data = '';
-              res.on('data', chunk => data += chunk);
-              res.on('end', () => {
-                if (res.statusCode === 200) {
-                  dialog.showMessageBox(null, {
-                    type: 'info',
-                    title: '密码已重置',
-                    message: '管理密码已重置，请在浏览器中打开管理面板设置新密码。',
-                    buttons: ['打开管理面板', '确定'],
-                  }).then((result) => {
-                    if (result.response === 0) {
-                      shell.openExternal(`http://localhost:${ADMIN_PORT}`);
-                    }
-                  });
-                } else {
-                  dialog.showMessageBox(null, {
-                    type: 'error',
-                    title: '重置失败',
-                    message: `密码重置失败: ${data || '请检查服务是否运行。'}`,
-                    buttons: ['确定'],
-                  });
-                }
-              });
-            });
-            req.on('error', (err) => {
-              dialog.showMessageBox(null, {
-                type: 'error',
-                title: '重置失败',
-                message: `无法连接到服务: ${err.message}`,
-                buttons: ['确定'],
-              });
-            });
-            req.end();
-          } catch (err) {
-            const errorMsg = err instanceof Error ? err.message : '密码重置操作失败。';
-            dialog.showMessageBox(null, {
-              type: 'error',
-              title: '重置失败',
-              message: errorMsg,
-              buttons: ['确定'],
-            });
-          }
-        }
       },
     },
     { type: 'separator' },
@@ -456,12 +531,11 @@ async function killOldBridgeProcesses(): Promise<number[]> {
   return [];
 }
 
-if (!gotTheLock) {
-  // 检测到另一个实例正在运行
-  console.log('[Electron] Another instance is already running');
-
-  // 弹出对话框提示用户
-  dialog.showMessageBox(null, {
+/**
+ * 处理单实例锁失败的情况（需要在 app ready 之后调用）
+ */
+async function handleSingleInstanceLockFailure() {
+  const result = await dialog.showMessageBox(null, {
     type: 'warning',
     title: '程序已在运行',
     message: 'OpenCode Bridge 已在运行中，请勿重复启动。',
@@ -469,67 +543,132 @@ if (!gotTheLock) {
     buttons: ['强制终止旧进程并启动', '退出'],
     defaultId: 1,
     cancelId: 1,
-  }).then(async (result) => {
-    if (result.response === 0) {
-      // 用户选择强制终止旧进程
-      console.log('[Electron] User chose to kill old process and start');
-
-      // 先释放当前的请求，然后尝试终止旧进程
-      // 注意：此时我们无法真正获取锁，因为旧进程还在运行
-      // 需要先强制终止旧进程
-      await killOldBridgeProcesses();
-
-      // 等待一秒后重新尝试启动
-      setTimeout(() => {
-        // 重新启动当前实例（退出后再启动）
-        app.relaunch();
-        app.exit(0);
-      }, 1000);
-    } else {
-      // 用户选择退出
-      app.exit(0);
-    }
   });
-} else {
+
+  if (result.response === 0) {
+    // 用户选择强制终止旧进程
+    console.log('[Electron] User chose to kill old process and start');
+
+    // 先释放当前的请求，然后尝试终止旧进程
+    // 注意：此时我们无法真正获取锁，因为旧进程还在运行
+    // 需要先强制终止旧进程
+    await killOldBridgeProcesses();
+
+    // 等待一秒后重新尝试启动
+    setTimeout(() => {
+      // 重新启动当前实例（退出后再启动）
+      app.relaunch();
+      app.exit(0);
+    }, 1000);
+  } else {
+    // 用户选择退出
+    app.exit(0);
+  }
+}
+
+// 应用就绪后处理初始化逻辑
+app.whenReady().then(async () => {
+  // 先初始化文件日志，这样下面任何输出都会落盘
+  initFileLogger();
+
+  // 检查单实例锁
+  if (!gotTheLock) {
+    // 检测到另一个实例正在运行，在 app ready 后弹窗提示
+    console.log('[Electron] Another instance is already running');
+    await handleSingleInstanceLockFailure();
+    return;
+  }
+
   app.on('second-instance', () => {
     // 当运行第二个实例时，打开管理面板
     shell.openExternal(`http://localhost:${ADMIN_PORT}`);
   });
 
-  // 应用就绪
-  app.whenReady().then(async () => {
-    // 启动后端服务
-    startBackend();
+  // 启动后端服务
+  startBackend();
 
-    // 等待 Admin Server 就绪
-    console.log('[Electron] Waiting for Admin Server...');
-    const isReady = await waitForAdminServer(ADMIN_PORT);
+  // 等待 Admin Server 就绪
+  console.log('[Electron] Waiting for Admin Server...');
+  const isReady = await waitForAdminServer(ADMIN_PORT);
 
-    if (!isReady) {
-      console.error('[Electron] Admin Server failed to start');
-      // 服务启动失败时弹窗提示
-      dialog.showMessageBox(null, {
-        type: 'error',
-        title: '服务启动失败',
-        message: '管理面板服务未能正常启动，请检查日志。',
-        buttons: ['确定'],
-      });
+  if (!isReady) {
+    console.error('[Electron] Admin Server failed to start');
+
+    const tail = recentBackendOutput.slice(-20).join('\n') || '(子进程没有任何输出，可能 spawn 本身就失败了)';
+
+    const archInfo = `平台: ${process.platform} / 架构: ${process.arch} / Electron: ${process.versions.electron} / Node: ${process.versions.node}`;
+
+    let diagnosticHints = '';
+    if (tail.includes('better-sqlite3') || tail.includes('dlopen') || tail.includes('MODULE_NOT_FOUND')) {
+      diagnosticHints = '\n\n⚠️ 检测到原生模块加载失败（better-sqlite3），可能原因：\n';
+      if (process.platform === 'darwin') {
+        diagnosticHints +=
+          '• 架构不匹配：确认 DMG 与 CPU 架构匹配（arm64=Apple Silicon, x64=Intel）\n' +
+          '• macOS 安全隔离：在终端执行 xattr -cr "/Applications/OpenCode Bridge.app"\n' +
+          '• 配置损坏：删除 ~/Library/Application Support/opencode-bridge/data/config.db';
+      } else if (process.platform === 'linux') {
+        diagnosticHints +=
+          '• 执行 npm run rebuild 重新编译原生模块\n' +
+          '• 检查 Node.js 版本兼容性';
+      } else {
+        diagnosticHints +=
+          '• 原生模块编译版本不匹配，请尝试重新安装';
+      }
     }
 
-    // 创建托盘（始终创建，作为主要交互入口）
-    createTray();
+    const detail =
+      `端口: ${ADMIN_PORT}\n` +
+      `${archInfo}\n` +
+      `日志文件: ${logFilePath || '(未初始化)'}\n` +
+      `数据目录: ${getUserDataPath()}\n` +
+      `\n最近的后端输出：\n${tail}${diagnosticHints}`;
 
-    // 无论开发模式还是生产模式，启动时都主动打开管理面板
-    console.log('[Electron] Opening admin panel on startup');
-    shell.openExternal(`http://localhost:${ADMIN_PORT}`);
+    const result = await dialog.showMessageBox(null, {
+      type: 'error',
+      title: '服务启动失败',
+      message: '管理面板服务未能正常启动。',
+      detail,
+      buttons: ['打开日志文件', '打开日志目录', '退出'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    });
 
-    // 检查更新（非开发模式）
-    checkForUpdates();
-  });
-}
+    if (result.response === 0 && logFilePath) {
+      shell.openPath(logFilePath);
+    } else if (result.response === 1) {
+      shell.openPath(path.join(getUserDataPath(), 'logs'));
+    } else {
+      app.exit(1);
+      return;
+    }
+  }
+
+  // 创建托盘（始终创建，作为主要交互入口）
+  createTray();
+
+  // 无论开发模式还是生产模式，启动时都主动打开管理面板
+  console.log('[Electron] Opening admin panel on startup');
+  shell.openExternal(`http://localhost:${ADMIN_PORT}`);
+
+  // 检查更新（非开发模式）
+  // 延迟 30s 再请求 GitHub，避免和首次启动的网络/磁盘 IO 抢资源；
+  // 这一步即使 GitHub 完全不可达也不会拖慢窗口打开。
+  // 注：Windows 安装「卡半程」的根因已在 installer.nsh 移除阻塞 MessageBox。
+  setTimeout(() => {
+    checkForUpdates().catch(err => {
+      console.error('[Electron] checkForUpdates threw:', err);
+    });
+  }, 30_000);
+});
 
 // 应用退出前清理
 app.on('before-quit', () => {
   (app as any).isQuitting = true;
   stopBackend();
+  try {
+    logStream?.end(`===== OpenCode Bridge exited at ${new Date().toISOString()} =====\n`);
+  } catch {
+    // ignore
+  }
 });

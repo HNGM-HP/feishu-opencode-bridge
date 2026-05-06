@@ -1,7 +1,11 @@
 import { createOpencodeClient, type OpencodeClient as SdkOpencodeClient } from '@opencode-ai/sdk';
 import type { Session, Message, Part, Project } from '@opencode-ai/sdk';
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { opencodeConfig, modelConfig } from '../config.js';
 import { EventEmitter } from 'events';
+
+const LOCAL_UPLOAD_DIR = path.resolve(process.cwd(), 'data', 'uploads');
 
 // 权限请求事件类型
 export interface PermissionRequestEvent {
@@ -330,6 +334,53 @@ function appendAuthHint(message: string, statusCode?: number): string {
   return `${message}；${buildAuthEnvHint()}`;
 }
 
+function extractLocalUploadFilename(rawUrl: string): string | null {
+  const trimmed = rawUrl.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  let pathname = trimmed;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      pathname = new URL(trimmed).pathname;
+    } catch {
+      return null;
+    }
+  }
+
+  if (!pathname.startsWith('/uploads/')) {
+    return null;
+  }
+
+  const filename = path.basename(pathname);
+  return filename && filename !== '.' && filename !== '..' ? filename : null;
+}
+
+async function inlineLocalUploadParts(
+  parts: Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; url: string; filename?: string }>
+): Promise<Array<{ type: 'text'; text: string } | { type: 'file'; mime: string; url: string; filename?: string }>> {
+  return Promise.all(parts.map(async part => {
+    if (part.type !== 'file') {
+      return part;
+    }
+
+    const filename = extractLocalUploadFilename(part.url);
+    if (!filename) {
+      return part;
+    }
+
+    const filePath = path.join(LOCAL_UPLOAD_DIR, filename);
+    const buffer = await fs.readFile(filePath);
+    const mime = part.mime || 'application/octet-stream';
+
+    return {
+      ...part,
+      url: `data:${mime};base64,${buffer.toString('base64')}`,
+    };
+  }));
+}
+
 class OpencodeClientWrapper extends EventEmitter {
   private client: SdkOpencodeClient | null = null;
   private eventAbortController: AbortController | null = null;
@@ -338,6 +389,7 @@ class OpencodeClientWrapper extends EventEmitter {
   private eventListeningEnabled = false;
   private eventStreamActive = false;
   private directoryEventStreams: Map<string, DirectoryEventStreamEntry> = new Map();
+  private knownSessionDirectories: Set<string> = new Set();
   // 防止并发调用 ensureDirectoryEventStream 对同一目录建立多条 SSE 连接
   private pendingDirectoryStreams: Map<string, Promise<void>> = new Map();
   
@@ -740,6 +792,14 @@ class OpencodeClientWrapper extends EventEmitter {
     return normalized.length > 0 ? normalized : undefined;
   }
 
+  private rememberDirectory(directory?: string): string | undefined {
+    const normalized = this.normalizeDirectory(directory);
+    if (normalized) {
+      this.knownSessionDirectories.add(normalized);
+    }
+    return normalized;
+  }
+
   private buildPermissionDirectoryCandidates(options?: PermissionResponseOptions): Array<string | undefined> {
     const candidates: Array<string | undefined> = [];
     const seen = new Set<string>();
@@ -824,6 +884,7 @@ class OpencodeClientWrapper extends EventEmitter {
   ): Promise<{ info: Message; parts: Part[] }> {
     const client = this.getClient();
     const model = this.resolveModelOption(options);
+    const resolvedParts = await inlineLocalUploadParts(parts);
 
     if (options?.directory) {
       void this.ensureDirectoryEventStream(options.directory);
@@ -832,7 +893,7 @@ class OpencodeClientWrapper extends EventEmitter {
       const response = await client.session.prompt({
         path: { id: sessionId },
         body: {
-          parts,
+          parts: resolvedParts,
           // ...(messageId ? { messageID: messageId } : {}), // 已注释：避免传递飞书 MessageID 导致 Opencode 无法处理
           ...(options?.agent ? { agent: options.agent } : {}),
           ...(model ? { model } : {}),
@@ -897,6 +958,7 @@ class OpencodeClientWrapper extends EventEmitter {
   ): Promise<void> {
     this.getClient();
     const model = this.resolveModelOption(options);
+    const resolvedParts = await inlineLocalUploadParts(parts);
 
     if (options?.directory) {
       void this.ensureDirectoryEventStream(options.directory);
@@ -907,7 +969,7 @@ class OpencodeClientWrapper extends EventEmitter {
       method: 'POST',
       headers: withOpencodeAuthorizationHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({
-        parts,
+        parts: resolvedParts,
         ...(options?.agent ? { agent: options.agent } : {}),
         ...(model ? { model } : {}),
         ...(options?.variant ? { variant: options.variant } : {}),
@@ -1135,11 +1197,15 @@ class OpencodeClientWrapper extends EventEmitter {
   // 获取会话列表（可按目录过滤）
   async listSessions(options?: SessionQueryOptions): Promise<Session[]> {
     const client = this.getClient();
-    const directory = this.normalizeDirectory(options?.directory);
+    const directory = this.rememberDirectory(options?.directory);
     const result = await client.session.list(
       directory ? { query: { directory } } : undefined
     );
-    return Array.isArray(result.data) ? result.data : [];
+    const sessions = Array.isArray(result.data) ? result.data : [];
+    for (const session of sessions) {
+      this.rememberDirectory(session.directory);
+    }
+    return sessions;
   }
 
   // 跨工作区聚合会话列表
@@ -1147,6 +1213,7 @@ class OpencodeClientWrapper extends EventEmitter {
     const merged = new Map<string, Session>();
     const upsertSessions = (sessions: Session[]): void => {
       for (const session of sessions) {
+        this.rememberDirectory(session.directory);
         const existing = merged.get(session.id);
         if (!existing) {
           merged.set(session.id, session);
@@ -1172,15 +1239,24 @@ class OpencodeClientWrapper extends EventEmitter {
       const projects = await this.listProjects();
       const seenDirectories = new Set<string>();
       for (const project of projects) {
-        const normalized = this.normalizeDirectory(project.worktree);
+        const normalized = this.rememberDirectory(project.worktree);
         if (!normalized || seenDirectories.has(normalized)) {
           continue;
         }
         seenDirectories.add(normalized);
         directories.push(normalized);
       }
+
+      for (const knownDirectory of this.knownSessionDirectories) {
+        if (seenDirectories.has(knownDirectory)) {
+          continue;
+        }
+        seenDirectories.add(knownDirectory);
+        directories.push(knownDirectory);
+      }
     } catch (error) {
       console.warn('[OpenCode] 获取项目列表失败:', error);
+      directories = Array.from(this.knownSessionDirectories);
     }
 
     const sessionGroups = await Promise.all(
@@ -1239,7 +1315,7 @@ class OpencodeClientWrapper extends EventEmitter {
       return null;
     }
 
-    const directory = this.normalizeDirectory(options?.directory);
+    const directory = this.rememberDirectory(options?.directory);
     const result = await client.session.get({
       path: { id: normalizedSessionId },
       ...(directory ? { query: { directory } } : {}),
@@ -1256,6 +1332,10 @@ class OpencodeClientWrapper extends EventEmitter {
         ? `获取会话失败（HTTP ${statusCode}）: ${detail}`
         : `获取会话失败: ${detail}`;
       throw new Error(appendAuthHint(message, statusCode));
+    }
+
+    if (result.data?.directory) {
+      this.rememberDirectory(result.data.directory);
     }
 
     return result.data || null;
@@ -1277,12 +1357,20 @@ class OpencodeClientWrapper extends EventEmitter {
     const directories: string[] = [];
     const seenDirectories = new Set<string>();
     for (const project of projects) {
-      const normalized = this.normalizeDirectory(project.worktree);
+      const normalized = this.rememberDirectory(project.worktree);
       if (!normalized || seenDirectories.has(normalized)) {
         continue;
       }
       seenDirectories.add(normalized);
       directories.push(normalized);
+    }
+
+    for (const knownDirectory of this.knownSessionDirectories) {
+      if (seenDirectories.has(knownDirectory)) {
+        continue;
+      }
+      seenDirectories.add(knownDirectory);
+      directories.push(knownDirectory);
     }
 
     for (const directory of directories) {
@@ -1298,7 +1386,7 @@ class OpencodeClientWrapper extends EventEmitter {
   // 创建新会话
   async createSession(title?: string, directory?: string): Promise<Session> {
     const client = this.getClient();
-    const normalizedDir = this.normalizeDirectory(directory);
+    const normalizedDir = this.rememberDirectory(directory);
     if (normalizedDir) {
       void this.ensureDirectoryEventStream(normalizedDir);
     }
@@ -1306,6 +1394,9 @@ class OpencodeClientWrapper extends EventEmitter {
       body: { title: title || '新对话' },
       ...(normalizedDir ? { query: { directory: normalizedDir } } : {}),
     });
+    if (result.data?.directory) {
+      this.rememberDirectory(result.data.directory);
+    }
     return result.data!;
   }
 
@@ -1367,6 +1458,27 @@ class OpencodeClientWrapper extends EventEmitter {
     return result.data || [];
   }
 
+  async getSessionLastActivityTime(sessionId: string): Promise<number> {
+    const messages = await this.getSessionMessages(sessionId);
+    let latest = 0;
+
+    for (const item of messages) {
+      const info = item?.info as Record<string, unknown> | undefined;
+      const time = info?.time;
+      if (!time || typeof time !== 'object' || Array.isArray(time)) {
+        continue;
+      }
+
+      for (const value of Object.values(time as Record<string, unknown>)) {
+        if (typeof value === 'number' && Number.isFinite(value) && value > latest) {
+          latest = value;
+        }
+      }
+    }
+
+    return latest;
+  }
+
   // 获取配置（含模型列表）
   async getProviders(): Promise<{
     providers: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>;
@@ -1378,6 +1490,148 @@ class OpencodeClientWrapper extends EventEmitter {
       providers: Array<{ id: string; name: string; models: Array<{ id: string; name: string }> }>;
       default: Record<string, string>;
     };
+  }
+
+  /**
+   * 获取 opencode 提供的 providers 完整数据（含 capabilities）
+   *
+   * 与 {@link getProviders} 的区别：后者为了兼容历史调用点做了强类型窄化，
+   * 丢掉了 `capabilities.input.image` 等关键字段。本方法返回 SDK 原始 shape，
+   * 供能力嗅探 / vision 模型枚举等场景使用。
+   */
+  async getProvidersFull(): Promise<{
+    providers: Array<Record<string, unknown>>;
+    default: Record<string, string>;
+  }> {
+    const client = this.getClient();
+    const result = await client.config.providers();
+    const data = (result.data || {}) as Record<string, unknown>;
+    const providers = Array.isArray(data.providers) ? (data.providers as Array<Record<string, unknown>>) : [];
+    const defaultMap = (data.default && typeof data.default === 'object' && !Array.isArray(data.default)
+      ? data.default
+      : {}) as Record<string, string>;
+    return { providers, default: defaultMap };
+  }
+
+  /**
+   * 查询单个 model 的 capabilities。
+   *
+   * @returns `{ input, attachment, ... }` 结构；若 provider/model 未找到或数据缺失，返回 `null`
+   *          —— 调用方应据此采用"乐观"或"悲观"策略。
+   */
+  async getModelCapabilities(
+    providerId: string,
+    modelId: string,
+  ): Promise<{
+    input?: { text?: boolean; image?: boolean; audio?: boolean; video?: boolean; pdf?: boolean };
+    output?: { text?: boolean; image?: boolean; audio?: boolean; video?: boolean; pdf?: boolean };
+    attachment?: boolean;
+  } | null> {
+    if (!providerId?.trim() || !modelId?.trim()) return null;
+
+    let full: Awaited<ReturnType<OpencodeClientWrapper['getProvidersFull']>>;
+    try {
+      full = await this.getProvidersFull();
+    } catch (error) {
+      console.debug('[OpenCode] getModelCapabilities: 拉取 providers 失败', error instanceof Error ? error.message : error);
+      return null;
+    }
+
+    const providerLower = providerId.trim().toLowerCase();
+    const modelLower = modelId.trim().toLowerCase();
+
+    for (const provider of full.providers) {
+      if (!provider || typeof provider !== 'object') continue;
+      const pid = typeof provider.id === 'string' ? provider.id.trim().toLowerCase() : '';
+      if (pid !== providerLower) continue;
+
+      const modelsRaw = provider.models;
+      const modelList: Array<Record<string, unknown>> = Array.isArray(modelsRaw)
+        ? (modelsRaw as Array<Record<string, unknown>>)
+        : modelsRaw && typeof modelsRaw === 'object'
+          ? (Object.values(modelsRaw as Record<string, unknown>) as Array<Record<string, unknown>>)
+          : [];
+
+      for (const model of modelList) {
+        if (!model || typeof model !== 'object') continue;
+        const mid = typeof model.id === 'string'
+          ? model.id.trim().toLowerCase()
+          : typeof (model as Record<string, unknown>).modelID === 'string'
+            ? ((model as Record<string, unknown>).modelID as string).trim().toLowerCase()
+            : '';
+        if (mid !== modelLower) continue;
+
+        const caps = model.capabilities;
+        if (!caps || typeof caps !== 'object') return null;
+        return caps as {
+          input?: { text?: boolean; image?: boolean; audio?: boolean; video?: boolean; pdf?: boolean };
+          output?: { text?: boolean; image?: boolean; audio?: boolean; video?: boolean; pdf?: boolean };
+          attachment?: boolean;
+        };
+      }
+      return null; // provider 匹配，但 model 未找到
+    }
+    return null; // provider 未找到
+  }
+
+  /**
+   * 枚举所有支持 image 输入的 model。
+   *
+   * 供 Web UI 的 VISION_OCR_MODEL 下拉选择器使用。
+   */
+  async listVisionModels(): Promise<Array<{
+    providerID: string;
+    providerName: string;
+    modelID: string;
+    modelName: string;
+  }>> {
+    let full: Awaited<ReturnType<OpencodeClientWrapper['getProvidersFull']>>;
+    try {
+      full = await this.getProvidersFull();
+    } catch (error) {
+      console.warn('[OpenCode] listVisionModels: 拉取 providers 失败', error instanceof Error ? error.message : error);
+      return [];
+    }
+
+    const result: Array<{ providerID: string; providerName: string; modelID: string; modelName: string }> = [];
+
+    for (const provider of full.providers) {
+      if (!provider || typeof provider !== 'object') continue;
+      const providerID = typeof provider.id === 'string' ? provider.id.trim() : '';
+      if (!providerID) continue;
+      const providerName = typeof provider.name === 'string' && provider.name.trim()
+        ? provider.name.trim()
+        : providerID;
+
+      const modelsRaw = provider.models;
+      const modelList: Array<Record<string, unknown>> = Array.isArray(modelsRaw)
+        ? (modelsRaw as Array<Record<string, unknown>>)
+        : modelsRaw && typeof modelsRaw === 'object'
+          ? (Object.values(modelsRaw as Record<string, unknown>) as Array<Record<string, unknown>>)
+          : [];
+
+      for (const model of modelList) {
+        if (!model || typeof model !== 'object') continue;
+        const modelID = typeof model.id === 'string'
+          ? model.id.trim()
+          : typeof (model as Record<string, unknown>).modelID === 'string'
+            ? ((model as Record<string, unknown>).modelID as string).trim()
+            : '';
+        if (!modelID) continue;
+
+        const caps = (model.capabilities || {}) as Record<string, unknown>;
+        const input = (caps.input || {}) as Record<string, unknown>;
+        if (input.image !== true) continue;
+
+        const modelName = typeof model.name === 'string' && model.name.trim()
+          ? model.name.trim()
+          : modelID;
+
+        result.push({ providerID, providerName, modelID, modelName });
+      }
+    }
+
+    return result;
   }
 
   // 获取完整配置

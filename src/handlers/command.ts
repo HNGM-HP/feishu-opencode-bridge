@@ -9,8 +9,18 @@ import {
   type OpencodeAgentInfo,
   type OpencodeRuntimeConfig,
 } from '../opencode/client.js';
-import { chatSessionStore } from '../store/chat-session.js';
-import { buildControlCard, buildStatusCard } from '../feishu/cards.js';
+import { chatSessionStore, type SessionOrderMode } from '../store/chat-session.js';
+import {
+  buildControlCard,
+  buildMarkdownCard,
+  buildSessionControlCard,
+  buildSessionListCard,
+  buildShortcutCommandCard,
+  buildStatusCard,
+  SESSION_CTL_CURRENT_VALUE,
+  SESSION_CTL_NEW_VALUE,
+  type SessionCtlSessionOption,
+} from '../feishu/cards.js';
 import { writeCommandDoc, type CommandDocData } from '../commands/command-doc.js';
 import { modelConfig, userConfig } from '../config.js';
 import { sendFileToFeishu } from './file-sender.js';
@@ -21,55 +31,12 @@ import { getRuntimeCronManager } from '../reliability/runtime-cron-registry.js';
 import { formatRestartResultText, restartOpenCodeProcess } from '../reliability/opencode-restart.js';
 import { parseCronIntentWithOpenCode } from '../reliability/cron-semantic.js';
 import { cleanupRuntimeCronJobsBySessionId, scanAndCleanupOrphanRuntimeCronJobs } from '../reliability/runtime-cron-orphan.js';
+import { isChatModelAllowed, parseChatModelReference } from '../utils/chat-model-whitelist.js';
 
-const SUPPORTED_ROLE_TOOLS = [
-  'bash',
-  'read',
-  'write',
-  'edit',
-  'list',
-  'glob',
-  'grep',
-  'webfetch',
-  'task',
-  'todowrite',
-  'todoread',
-] as const;
-
-type RoleTool = typeof SUPPORTED_ROLE_TOOLS[number];
-
-const ROLE_TOOL_ALIAS: Record<string, RoleTool> = {
-  bash: 'bash',
-  shell: 'bash',
-  命令行: 'bash',
-  终端: 'bash',
-  read: 'read',
-  读取: 'read',
-  阅读: 'read',
-  write: 'write',
-  写入: 'write',
-  edit: 'edit',
-  编辑: 'edit',
-  list: 'list',
-  列表: 'list',
-  glob: 'glob',
-  文件匹配: 'glob',
-  grep: 'grep',
-  搜索: 'grep',
-  webfetch: 'webfetch',
-  网页: 'webfetch',
-  抓取网页: 'webfetch',
-  task: 'task',
-  子代理: 'task',
-  todowrite: 'todowrite',
-  待办写入: 'todowrite',
-  todoread: 'todoread',
-  待办读取: 'todoread',
-};
-
-const ROLE_CREATE_USAGE = '用法: 创建角色 名称=旅行助手; 描述=擅长制定旅行计划; 类型=主; 工具=webfetch; 提示词=先给出预算再做路线';
 const INTERNAL_HIDDEN_AGENT_NAMES = new Set(['compaction', 'title', 'summary']);
 const PANEL_MODEL_OPTION_LIMIT = 500;
+const SESSION_CTL_OPTION_LIMIT = 100;
+const SESSION_CTL_EXISTING_LIMIT = SESSION_CTL_OPTION_LIMIT - 2;
 const EFFORT_USAGE_TEXT = '用法: /effort（查看） 或 /effort <low|high|max|xhigh>（设置） 或 /effort default（清除）';
 const EFFORT_DISPLAY_ORDER = KNOWN_EFFORT_LEVELS;
 
@@ -122,173 +89,506 @@ function normalizeAgentText(text: string): string {
     .trim();
 }
 
-interface RoleCreatePayload {
-  name: string;
-  description: string;
-  mode: 'primary' | 'subagent';
-  tools?: Record<string, boolean>;
-  prompt?: string;
-}
+export class CommandHandler {
+  private static readonly FEISHU_MARKDOWN_CHUNK_LIMIT = 3800;
+  private static readonly FEISHU_SESSION_CARD_ENTRY_LIMIT = 5;
+  private static readonly FEISHU_SESSION_CARD_TEXT_LIMIT = 5200;
 
-type RoleCreateParseResult =
-  | { ok: true; payload: RoleCreatePayload }
-  | { ok: false; message: string };
-
-type RoleToolsParseResult =
-  | { ok: true; tools?: Record<string, boolean> }
-  | { ok: false; message: string };
-
-function stripWrappingQuotes(value: string): string {
-  const trimmed = value.trim();
-  if (trimmed.length < 2) return trimmed;
-  const first = trimmed[0];
-  const last = trimmed[trimmed.length - 1];
-  if ((first === '"' && last === '"') || (first === '\'' && last === '\'')) {
-    return trimmed.slice(1, -1).trim();
-  }
-  return trimmed;
-}
-
-function normalizeRoleMode(value: string): 'primary' | 'subagent' | undefined {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === '主' || normalized === 'primary') return 'primary';
-  if (normalized === '子' || normalized === 'subagent') return 'subagent';
-  return undefined;
-}
-
-function buildToolsConfig(value: string): RoleToolsParseResult {
-  const normalized = value.trim().toLowerCase();
-  if (!normalized || normalized === '默认' || normalized === 'default' || normalized === '继承' || normalized === 'all' || normalized === '全部') {
-    return { ok: true };
-  }
-
-  const toolsConfig: Record<string, boolean> = Object.fromEntries(
-    SUPPORTED_ROLE_TOOLS.map(tool => [tool, false])
-  );
-
-  if (normalized === 'none' || normalized === '无' || normalized === '关闭' || normalized === 'off') {
-    return { ok: true, tools: toolsConfig };
-  }
-
-  const rawItems = value.split(/[，,\s]+/).map(item => item.trim()).filter(Boolean);
-  if (rawItems.length === 0) {
-    return { ok: true };
-  }
-
-  const unsupported: string[] = [];
-  for (const rawItem of rawItems) {
-    const aliasKey = rawItem.toLowerCase();
-    const mapped = ROLE_TOOL_ALIAS[aliasKey] || ROLE_TOOL_ALIAS[rawItem];
-    if (!mapped) {
-      unsupported.push(rawItem);
-      continue;
+  private splitFeishuMarkdown(markdown: string, limit: number = CommandHandler.FEISHU_MARKDOWN_CHUNK_LIMIT): string[] {
+    const trimmed = markdown.trim();
+    if (!trimmed) {
+      return ['（无内容）'];
     }
-    toolsConfig[mapped] = true;
+
+    if (trimmed.length <= limit) {
+      return [trimmed];
+    }
+
+    const lines = trimmed.split('\n');
+    const chunks: string[] = [];
+    let current = '';
+
+    for (const line of lines) {
+      const candidate = current ? `${current}\n${line}` : line;
+      if (candidate.length > limit && current) {
+        chunks.push(current.trim());
+        current = line;
+        continue;
+      }
+
+      if (line.length > limit) {
+        if (current) {
+          chunks.push(current.trim());
+          current = '';
+        }
+
+        let rest = line;
+        while (rest.length > limit) {
+          chunks.push(rest.slice(0, limit));
+          rest = rest.slice(limit);
+        }
+        current = rest;
+        continue;
+      }
+
+      current = candidate;
+    }
+
+    if (current.trim()) {
+      chunks.push(current.trim());
+    }
+
+    return chunks.length > 0 ? chunks : ['（无内容）'];
   }
 
-  if (unsupported.length > 0) {
+  private splitMarkdownBlocks(
+    header: string,
+    blocks: string[],
+    limit: number = CommandHandler.FEISHU_MARKDOWN_CHUNK_LIMIT
+  ): string[] {
+    const safeHeader = header.trim();
+    const safeBlocks = blocks.map(block => block.trim()).filter(Boolean);
+    if (safeBlocks.length === 0) {
+      return [safeHeader || '（无内容）'];
+    }
+
+    const separator = '\n\n---\n\n';
+    const pages: string[] = [];
+    let currentBlocks: string[] = [];
+
+    const buildPage = (items: string[]): string => {
+      const body = items.join(separator);
+      return safeHeader ? `${safeHeader}\n\n${body}` : body;
+    };
+
+    for (const block of safeBlocks) {
+      const candidateBlocks = [...currentBlocks, block];
+      const candidatePage = buildPage(candidateBlocks);
+      if (candidatePage.length > limit && currentBlocks.length > 0) {
+        pages.push(buildPage(currentBlocks));
+        currentBlocks = [block];
+        continue;
+      }
+
+      currentBlocks = candidateBlocks;
+    }
+
+    if (currentBlocks.length > 0) {
+      pages.push(buildPage(currentBlocks));
+    }
+
+    return pages.length > 0 ? pages : [safeHeader || '（无内容）'];
+  }
+
+  private splitSessionCardEntries(
+    entries: Array<{ sessionId: string; markdown: string }>,
+    summaryMarkdown: string
+  ): Array<Array<{ sessionId: string; markdown: string }>> {
+    const pages: Array<Array<{ sessionId: string; markdown: string }>> = [];
+    let current: Array<{ sessionId: string; markdown: string }> = [];
+    let currentLength = summaryMarkdown.trim().length;
+
+    for (const entry of entries) {
+      const entryLength = entry.markdown.trim().length + 80;
+      const exceedsCount = current.length >= CommandHandler.FEISHU_SESSION_CARD_ENTRY_LIMIT;
+      const exceedsLength = current.length > 0
+        && currentLength + entryLength > CommandHandler.FEISHU_SESSION_CARD_TEXT_LIMIT;
+
+      if (exceedsCount || exceedsLength) {
+        pages.push(current);
+        current = [];
+        currentLength = summaryMarkdown.trim().length;
+      }
+
+      current.push(entry);
+      currentLength += entryLength;
+    }
+
+    if (current.length > 0) {
+      pages.push(current);
+    }
+
+    return pages.length > 0 ? pages : [[]];
+  }
+
+  private async replyFeishuMarkdown(
+    messageId: string,
+    chatId: string,
+    title: string,
+    markdown: string,
+    template: 'blue' | 'green' | 'red' | 'orange' | 'grey' = 'blue'
+  ): Promise<void> {
+    const chunks = this.splitFeishuMarkdown(markdown);
+    const firstTitle = chunks.length > 1 ? `${title}（1/${chunks.length}）` : title;
+    await feishuClient.replyCard(messageId, buildMarkdownCard({
+      title: firstTitle,
+      markdown: chunks[0],
+      template,
+    }));
+
+    for (let index = 1; index < chunks.length; index++) {
+      await feishuClient.sendCard(chatId, buildMarkdownCard({
+        title: `${title}（${index + 1}/${chunks.length}）`,
+        markdown: chunks[index],
+        template,
+      }));
+    }
+  }
+
+  private formatHelpMarkdown(): string {
+    return getHelpText().replace(/^📖\s+\*\*.*?\*\*\s*\n*/u, '').trim();
+  }
+
+  public isHelpWithQcEnabled(chatId: string): boolean {
+    return chatSessionStore.getSession(chatId)?.helpWithQc ?? false;
+  }
+
+  public isSessionWithCtlEnabled(chatId: string): boolean {
+    return chatSessionStore.getSession(chatId)?.sessionWithCtl ?? false;
+  }
+
+  public isSessionWithChangeEnabled(chatId: string): boolean {
+    return chatSessionStore.getSession(chatId)?.sessionWithChange ?? false;
+  }
+
+  private getQcShortcuts(): Array<{ label: string; command: string }> {
+    return [
+      { label: '/panel', command: '/panel' },
+      { label: '/session_ctl', command: '/session_ctl' },
+      { label: '/create_chat', command: '/create_chat' },
+      { label: '/model', command: '/model' },
+      { label: '/models', command: '/models' },
+      { label: '/status', command: '/status' },
+      { label: '/project list', command: '/project list' },
+      { label: '/compact', command: '/compact' },
+      { label: '/commands', command: '/commands' },
+    ];
+  }
+
+  public async pushQcCard(chatId: string, chatType: 'p2p' | 'group' = 'group'): Promise<void> {
+    await feishuClient.sendCard(chatId, buildShortcutCommandCard({
+      title: '⚡ 快捷命令卡',
+      description: '点击按钮会直接执行对应命令。',
+      chatId,
+      chatType,
+      shortcuts: this.getQcShortcuts(),
+    }));
+  }
+
+  public async replyQcCard(messageId: string, chatId: string, chatType: 'p2p' | 'group' = 'group'): Promise<void> {
+    await feishuClient.replyCard(messageId, buildShortcutCommandCard({
+      title: '⚡ 快捷命令卡',
+      description: '点击按钮会直接执行对应命令。',
+      chatId,
+      chatType,
+      shortcuts: this.getQcShortcuts(),
+    }));
+  }
+
+  private getDisplayWidth(text: string): number {
+    let width = 0;
+    for (const char of text) {
+      width += /[^\u0000-\u00ff]/.test(char) ? 2 : 1;
+    }
+    return width;
+  }
+
+  private truncateByDisplayWidth(text: string, maxWidth: number, mode: 'start' | 'end' = 'end'): string {
+    const normalized = text.trim();
+    if (!normalized) return '';
+    if (this.getDisplayWidth(normalized) <= maxWidth) return normalized;
+
+    const ellipsis = '...';
+    const targetWidth = Math.max(0, maxWidth - this.getDisplayWidth(ellipsis));
+    let collected = '';
+    let usedWidth = 0;
+    const chars = [...normalized];
+    const source = mode === 'start' ? [...chars].reverse() : chars;
+
+    for (const char of source) {
+      const charWidth = this.getDisplayWidth(char);
+      if (usedWidth + charWidth > targetWidth) break;
+      collected = mode === 'start' ? `${char}${collected}` : `${collected}${char}`;
+      usedWidth += charWidth;
+    }
+
+    return mode === 'start' ? `${ellipsis}${collected}` : `${collected}${ellipsis}`;
+  }
+
+  private formatSessionCtlOptionLabel(session: Awaited<ReturnType<typeof opencodeClient.listSessions>>[number], highlightWorkspace: boolean): string {
+    const title = typeof session.title === 'string' && session.title.trim().length > 0
+      ? session.title.trim()
+      : '未命名会话';
+    const compactTitle = this.truncateByDisplayWidth(title, 24, 'end');
+    const directory = session.directory?.trim() || '/';
+    const shortId = session.id.slice(0, 8);
+    const compactDirectory = this.truncateByDisplayWidth(directory, 16, 'start');
+    const workspaceLabel = highlightWorkspace ? compactDirectory : compactDirectory;
+    return `${workspaceLabel} / ${shortId} / ${compactTitle}`;
+  }
+
+  private getSessionLastModifiedTime(session: Awaited<ReturnType<typeof opencodeClient.listSessions>>[number]): number {
+    return session.time?.updated ?? session.time?.created ?? 0;
+  }
+
+  private async resolveSessionLastActivityMap(
+    sessions: Awaited<ReturnType<typeof opencodeClient.listSessions>>
+  ): Promise<Map<string, number>> {
+    const entries = await Promise.all(
+      sessions.map(async session => {
+        try {
+          const activityTime = await opencodeClient.getSessionLastActivityTime(session.id);
+          return [session.id, activityTime || this.getSessionLastModifiedTime(session)] as const;
+        } catch {
+          return [session.id, this.getSessionLastModifiedTime(session)] as const;
+        }
+      })
+    );
+
+    return new Map(entries);
+  }
+
+  private async buildSessionCtlOptions(chatId: string): Promise<{ options: SessionCtlSessionOption[]; totalSessionCount: number }> {
+    const currentSessionId = chatSessionStore.getSessionId(chatId);
+    const allSessions = await opencodeClient.listSessionsAcrossProjects();
+    const options: SessionCtlSessionOption[] = [];
+
+    const currentSession = currentSessionId
+      ? allSessions.find(session => session.id === currentSessionId)
+      : undefined;
+
+    options.push({
+      label: currentSession
+        ? `当前会话：${this.formatSessionCtlOptionLabel(currentSession, true)}`
+        : '当前会话（默认）',
+      value: SESSION_CTL_CURRENT_VALUE,
+    });
+    options.push({ label: '新建 OpenCode 会话', value: SESSION_CTL_NEW_VALUE });
+
+    const sessionOrderMode = this.getSessionOrderMode(chatId);
+    const sessionLastActivityMap = sessionOrderMode === 'last_time'
+      ? await this.resolveSessionLastActivityMap(allSessions)
+      : null;
+    const sortedSessions = [...allSessions].sort((a, b) => {
+      if (sessionOrderMode === 'last_time') {
+        const left = sessionLastActivityMap?.get(a.id) ?? this.getSessionLastModifiedTime(a);
+        const right = sessionLastActivityMap?.get(b.id) ?? this.getSessionLastModifiedTime(b);
+        if (left !== right) return right - left;
+        return a.id.localeCompare(b.id, 'en');
+      }
+
+      const directoryCompare = (a.directory || '/').localeCompare((b.directory || '/'), 'zh-Hans-CN');
+      if (directoryCompare !== 0) return directoryCompare;
+      const left = this.getSessionLastModifiedTime(b);
+      const right = this.getSessionLastModifiedTime(a);
+      if (left !== right) return left - right;
+      return a.id.localeCompare(b.id, 'en');
+    });
+
+    let previousDirectory = '';
+    for (const session of sortedSessions.slice(0, SESSION_CTL_EXISTING_LIMIT)) {
+      const directory = session.directory?.trim() || '/';
+      options.push({
+        label: this.formatSessionCtlOptionLabel(session, directory !== previousDirectory),
+        value: session.id,
+      });
+      previousDirectory = directory;
+    }
+
     return {
-      ok: false,
-      message: `不支持的工具: ${unsupported.join(', ')}\n可用工具: ${SUPPORTED_ROLE_TOOLS.join(', ')}`,
+      options,
+      totalSessionCount: sortedSessions.length,
     };
   }
 
-  return { ok: true, tools: toolsConfig };
-}
+  public async buildSessionControlCard(chatId: string, chatType: 'p2p' | 'group' = 'group', selectedSessionId: string = SESSION_CTL_CURRENT_VALUE): Promise<object> {
+    const currentBinding = chatSessionStore.getSession(chatId);
+    const currentSessionId = currentBinding?.sessionId;
+    if (!currentSessionId) {
+      throw new Error('当前没有活跃会话');
+    }
 
-function parseRoleCreateSpec(spec: string): RoleCreateParseResult {
-  const raw = spec.trim();
-  if (!raw) {
-    return { ok: false, message: `缺少角色参数\n${ROLE_CREATE_USAGE}` };
+    const currentSession = await opencodeClient.findSessionAcrossProjects(currentSessionId);
+    const sessionCtlData = await this.buildSessionCtlOptions(chatId);
+    return buildSessionControlCard({
+      chatId,
+      chatType,
+      currentDirectory: currentSession?.directory || currentBinding.resolvedDirectory || currentBinding.defaultDirectory || '未知',
+      currentSessionId,
+      currentSessionTitle: currentSession?.title?.trim() || currentBinding.title || '未命名会话',
+      selectedSessionId,
+      sessionOptions: sessionCtlData.options,
+      totalSessionCount: sessionCtlData.totalSessionCount,
+    });
   }
 
-  const segments = raw.split(/[;；\n]+/).map(item => item.trim()).filter(Boolean);
-  if (segments.length === 0) {
-    return { ok: false, message: `缺少角色参数\n${ROLE_CREATE_USAGE}` };
+  public async pushSessionControlCard(chatId: string, chatType: 'p2p' | 'group' = 'group', selectedSessionId: string = SESSION_CTL_CURRENT_VALUE): Promise<void> {
+    await feishuClient.sendCard(chatId, await this.buildSessionControlCard(chatId, chatType, selectedSessionId));
   }
 
-  let name = '';
-  let description = '';
-  let modeRaw = '';
-  let toolsRaw = '';
-  let prompt = '';
+  public async replySessionControlCard(messageId: string, chatId: string, chatType: 'p2p' | 'group' = 'group', selectedSessionId: string = SESSION_CTL_CURRENT_VALUE): Promise<void> {
+    await feishuClient.replyCard(messageId, await this.buildSessionControlCard(chatId, chatType, selectedSessionId));
+  }
 
-  for (const segment of segments) {
-    const sepIndex = segment.search(/[=:：]/);
-    if (sepIndex < 0) {
-      if (!name) {
-        name = stripWrappingQuotes(segment);
+  public async updateSessionControlCard(messageId: string, chatId: string, chatType: 'p2p' | 'group' = 'group', selectedSessionId: string = SESSION_CTL_CURRENT_VALUE): Promise<boolean> {
+    return await feishuClient.updateCard(messageId, await this.buildSessionControlCard(chatId, chatType, selectedSessionId));
+  }
+
+  public async replyHelpCard(messageId: string, chatId: string, chatType: 'p2p' | 'group' = 'group'): Promise<void> {
+    await this.replyFeishuMarkdown(
+      messageId,
+      chatId,
+      '📖 飞书 × OpenCode 机器人指南',
+      this.formatHelpMarkdown()
+    );
+
+    if (this.isHelpWithQcEnabled(chatId)) {
+      await this.pushQcCard(chatId, chatType);
+    }
+  }
+
+  private async replyProjectMarkdown(
+    messageId: string,
+    chatId: string,
+    title: string,
+    markdown: string,
+    template: 'blue' | 'green' | 'red' | 'orange' | 'grey' = 'blue'
+  ): Promise<void> {
+    await this.replyFeishuMarkdown(messageId, chatId, title, markdown, template);
+  }
+
+  public getSessionOrderMode(chatId: string): SessionOrderMode {
+    return chatSessionStore.getSession(chatId)?.sessionOrderMode || 'default';
+  }
+
+  private formatSessionOrderMode(mode: SessionOrderMode): string {
+    return mode === 'last_time' ? '按最后修改时间倒序' : '默认排序';
+  }
+
+  private async handleConfig(chatId: string, messageId: string, command: ParsedCommand): Promise<void> {
+    if (command.configScope !== 'session' || !command.configKey) {
+      await this.replyFeishuMarkdown(
+        messageId,
+        chatId,
+        '⚙️ 当前聊天配置',
+        [
+          '**支持的配置命令**',
+          '- `/config session order` 查看当前会话排序模式',
+          '- `/config session order default` 使用默认排序',
+          '- `/config session order last_time` 按最后修改时间倒序',
+          '- `/config session help_with_qc true|false` 控制 /help 后是否推送 /qc',
+          '- `/config session session_with_ctl true|false` 控制 /sessions 后是否推送 /session_ctl',
+          '- `/config session session_with_change true|false` 控制 /sessions 是否展示会话切换按钮',
+        ].join('\n'),
+        'orange'
+      );
+      return;
+    }
+
+    if (
+      command.configKey === 'help_with_qc'
+      || command.configKey === 'session_with_ctl'
+      || command.configKey === 'session_with_change'
+    ) {
+      const currentValue = command.configKey === 'help_with_qc'
+        ? this.isHelpWithQcEnabled(chatId)
+        : command.configKey === 'session_with_ctl'
+          ? this.isSessionWithCtlEnabled(chatId)
+          : this.isSessionWithChangeEnabled(chatId);
+      const currentLabel = currentValue ? 'true' : 'false';
+
+      if (!command.configValue) {
+        const commandName = command.configKey;
+        const desc = command.configKey === 'help_with_qc'
+          ? '控制 /help 后是否跟随推送 /qc'
+          : command.configKey === 'session_with_ctl'
+            ? '控制 /sessions 后是否跟随推送 /session_ctl'
+            : '控制 /sessions 列表中是否展示“切换至此Session”按钮';
+        await this.replyFeishuMarkdown(
+          messageId,
+          chatId,
+          '⚙️ 当前聊天配置',
+          [
+            `配置项：**${commandName}**`,
+            `说明：${desc}`,
+            `当前值：\`${currentLabel}\``,
+            '',
+            '可选值：',
+            '- `true` 开启',
+            '- `false` 关闭',
+          ].join('\n')
+        );
+        return;
       }
-      continue;
+
+      if (command.configValue !== 'true' && command.configValue !== 'false') {
+        await this.replyFeishuMarkdown(
+          messageId,
+          chatId,
+          '⚙️ 当前聊天配置',
+          '该配置仅支持 `true` 或 `false`。',
+          'red'
+        );
+        return;
+      }
+
+      const boolValue = command.configValue === 'true';
+      if (command.configKey === 'help_with_qc') {
+        chatSessionStore.updateConfig(chatId, { helpWithQc: boolValue });
+      } else if (command.configKey === 'session_with_ctl') {
+        chatSessionStore.updateConfig(chatId, { sessionWithCtl: boolValue });
+      } else {
+        chatSessionStore.updateConfig(chatId, { sessionWithChange: boolValue });
+      }
+
+      await this.replyFeishuMarkdown(
+        messageId,
+        chatId,
+        '✅ 当前聊天配置已更新',
+        `已将 **${command.configKey}** 设置为 \`${String(boolValue)}\``,
+        'green'
+      );
+      return;
     }
 
-    const key = segment.slice(0, sepIndex).trim().toLowerCase();
-    const value = stripWrappingQuotes(segment.slice(sepIndex + 1));
-    if (!value) continue;
-
-    if (key === '名称' || key === '名字' || key === '角色' || key === 'name' || key === 'role') {
-      name = value;
-      continue;
+    if (!command.configValue) {
+      const mode = this.getSessionOrderMode(chatId);
+      await this.replyFeishuMarkdown(
+        messageId,
+        chatId,
+        '⚙️ 会话排序配置',
+        [
+          `当前模式：**${this.formatSessionOrderMode(mode)}**`,
+          '',
+          '可选值：',
+          '- `default` 默认排序',
+          '- `last_time` 按最后修改时间倒序',
+        ].join('\n')
+      );
+      return;
     }
 
-    if (key === '描述' || key === '说明' || key === 'description' || key === 'desc') {
-      description = value;
-      continue;
+    if (command.configValue !== 'default' && command.configValue !== 'last_time') {
+      await this.replyFeishuMarkdown(
+        messageId,
+        chatId,
+        '⚙️ 会话排序配置',
+        '不支持的排序模式。请使用 `/config session order default` 或 `/config session order last_time`。',
+        'red'
+      );
+      return;
     }
 
-    if (key === '类型' || key === '模式' || key === 'mode') {
-      modeRaw = value;
-      continue;
-    }
-
-    if (key === '工具' || key === 'tools' || key === 'tool') {
-      toolsRaw = value;
-      continue;
-    }
-
-    if (key === '提示词' || key === 'prompt' || key === '系统提示' || key === '指令') {
-      prompt = value;
-    }
+    chatSessionStore.updateConfig(chatId, { sessionOrderMode: command.configValue });
+    await this.replyFeishuMarkdown(
+      messageId,
+      chatId,
+      '✅ 会话排序配置已更新',
+      `当前模式已切换为：**${this.formatSessionOrderMode(command.configValue)}**`,
+      'green'
+    );
   }
 
-  name = name.trim();
-  if (!name) {
-    return { ok: false, message: `缺少角色名称\n${ROLE_CREATE_USAGE}` };
-  }
-
-  if (/\s/.test(name)) {
-    return { ok: false, message: '角色名称不能包含空格，请使用连续字符（可含中文）。' };
-  }
-
-  if (name.length > 40) {
-    return { ok: false, message: '角色名称长度不能超过 40 个字符。' };
-  }
-
-  let mode: 'primary' | 'subagent' = 'primary';
-  if (modeRaw) {
-    const parsedMode = normalizeRoleMode(modeRaw);
-    if (!parsedMode) {
-      return { ok: false, message: '角色类型仅支持 主 / 子（或 primary / subagent）。' };
-    }
-    mode = parsedMode;
-  }
-
-  const toolsResult = buildToolsConfig(toolsRaw);
-  if (!toolsResult.ok) return { ok: false, message: toolsResult.message };
-
-  return {
-    ok: true,
-    payload: {
-      name,
-      description: description || `${name}（自定义角色）`,
-      mode,
-      ...(toolsResult.tools ? { tools: toolsResult.tools } : {}),
-      ...(prompt ? { prompt } : {}),
-    },
-  };
-}
-
-export class CommandHandler {
   private parseProviderModel(raw?: string): { providerId: string; modelId: string } | null {
     if (!raw) {
       return null;
@@ -432,6 +732,9 @@ export class CommandHandler {
         if (!fallbackNormalized) {
           return;
         }
+        if (!isChatModelAllowed(providerId, fallbackNormalized)) {
+          return;
+        }
 
         const key = `${providerId.toLowerCase()}:${fallbackNormalized.toLowerCase()}`;
         if (dedupe.has(key)) {
@@ -451,6 +754,9 @@ export class CommandHandler {
         ? modelRecord.id.trim()
         : fallbackNormalized;
       if (!modelId) {
+        return;
+      }
+      if (!isChatModelAllowed(providerId, modelId)) {
         return;
       }
 
@@ -715,6 +1021,37 @@ export class CommandHandler {
     await feishuClient.reply(messageId, `✅ 上下文压缩完成（模型: ${model.providerId}:${model.modelId}）`);
   }
 
+  public startCompactInBackground(chatId: string, triggerMessageId?: string): void {
+    void (async () => {
+      const sessionId = chatSessionStore.getSessionId(chatId);
+      if (!sessionId) {
+        await feishuClient.sendText(chatId, '❌ 当前没有活跃的会话，请先发送消息建立会话');
+        return;
+      }
+
+      const model = await this.resolveCompactModel(chatId);
+      if (!model) {
+        await feishuClient.sendText(chatId, '❌ 未找到可用模型，无法执行上下文压缩');
+        return;
+      }
+
+      try {
+        const compacted = await opencodeClient.summarizeSession(sessionId, model.providerId, model.modelId);
+        if (!compacted) {
+          await feishuClient.sendText(chatId, `❌ 上下文压缩失败（模型: ${model.providerId}:${model.modelId}）`);
+          return;
+        }
+
+        await feishuClient.sendText(chatId, `✅ 上下文压缩完成（模型: ${model.providerId}:${model.modelId}）`);
+      } catch (error) {
+        console.error('[Command] 后台压缩失败:', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        const prefix = triggerMessageId ? '❌ 上下文压缩执行失败' : '❌ 后台压缩执行失败';
+        await feishuClient.sendText(chatId, `${prefix}: ${errorMessage}`);
+      }
+    })();
+  }
+
   private getPrivateSessionShortId(userId: string): string {
     const normalized = userId.startsWith('ou_') ? userId.slice(3) : userId;
     return normalized.slice(0, 4);
@@ -742,7 +1079,11 @@ export class CommandHandler {
     try {
       switch (command.type) {
         case 'help':
-          await feishuClient.reply(messageId, getHelpText());
+          await this.replyHelpCard(messageId, chatId, context.chatType);
+          break;
+
+        case 'qc':
+          await this.replyQcCard(messageId, chatId, context.chatType);
           break;
 
         case 'status':
@@ -769,8 +1110,23 @@ export class CommandHandler {
           } else if (command.projectAction === 'default_show') {
             await this.handleProjectDefaultShow(chatId, messageId);
           } else {
-            await feishuClient.reply(messageId, '用法: /project list 或 /project default set <路径或别名>');
+            await this.replyProjectMarkdown(
+              messageId,
+              chatId,
+              '📁 项目命令',
+              [
+                '**用法**',
+                '- `/project list` 查看可用项目',
+                '- `/project default` 查看当前群默认项目',
+                '- `/project default set <路径或别名>` 设置当前群默认项目',
+                '- `/project default clear` 清除当前群默认项目',
+              ].join('\n')
+            );
           }
+          break;
+
+        case 'config':
+          await this.handleConfig(chatId, messageId, command);
           break;
 
         case 'clear':
@@ -814,6 +1170,10 @@ export class CommandHandler {
           await this.handleModel(chatId, messageId, context.senderId, context.chatType, command.modelName);
           break;
 
+        case 'models':
+          await this.handleModels(chatId, messageId, command.listAll ?? false);
+          break;
+
         case 'agent':
           await this.handleAgent(chatId, messageId, context.senderId, context.chatType, command.agentName);
           break;
@@ -823,11 +1183,8 @@ export class CommandHandler {
           break;
 
         case 'role':
-          if (command.roleAction === 'create') {
-            await this.handleRoleCreate(chatId, messageId, context.senderId, context.chatType, command.roleSpec || '');
-          } else {
-            await feishuClient.reply(messageId, `支持的角色命令:\n- ${ROLE_CREATE_USAGE}`);
-          }
+          // 角色创建功能已迁移至资源管理系统
+          await feishuClient.reply(messageId, `⚠️ 角色创建功能已迁移\n\n请使用以下方式管理智能体：\n• Web UI: 访问 http://host:port/resources\n• CLI: opencode-bridge bridge resource agent --help`);
           break;
 
         case 'undo':
@@ -838,12 +1195,19 @@ export class CommandHandler {
           await this.handlePanel(chatId, messageId, context.chatType);
           break;
 
+        case 'session_ctl':
+          await this.replySessionControlCard(messageId, chatId, context.chatType);
+          break;
+
         case 'commands':
           await this.handleCommandsCard(chatId, messageId);
           break;
         
         case 'sessions':
           await this.handleListSessions(chatId, messageId, command.listAll);
+          if (this.isSessionWithCtlEnabled(chatId)) {
+            await this.pushSessionControlCard(chatId, context.chatType);
+          }
           break;
 
         case 'send':
@@ -963,7 +1327,12 @@ export class CommandHandler {
        // 尝试获取 session 详情? 暂时跳过
     }
 
-    await feishuClient.reply(messageId, `🤖 **OpenCode 状态**\n\n${status}\n${extra}`);
+    await this.replyFeishuMarkdown(
+      messageId,
+      chatId,
+      '🤖 OpenCode 状态',
+      `${status}${extra ? `\n${extra}` : ''}`
+    );
   }
 
   private async handleNewSession(
@@ -1038,7 +1407,13 @@ export class CommandHandler {
     const projects = DirectoryPolicy.listAvailableProjects(knownDirs);
 
     if (projects.length === 0) {
-      await feishuClient.reply(messageId, DirectoryPolicy.buildProjectListEmptyMessage());
+      await this.replyProjectMarkdown(
+        messageId,
+        chatId,
+        '📋 可用项目列表',
+        DirectoryPolicy.buildProjectListEmptyMessage(),
+        'orange'
+      );
       return;
     }
 
@@ -1050,9 +1425,11 @@ export class CommandHandler {
     const chatDefault = chatSessionStore.getSession(chatId)?.defaultDirectory;
     const defaultLine = chatDefault ? `\n当前群默认: ${chatDefault}` : '\n当前群默认: 跟随全局';
 
-    await feishuClient.reply(
+    await this.replyProjectMarkdown(
       messageId,
-      `📋 **可用项目列表**\n\n${lines.join('\n')}${defaultLine}\n\n使用 \`/session new <项目名或路径>\` 创建指定项目的会话`
+      chatId,
+      '📋 可用项目列表',
+      `${lines.join('\n')}${defaultLine}\n\n使用 \`/session new <项目名或路径>\` 创建指定项目的会话`
     );
   }
 
@@ -1064,12 +1441,24 @@ export class CommandHandler {
   ): Promise<void> {
     if (action === 'clear') {
       chatSessionStore.updateConfig(chatId, { defaultDirectory: undefined });
-      await feishuClient.reply(messageId, '✅ 已清除群默认项目，将跟随全局默认');
+      await this.replyProjectMarkdown(
+        messageId,
+        chatId,
+        '✅ 默认项目已清除',
+        '已清除当前群默认项目，后续将跟随全局默认。',
+        'green'
+      );
       return;
     }
 
     if (!value) {
-      await feishuClient.reply(messageId, '用法: /project default set <路径或别名>');
+      await this.replyProjectMarkdown(
+        messageId,
+        chatId,
+        '📁 设置默认项目',
+        '用法：`/project default set <路径或别名>`',
+        'orange'
+      );
       return;
     }
 
@@ -1084,16 +1473,71 @@ export class CommandHandler {
 
     chatSessionStore.updateConfig(chatId, { defaultDirectory: dirResult.directory });
     const label = dirResult.projectName ? ` (${dirResult.projectName})` : '';
-    await feishuClient.reply(messageId, `✅ 已设置群默认项目: ${dirResult.directory}${label}`);
+    await this.replyProjectMarkdown(
+      messageId,
+      chatId,
+      '✅ 默认项目已设置',
+      `当前群默认项目已设置为：\n\`${dirResult.directory}${label}\``,
+      'green'
+    );
   }
 
   private async handleProjectDefaultShow(chatId: string, messageId: string): Promise<void> {
     const chatDefault = chatSessionStore.getSession(chatId)?.defaultDirectory;
     if (chatDefault) {
-      await feishuClient.reply(messageId, `当前群默认项目: ${chatDefault}\n使用 \`/project default clear\` 清除`);
+      await this.replyProjectMarkdown(
+        messageId,
+        chatId,
+        '📁 当前默认项目',
+        `当前群默认项目：\n\`${chatDefault}\`\n\n使用 \`/project default clear\` 清除。`
+      );
     } else {
-      await feishuClient.reply(messageId, '当前群未设置默认项目（跟随全局默认）\n使用 \`/project default set <路径或别名>\` 设置');
+      await this.replyProjectMarkdown(
+        messageId,
+        chatId,
+        '📁 当前默认项目',
+        '当前群未设置默认项目，正在跟随全局默认。\n\n使用 `/project default set <路径或别名>` 设置。'
+      );
     }
+  }
+
+  public async handleSessionControlSubmit(
+    chatId: string,
+    messageId: string,
+    userId: string,
+    chatType: 'p2p' | 'group',
+    selectedSessionId: string,
+    sessionName?: string
+  ): Promise<void> {
+    const trimmedName = sessionName?.trim() || '';
+
+    if (selectedSessionId === SESSION_CTL_CURRENT_VALUE) {
+      if (!trimmedName) {
+        throw new Error('会话名称不能为空');
+      }
+      await this.handleRename(chatId, messageId, trimmedName);
+      return;
+    }
+
+    if (selectedSessionId === SESSION_CTL_NEW_VALUE) {
+      await this.handleNewSession(chatId, messageId, userId, chatType, undefined, trimmedName || undefined);
+      return;
+    }
+
+    const switched = await this.handleSwitchSession(chatId, messageId, userId, selectedSessionId, chatType);
+    if (switched && trimmedName) {
+      await this.handleRename(chatId, messageId, trimmedName);
+    }
+  }
+
+  public async switchSessionFromCard(
+    chatId: string,
+    messageId: string,
+    userId: string,
+    targetSessionId: string,
+    chatType: 'p2p' | 'group'
+  ): Promise<void> {
+    await this.handleSwitchSession(chatId, messageId, userId, targetSessionId, chatType);
   }
 
   private async handleSwitchSession(
@@ -1102,22 +1546,22 @@ export class CommandHandler {
     userId: string,
     targetSessionId: string,
     chatType: 'p2p' | 'group'
-  ): Promise<void> {
+  ): Promise<boolean> {
     if (!userConfig.enableManualSessionBind) {
       await feishuClient.reply(messageId, '❌ 当前环境未开启“绑定已有会话”能力');
-      return;
+      return false;
     }
 
     const normalizedSessionId = targetSessionId.trim();
     if (!normalizedSessionId) {
       await feishuClient.reply(messageId, '❌ 会话 ID 不能为空');
-      return;
+      return false;
     }
 
     const targetSession = await opencodeClient.findSessionAcrossProjects(normalizedSessionId);
     if (!targetSession) {
       await feishuClient.reply(messageId, `❌ 未找到会话: ${normalizedSessionId}`);
-      return;
+      return false;
     }
 
     const previousChatId = chatSessionStore.getChatId(normalizedSessionId);
@@ -1148,6 +1592,7 @@ export class CommandHandler {
     }
 
     await feishuClient.reply(messageId, replyLines.join('\n'));
+    return true;
   }
 
   private async handleListSessions(chatId: string, messageId: string, listAll: boolean = false): Promise<void> {
@@ -1160,9 +1605,8 @@ export class CommandHandler {
 
     try {
       if (listAll) {
-        // 全量：聚合所有已知目录的会话
-        const storeKnownDirs = chatSessionStore.getKnownDirectories();
-        sessions = await opencodeClient.listAllSessions(storeKnownDirs);
+        // 全量：聚合 OpenCode 项目列表 + 已知目录中的会话
+        sessions = await opencodeClient.listSessionsAcrossProjects();
       } else {
         // 默认：只查当前项目目录的会话
         sessions = await opencodeClient.listSessions(currentDirectory ? { directory: currentDirectory } : undefined);
@@ -1209,6 +1653,7 @@ export class CommandHandler {
       chatDetail: string;
       status: string;
       statusRank: number;
+      updatedAt: number;
     }
 
     const rows: SessionListRow[] = [];
@@ -1219,7 +1664,8 @@ export class CommandHandler {
       const projectName = bindingInfo?.projectName;
       const chatDetail = bindingInfo ? bindingInfo.chatIds.join(', ') : '无';
       const status = bindingInfo ? 'OpenCode可用/已绑定' : 'OpenCode可用/未绑定';
-      rows.push({ directory, projectName, title, sessionId: session.id, chatDetail, status, statusRank: bindingInfo ? 0 : 1 });
+      const updatedAt = this.getSessionLastModifiedTime(session);
+      rows.push({ directory, projectName, title, sessionId: session.id, chatDetail, status, statusRank: bindingInfo ? 0 : 1, updatedAt });
       localBindings.delete(session.id);
     }
 
@@ -1236,30 +1682,59 @@ export class CommandHandler {
         chatDetail: bindingInfo.chatIds.join(', '),
         status: '仅本地映射(可能已失活)',
         statusRank: 2,
+        updatedAt: chatSessionStore.getSession(bindingInfo.chatIds[0])?.createdAt ?? 0,
       });
     }
 
-    const normalizeDirectoryForSort = (directory: string): string => {
-      const normalized = directory.trim();
-      return (!normalized || normalized === '-') ? '\uffff' : normalized;
-    };
+    const sessionOrderMode = this.getSessionOrderMode(chatId);
+    if (sessionOrderMode === 'last_time') {
+      const sessionLastActivityMap = await this.resolveSessionLastActivityMap(sessions);
+      for (const row of rows) {
+        const resolvedTime = sessionLastActivityMap.get(row.sessionId);
+        if (typeof resolvedTime === 'number' && resolvedTime > 0) {
+          row.updatedAt = resolvedTime;
+        }
+      }
+    }
 
-    rows.sort((left, right) => {
-      const directoryCompare = normalizeDirectoryForSort(left.directory).localeCompare(
-        normalizeDirectoryForSort(right.directory), 'zh-Hans-CN'
-      );
-      if (directoryCompare !== 0) return directoryCompare;
-      if (left.statusRank !== right.statusRank) return left.statusRank - right.statusRank;
-      const titleCompare = left.title.localeCompare(right.title, 'zh-Hans-CN');
-      if (titleCompare !== 0) return titleCompare;
-      return left.sessionId.localeCompare(right.sessionId, 'en');
-    });
+    if (sessionOrderMode === 'last_time') {
+      rows.sort((left, right) => {
+        if (left.updatedAt !== right.updatedAt) return right.updatedAt - left.updatedAt;
+        if (left.statusRank !== right.statusRank) return left.statusRank - right.statusRank;
+        const titleCompare = left.title.localeCompare(right.title, 'zh-Hans-CN');
+        if (titleCompare !== 0) return titleCompare;
+        return left.sessionId.localeCompare(right.sessionId, 'en');
+      });
+    } else {
+      const normalizeDirectoryForSort = (directory: string): string => {
+        const normalized = directory.trim();
+        return (!normalized || normalized === '-') ? '\uffff' : normalized;
+      };
 
-    const tableHeader = '工作区目录 | SessionID | OpenCode侧会话名称 | 绑定群明细 | 当前会话状态';
+      rows.sort((left, right) => {
+        const directoryCompare = normalizeDirectoryForSort(left.directory).localeCompare(
+          normalizeDirectoryForSort(right.directory), 'zh-Hans-CN'
+        );
+        if (directoryCompare !== 0) return directoryCompare;
+        if (left.statusRank !== right.statusRank) return left.statusRank - right.statusRank;
+        const titleCompare = left.title.localeCompare(right.title, 'zh-Hans-CN');
+        if (titleCompare !== 0) return titleCompare;
+        return left.sessionId.localeCompare(right.sessionId, 'en');
+      });
+    }
+
     const rowTexts: string[] = [];
     for (const row of rows) {
       const directoryDisplay = row.projectName ? `${row.directory} (${row.projectName})` : row.directory;
-      rowTexts.push(`${directoryDisplay} | ${row.sessionId} | ${row.title} | ${row.chatDetail} | ${row.status}`);
+      rowTexts.push(
+        [
+          `**工作区目录**: \`${directoryDisplay}\``,
+          `**SessionID**: \`${row.sessionId}\``,
+          `**OpenCode侧会话名称**: ${row.title}`,
+          `**绑定群明细**: ${row.chatDetail}`,
+          `**当前会话状态**: ${row.status}`,
+        ].join('\n')
+      );
     }
 
     if (rowTexts.length === 0) {
@@ -1270,34 +1745,63 @@ export class CommandHandler {
       return;
     }
 
-    const rowChunks: string[] = [];
-    let currentRows = '';
-    for (const row of rowTexts) {
-      if ((tableHeader.length + currentRows.length + row.length + 2) > 3000 && currentRows.length > 0) {
-        rowChunks.push(currentRows.trimEnd());
-        currentRows = '';
-      }
-      currentRows += `${row}\n`;
-    }
-    if (currentRows.trim().length > 0) rowChunks.push(currentRows.trimEnd());
-
-    const chunks = rowChunks.map(chunk => `${tableHeader}\n${chunk}`);
-    if (chunks.length === 0) {
-      await feishuClient.reply(messageId, `${tableHeader}\n（无数据）`);
-      return;
-    }
-
     const totalCount = rowTexts.length;
     const header = opencodeUnavailable
       ? `📚 会话列表（总计 ${totalCount}，OpenCode 暂不可达，仅展示本地映射）`
       : `📚 会话列表（总计 ${totalCount}）`;
+    const hint = listAll ? '' : '\n💡 提示：使用 `/sessions all` 查看所有项目的会话';
+    const sessionWithChange = this.isSessionWithChangeEnabled(chatId);
 
-    const hint = listAll ? '' : '\n💡 提示：使用 `/sessions all` 查看所有项目的会话\n';
+    const summaryMarkdown = `${header}${hint}`;
 
-    await feishuClient.reply(messageId, `${header}${hint}\n${chunks[0]}`);
+    if (!sessionWithChange) {
+      const pages = this.splitMarkdownBlocks(summaryMarkdown, rowTexts);
+      await feishuClient.replyCard(messageId, buildMarkdownCard({
+        title: pages.length > 1 ? '📚 会话列表（1/' + pages.length + '）' : '📚 会话列表',
+        markdown: pages[0],
+      }));
 
-    for (let index = 1; index < chunks.length; index++) {
-      await feishuClient.sendText(chatId, `📚 会话列表（续 ${index + 1}/${chunks.length}）\n${chunks[index]}`);
+      for (let index = 1; index < pages.length; index++) {
+        await feishuClient.sendCard(chatId, buildMarkdownCard({
+          title: `📚 会话列表（${index + 1}/${pages.length}）`,
+          markdown: pages[index],
+        }));
+      }
+      return;
+    }
+
+    const chatType = chatSessionStore.getSession(chatId)?.chatType === 'p2p' ? 'p2p' : 'group';
+    const entries = rows.map(row => {
+      const directoryDisplay = row.projectName ? `${row.directory} (${row.projectName})` : row.directory;
+      return {
+        sessionId: row.sessionId,
+        markdown: [
+          `**工作区目录**: \`${directoryDisplay}\``,
+          `**SessionID**: \`${row.sessionId}\``,
+          `**OpenCode侧会话名称**: ${row.title}`,
+          `**绑定群明细**: ${row.chatDetail}`,
+          `**当前会话状态**: ${row.status}`,
+        ].join('\n'),
+      };
+    });
+    const pages = this.splitSessionCardEntries(entries, summaryMarkdown);
+
+    await feishuClient.replyCard(messageId, buildSessionListCard({
+      title: pages.length > 1 ? '📚 会话列表（1/' + pages.length + '）' : '📚 会话列表',
+      chatId,
+      chatType,
+      summaryMarkdown,
+      entries: pages[0],
+    }));
+
+    for (let index = 1; index < pages.length; index++) {
+      await feishuClient.sendCard(chatId, buildSessionListCard({
+        title: `📚 会话列表（${index + 1}/${pages.length}）`,
+        chatId,
+        chatType,
+        summaryMarkdown,
+        entries: pages[index],
+      }));
     }
   }
 
@@ -1384,6 +1888,12 @@ export class CommandHandler {
       } else {
         // 即使没找到匹配的，如果格式正确也允许强制设置（针对自定义或未列出的模型）
         if (normalizedModelName.includes(':') || normalizedModelName.includes('/')) {
+             const parsedModel = parseChatModelReference(normalizedModelName);
+             if (parsedModel && !isChatModelAllowed(parsedModel.providerId, parsedModel.modelId)) {
+               await feishuClient.reply(messageId, `❌ 模型 "${normalizedModelName}" 不在当前允许列表中`);
+               return;
+             }
+
              const separator = normalizedModelName.includes(':') ? ':' : '/';
              const [provider, model] = normalizedModelName.split(separator);
              const newValue = `${provider}:${model}`;
@@ -1401,6 +1911,44 @@ export class CommandHandler {
 
     } catch (error) {
       await feishuClient.reply(messageId, `❌ 设置模型失败: ${error}`);
+    }
+  }
+
+  private async handleModels(chatId: string, messageId: string, listAll: boolean): Promise<void> {
+    try {
+      const providersResult = await opencodeClient.getProviders();
+      const providers = Array.isArray(providersResult.providers) ? providersResult.providers : [];
+      const sections: string[] = [];
+      let totalCount = 0;
+
+      for (const provider of providers) {
+        const providerModels = this.extractProviderModels(provider);
+        if (providerModels.length === 0) {
+          continue;
+        }
+
+        const providerName = String((provider as Record<string, unknown>).name || (provider as Record<string, unknown>).id || 'Unknown');
+        totalCount += providerModels.length;
+        const visibleModels = listAll ? providerModels : providerModels.slice(0, 20);
+        const lines = visibleModels.map(model => {
+          const label = model.modelName || model.modelId;
+          return `- ${label} (\`${model.providerId}:${model.modelId}\`)`;
+        });
+
+        if (!listAll && providerModels.length > 20) {
+          lines.push(`- ... 共 ${providerModels.length} 个模型`);
+        }
+
+        sections.push(`### ${providerName}\n${lines.join('\n')}`);
+      }
+
+      const markdown = totalCount > 0
+        ? [`共 ${totalCount} 个当前可选模型，使用 \`/model <名称>\` 切换`, ...sections].join('\n\n')
+        : '暂无当前可选模型';
+
+      await this.replyFeishuMarkdown(messageId, chatId, '📋 可用模型列表', markdown);
+    } catch (error) {
+      await feishuClient.reply(messageId, `❌ 获取模型列表失败: ${error}`);
     }
   }
 
@@ -1615,80 +2163,6 @@ export class CommandHandler {
     return config.agent;
   }
 
-  private async handleRoleCreate(
-    chatId: string,
-    messageId: string,
-    userId: string,
-    chatType: 'p2p' | 'group',
-    roleSpec: string
-  ): Promise<void> {
-    const parsed = parseRoleCreateSpec(roleSpec);
-    if (!parsed.ok) {
-      await feishuClient.reply(messageId, `❌ 创建角色失败\n${parsed.message}`);
-      return;
-    }
-
-    let session = chatSessionStore.getSession(chatId);
-    if (!session) {
-      const title = `群聊会话-${chatId.slice(-4)}`;
-      const chatDefault = chatSessionStore.getSession(chatId)?.defaultDirectory;
-      const dirResult = DirectoryPolicy.resolve({ chatDefaultDirectory: chatDefault });
-      const effectiveDir = dirResult.ok && dirResult.source !== 'server_default' ? dirResult.directory : undefined;
-      const newSession = await opencodeClient.createSession(title, effectiveDir);
-      if (!newSession) {
-        await feishuClient.reply(messageId, '❌ 无法创建会话以保存角色设置');
-        return;
-      }
-      chatSessionStore.setSession(chatId, newSession.id, userId, title, { chatType, resolvedDirectory: newSession.directory });
-      session = chatSessionStore.getSession(chatId);
-    }
-
-    const payload = parsed.payload;
-    const [agents, config] = await Promise.all([
-      opencodeClient.getAgents(),
-      opencodeClient.getConfig(),
-    ]);
-
-    const roleAgentMap = this.getRoleAgentMap(config);
-    const existingConfig = roleAgentMap[payload.name];
-    const nameConflict = agents.find(agent => agent.name.toLowerCase() === payload.name.toLowerCase());
-    if (nameConflict && !existingConfig) {
-      await feishuClient.reply(messageId, `❌ 角色名称已被占用: ${payload.name}\n请更换一个名称后重试。`);
-      return;
-    }
-
-    const nextAgentConfig: OpencodeAgentConfig = {
-      description: payload.description,
-      mode: payload.mode,
-      ...(payload.prompt ? { prompt: payload.prompt } : {}),
-      ...(payload.tools ? { tools: payload.tools } : {}),
-    };
-
-    const nextConfig: OpencodeRuntimeConfig = {
-      ...config,
-      agent: {
-        ...roleAgentMap,
-        [payload.name]: nextAgentConfig,
-      },
-    };
-
-    const updated = await opencodeClient.updateConfig(nextConfig);
-    if (!updated) {
-      await feishuClient.reply(messageId, '❌ 创建角色失败：写入 OpenCode 配置失败');
-      return;
-    }
-
-    if (session) {
-      chatSessionStore.updateConfig(chatId, { preferredAgent: payload.name });
-    }
-    const actionText = existingConfig ? '已更新' : '已创建';
-    const modeText = payload.mode === 'subagent' ? '子角色' : '主角色';
-    await feishuClient.reply(
-      messageId,
-      `✅ ${actionText}角色: ${payload.name}\n类型: ${modeText}\n当前群已切换到该角色。\n若 /panel 未立即显示新角色，请重启 OpenCode。`
-    );
-  }
-
   private async handleAgent(
     chatId: string,
     messageId: string,
@@ -1766,25 +2240,20 @@ export class CommandHandler {
     const modelOptionValues = new Set<string>();
     const safeProviders = Array.isArray(providers) ? providers : [];
 
-    for (const p of safeProviders) {
-      // 安全获取 models，兼容数组和对象
-      const modelsRaw = (p as any).models;
-      const models = Array.isArray(modelsRaw)
-        ? modelsRaw
-        : (modelsRaw && typeof modelsRaw === 'object' ? Object.values(modelsRaw) : []);
+    for (const provider of safeProviders) {
+      const providerId = this.extractProviderId(provider);
+      if (!providerId) {
+        continue;
+      }
 
-      for (const m of models) {
-        const modelId = (m as any).id || (m as any).modelID || (m as any).name;
-        const modelName = (m as any).name || modelId;
-        const providerId = (p as any).id || (p as any).providerID;
-
-        if (modelId && providerId) {
-          const label = `[${p.name || providerId}] ${modelName}`;
-          const value = `${providerId}:${modelId}`;
-          if (!modelOptionValues.has(value)) {
-            modelOptionValues.add(value);
-            modelOptions.push({ label, value });
-          }
+      const providerName = String((provider as Record<string, unknown>).name || providerId);
+      const providerModels = this.extractProviderModels(provider);
+      for (const model of providerModels) {
+        const label = `[${providerName}] ${model.modelName || model.modelId}`;
+        const value = `${model.providerId}:${model.modelId}`;
+        if (!modelOptionValues.has(value)) {
+          modelOptionValues.add(value);
+          modelOptions.push({ label, value });
         }
       }
     }

@@ -345,6 +345,91 @@ describe('DirectoryPolicy - Path Normalization and Security', () => {
     });
   });
 
+  describe('resolve - AI 工作区脱钩白名单（scope: workspace）', () => {
+    it('scope=workspace 时 explicit 路径不再要求白名单', () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-bridge-ws-'));
+      try {
+        const result = DirectoryPolicy.resolve({
+          explicitDirectory: tempDir,
+          allowedDirectories: [],
+          scope: 'workspace',
+        });
+
+        expect(result.ok).toBe(true);
+        if (result.ok) {
+          expect(result.source).toBe('explicit');
+        }
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('scope=workspace 时 explicit 路径可在白名单之外', () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-bridge-ws-'));
+      try {
+        const result = DirectoryPolicy.resolve({
+          explicitDirectory: tempDir,
+          allowedDirectories: ['/non/matching/allowlist'],
+          scope: 'workspace',
+        });
+
+        expect(result.ok).toBe(true);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it('scope=workspace 仍应拦截危险路径', () => {
+      if (process.platform !== 'win32') {
+        const result = DirectoryPolicy.resolve({
+          explicitDirectory: '/etc/test',
+          scope: 'workspace',
+        });
+
+        expect(result.ok).toBe(false);
+        if (!result.ok) {
+          expect(result.code).toBe('dangerous_path');
+        }
+      }
+    });
+
+    it('scope=workspace 仍应拒绝相对路径', () => {
+      const result = DirectoryPolicy.resolve({
+        explicitDirectory: './relative',
+        scope: 'workspace',
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('not_absolute');
+      }
+    });
+
+    it('scope=workspace 仍应拒绝不存在的目录', () => {
+      const result = DirectoryPolicy.resolve({
+        explicitDirectory: '/tmp/this-path-should-not-exist-xyz-opencode-test',
+        scope: 'workspace',
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(['not_found', 'not_accessible']).toContain(result.code);
+      }
+    });
+
+    it('默认 scope=platform 保持原有强制行为（回归）', () => {
+      const result = DirectoryPolicy.resolve({
+        explicitDirectory: '/explicit',
+        allowedDirectories: [],
+      });
+
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.code).toBe('explicit_requires_allowlist');
+      }
+    });
+  });
+
   describe('isAllowedPath', () => {
     it('应该返回 false 当允许目录列表为空', () => {
       const result = DirectoryPolicy.isAllowedPath('/any/path', []);

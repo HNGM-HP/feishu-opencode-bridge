@@ -544,6 +544,7 @@
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Loading } from '@element-plus/icons-vue'
+import type { BridgeSettings } from '../api'
 import { useConfigStore } from '../stores/config'
 import { weixinApi, type WeixinAccount, whatsappApi, type WhatsAppConnectionStatus, dingtalkApi, type DingtalkAccount } from '../api'
 import ConfigActionBar from '../components/ConfigActionBar.vue'
@@ -890,7 +891,7 @@ async function handleSave() {
   }
 }
 
-function handleImportConfig(config: typeof form) {
+function handleImportConfig(config: BridgeSettings) {
   Object.assign(form, config)
   // 同步开关状态
   feishuEnabled.value = form.FEISHU_ENABLED === 'true'

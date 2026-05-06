@@ -41,6 +41,7 @@ export interface OpenCodeSessionItem {
   id: string;
   title?: string;
   createdAt?: string;
+  updatedAt?: number;
   projectPath?: string;
   directory?: string;
   isBound: boolean;
@@ -388,7 +389,14 @@ export function createSessionRoutes(): express.Router {
       }
 
       // 尝试获取 OpenCode sessions
-      let openCodeSessions: Array<{ id: string; title?: string; createdAt?: string; projectPath?: string; directory?: string }> = [];
+      let openCodeSessions: Array<{
+        id: string;
+        title?: string;
+        createdAt?: string;
+        updatedAt?: number;
+        projectPath?: string;
+        directory?: string;
+      }> = [];
       let openCodeAvailable = false;
 
       try {
@@ -396,7 +404,12 @@ export function createSessionRoutes(): express.Router {
         openCodeSessions = sessions.map((s: Session) => ({
           id: s.id,
           title: s.title,
-          createdAt: s.time?.created ? new Date(s.time.created * 1000).toISOString() : undefined,
+          createdAt: s.time?.created ? new Date(s.time.created).toISOString() : undefined,
+          updatedAt: s.time?.updated
+            ? s.time.updated
+            : s.time?.created
+              ? s.time.created
+              : 0,
           projectPath: s.directory,
           directory: s.directory,
         }));
@@ -415,6 +428,7 @@ export function createSessionRoutes(): express.Router {
           id: s.id,
           title: s.title,
           createdAt: s.createdAt,
+          updatedAt: s.updatedAt,
           projectPath: s.projectPath,
           directory: s.directory,
           isBound: boundTo.length > 0,
@@ -434,6 +448,7 @@ export function createSessionRoutes(): express.Router {
             id: sessionId,
             title: boundTo[0]?.session.title,
             createdAt: undefined,
+            updatedAt: boundTo.reduce((latest, item) => Math.max(latest, item.session.createdAt || 0), 0),
             projectPath: undefined,
             directory: boundTo[0]?.session.sessionDirectory || boundTo[0]?.session.resolvedDirectory,
             isBound: true,
@@ -447,6 +462,14 @@ export function createSessionRoutes(): express.Router {
           });
         }
       }
+
+      sessions.sort((left, right) => {
+        const updatedDiff = (right.updatedAt || 0) - (left.updatedAt || 0);
+        if (updatedDiff !== 0) {
+          return updatedDiff;
+        }
+        return left.id.localeCompare(right.id, 'en');
+      });
 
       res.json({ sessions, openCodeAvailable });
     } catch (error: unknown) {
@@ -496,6 +519,7 @@ export function createSessionRoutes(): express.Router {
       { id: 'qq', name: 'QQ', icon: 'qq' },
       { id: 'whatsapp', name: 'WhatsApp', icon: 'whatsapp' },
       { id: 'weixin', name: '个人微信', icon: 'weixin' },
+      { id: 'dingtalk', name: '钉钉', icon: 'dingtalk' },
     ];
     res.json({ platforms });
   });
@@ -552,6 +576,8 @@ export function createSessionRoutes(): express.Router {
 // ── 平台聊天获取函数
 
 async function fetchFeishuChats(chats: PlatformChat[], bindingMap: Map<string, ChatSessionData>): Promise<void> {
+  const appended = new Set<string>();
+
   try {
     const chatIds = await feishuClient.getUserChats();
     console.log(`[Session API] 获取飞书群列表: ${chatIds.length} 个`);
@@ -568,14 +594,25 @@ async function fetchFeishuChats(chats: PlatformChat[], bindingMap: Map<string, C
         boundSessionId: binding?.sessionId,
         boundSessionTitle: binding?.title,
       });
+      appended.add(chatId);
     }
   } catch (e) {
     console.warn('[Session API] 获取飞书聊天列表失败:', e);
   }
 
-  // 注意：飞书 API 不支持获取机器人的私聊列表
-  // 仅显示群聊
-  console.log('[Session API] 飞书 API 限制：无法获取私聊列表，仅显示群聊');
+  for (const [conversationId, session] of bindingMap) {
+    if (appended.has(conversationId)) continue;
+    chats.push({
+      id: conversationId,
+      name: session.title || conversationId,
+      type: session.chatType || 'group',
+      isBound: true,
+      boundSessionId: session.sessionId,
+      boundSessionTitle: session.title,
+    });
+  }
+
+  console.log('[Session API] 飞书 API 无法自动枚举私聊，额外返回已有绑定的私聊/群聊会话');
 }
 
 async function fetchDiscordChats(chats: PlatformChat[], bindingMap: Map<string, ChatSessionData>): Promise<void> {

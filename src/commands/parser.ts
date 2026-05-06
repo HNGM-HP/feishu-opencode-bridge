@@ -24,6 +24,7 @@ export type CommandType =
   | 'panel'        // 控制面板
   | 'effort'       // 调整推理强度
   | 'admin'        // 管理员设置
+  | 'config'       // 当前聊天配置
   | 'help'         // 显示帮助
   | 'status'       // 查看状态
   | 'command'      // 透传命令
@@ -31,7 +32,9 @@ export type CommandType =
   | 'send'         // 发送文件到飞书
   | 'rename'       // 重命名当前会话
   | 'cron'         // Cron 调度管理
-  | 'restart';     // 重启服务组件
+  | 'restart'      // 重启服务组件
+  | 'qc'           // 快捷命令卡
+  | 'session_ctl'; // 会话控制面板
 
 // 解析后的命令
 export interface ParsedCommand {
@@ -39,8 +42,6 @@ export interface ParsedCommand {
   text?: string;           // prompt类型的文本内容
   modelName?: string;      // model类型的模型名称
   agentName?: string;      // agent类型的名称
-  roleAction?: 'create';
-  roleSpec?: string;
   sessionAction?: 'new' | 'switch';
   sessionId?: string;      // session switch的目标ID
   sessionDirectory?: string; // session new 时指定的目录
@@ -59,6 +60,9 @@ export interface ParsedCommand {
   effortReset?: boolean;
   promptEffort?: EffortLevel;
   adminAction?: 'add';
+  configScope?: 'session' | 'output';
+  configKey?: 'order' | 'help_with_qc' | 'session_with_ctl' | 'session_with_change' | 'only_text';
+  configValue?: string;
   renameTitle?: string;    // rename 类型的新会话名称（可选，无参数时弹卡片）
   cronAction?: CronIntentAction;
   cronArgs?: string;
@@ -189,16 +193,6 @@ export function parseCommand(text: string): ParsedCommand {
     return bangCommand;
   }
 
-  // 中文自然语言创建角色（不带 /）
-  const textRoleCreateMatch = trimmed.match(/^创建角色\s+([\s\S]+)$/);
-  if (textRoleCreateMatch) {
-    return {
-      type: 'role',
-      roleAction: 'create',
-      roleSpec: textRoleCreateMatch[1].trim(),
-    };
-  }
-
   // 中文自然语言发送文件（不带 /）
   const sendFileMatch = trimmed.match(/^发送文件\s+([\s\S]+)$/);
   if (sendFileMatch) {
@@ -272,7 +266,7 @@ export function parseCommand(text: string): ParsedCommand {
         return { type: 'model' }; // 无参数时显示当前模型
 
       case 'models':
-        return { type: 'models' }; // 列出所有可用模型
+        return { type: 'models', listAll: args.length > 0 && args[0].toLowerCase() === 'all' };
 
       case 'agent':
         if (args.length > 0) {
@@ -284,16 +278,9 @@ export function parseCommand(text: string): ParsedCommand {
         return { type: 'agents' }; // 列出所有可用角色
 
       case 'role':
-      case '角色': {
-        if (args.length > 0 && (args[0].toLowerCase() === 'create' || args[0] === '创建')) {
-          return {
-            type: 'role',
-            roleAction: 'create',
-            roleSpec: args.slice(1).join(' ').trim(),
-          };
-        }
+      case '角色':
+        // 角色创建功能已迁移至资源管理系统，此处仅保留role类型用于其他扩展
         return { type: 'role' };
-      }
 
       case 'session':
         if (args.length === 0) {
@@ -388,6 +375,13 @@ export function parseCommand(text: string): ParsedCommand {
       case 'controls':
         return { type: 'panel' };
 
+      case 'qc':
+        return { type: 'qc' };
+
+      case 'session_ctl':
+      case 'session-ctl':
+        return { type: 'session_ctl' };
+
       case 'effort':
       case 'strength': {
         if (args.length === 0) {
@@ -423,6 +417,55 @@ export function parseCommand(text: string): ParsedCommand {
       case 'make_admin':
       case 'add_admin':
         return { type: 'admin', adminAction: 'add' };
+
+      case 'config': {
+        if (args.length >= 2 && args[0].toLowerCase() === 'session' && args[1].toLowerCase() === 'order') {
+          return {
+            type: 'config',
+            configScope: 'session',
+            configKey: 'order',
+            ...(args[2] ? { configValue: args[2].trim().toLowerCase() } : {}),
+          };
+        }
+
+        if (args.length >= 2 && args[0].toLowerCase() === 'session' && args[1].toLowerCase() === 'help_with_qc') {
+          return {
+            type: 'config',
+            configScope: 'session',
+            configKey: 'help_with_qc',
+            ...(args[2] ? { configValue: args[2].trim().toLowerCase() } : {}),
+          };
+        }
+
+        if (args.length >= 2 && args[0].toLowerCase() === 'session' && args[1].toLowerCase() === 'session_with_ctl') {
+          return {
+            type: 'config',
+            configScope: 'session',
+            configKey: 'session_with_ctl',
+            ...(args[2] ? { configValue: args[2].trim().toLowerCase() } : {}),
+          };
+        }
+
+        if (args.length >= 2 && args[0].toLowerCase() === 'session' && args[1].toLowerCase() === 'session_with_change') {
+          return {
+            type: 'config',
+            configScope: 'session',
+            configKey: 'session_with_change',
+            ...(args[2] ? { configValue: args[2].trim().toLowerCase() } : {}),
+          };
+        }
+
+        if (args.length >= 2 && args[0].toLowerCase() === 'output' && args[1].toLowerCase() === 'onlytext') {
+          return {
+            type: 'config',
+            configScope: 'output',
+            configKey: 'only_text',
+            ...(args[2] ? { configValue: args[2].trim().toLowerCase() } : {}),
+          };
+        }
+
+        return { type: 'config' };
+      }
 
       case 'help':
       case 'h':
@@ -484,6 +527,7 @@ export function getHelpText(): string {
 🛠️ **常用命令**
 • \`/model\` 查看当前模型
 • \`/model <名称>\` 切换模型 (e.g. \`/model gpt-4\`)
+• \`/models\` 查看当前可选模型；\`/models all\` 展开全部当前可选模型
 • \`/agent\` 查看当前角色
 • \`/agent <名称>\` 切换角色 (e.g. \`/agent general\`)
 • \`/agent off\` 切回默认角色
@@ -492,7 +536,8 @@ export function getHelpText(): string {
 • \`/effort default\` 清除会话强度，恢复模型默认
 • \`#xhigh 帮我深度分析这段代码\` 仅当前消息临时覆盖强度
 • \`创建角色 名称=旅行助手; 描述=帮我做行程规划; 类型=主; 工具=webfetch\` 新建自定义角色
-• \`/panel\` 推送交互式控制面板卡片 ✨
+• \`/panel\` 推送模型与角色面板 ✨
+• \`/qc\` 推送快捷命令卡
 • \`/undo\` 撤回上一轮对话 (如果你发错或 AI 答错)
 • \`/stop\` 停止当前正在生成的回答
 • \`/compact\` 压缩当前会话上下文（调用 OpenCode summarize）
@@ -502,9 +547,14 @@ export function getHelpText(): string {
 • \`/session new\` 开启新话题（重置上下文）；\`/session new <别名或路径>\` 指定项目
 • \`/session new --name <名称>\` 创建时直接命名 (e.g. \`/session new --name 技术架构评审\`)
 • \`/rename <新名称>\` 随时重命名当前会话 (e.g. \`/rename Q3后端API设计讨论\`)
+• \`/session_ctl\` 推送会话控制面板（重命名 / 新建 / 切换）
 • \`/session <sessionId>\` 手动绑定已有会话（需开启 \`ENABLE_MANUAL_SESSION_BIND\`）
 • \`/create_chat\` 或 \`/建群\` 私聊中调出建群卡片（新建或绑定已有会话）
 • \`/project list\` 列出可用项目；\`/project default\` 查看/设置/清除群默认项目
+• \`/config session order default|last_time\` 切换会话列表排序方式（默认排序 / 按最后修改时间倒序）
+• \`/config session help_with_qc true|false\` 控制 /help 后是否跟随推送 /qc（默认 false）
+• \`/config session session_with_ctl true|false\` 控制 /sessions 后是否跟随推送 /session_ctl（默认 false）
+• \`/config session session_with_change true|false\` 控制会话列表中是否展示“切换至此Session”按钮（默认 false）
 • \`/clear\` 等价 \`/session new\`；\`/clear free session\` 清理空闲群聊并手动扫描僵尸 Cron
 • \`/status\` 查看当前绑定状态和群聊生命周期信息
  • \`/commands\` 生成并发送最新命令清单文件
@@ -523,6 +573,15 @@ export function getHelpText(): string {
 • \`/send <绝对路径>\` 直接发送文件到群聊 (e.g. \`/send /path/to/file.png\` 或 \`/send C:\\Users\\你\\Desktop\\图片.jpg\`)
 • \`发送文件 <路径或描述>\` 中文自然语言触发（同上）
 • \`/restart opencode\` 重启本地 OpenCode 进程（仅 loopback）
+
+🎯 **资源管理**
+• 智能体/技能/MCP服务器管理功能已迁移至新的资源管理系统
+• Web UI: 访问 http://host:port/resources 进行可视化管理
+• CLI: 使用 \`opencode-bridge bridge resource\` 命令管理
+  • \`bridge resource agent --help\` 管理智能体
+  • \`bridge resource skill --help\` 管理技能
+  • \`bridge resource mcp --help\` 管理MCP服务器
+  • \`bridge resource model --help\` 管理模型提供商
 
 ${cronHelpBlock}`;
 }

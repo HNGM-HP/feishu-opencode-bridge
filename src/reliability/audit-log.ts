@@ -157,64 +157,39 @@ function buildDateRotatedPath(basePath: string, date: Date = new Date()): string
   return path.join(dir, `${base}.${dateStr}${ext}`);
 }
 
-/**
- * 原子写入文件（先写临时文件，再 rename）
- * @param filePath 目标文件路径
- * @param content 文件内容
- */
-async function atomicWriteFile(filePath: string, content: string): Promise<void> {
-  const dir = path.dirname(filePath);
-  const tmpFile = `${filePath}.${process.pid}.tmp`;
-
-  try {
-    // 确保目录存在
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
-
-    // 写入临时文件
-    await fs.promises.writeFile(tmpFile, content, 'utf-8');
-
-    // 原子重命名
-    await fs.promises.rename(tmpFile, filePath);
-  } catch (error) {
-    // 清理临时文件（如果存在）
-    try {
-      await fs.promises.unlink(tmpFile);
-    } catch {
-      // 忽略清理错误
-    }
-    throw error;
-  }
-}
+const appendQueueByFile = new Map<string, Promise<void>>();
 
 /**
- * 追加写入 JSONL 日志（使用原子写入模式）
+ * 追加写入 JSONL 日志（单进程串行 append）
  * @param filePath 日志文件路径
  * @param line JSON 字符串行
  */
 async function appendJsonLine(filePath: string, line: string): Promise<void> {
   const dir = path.dirname(filePath);
+  const previous = appendQueueByFile.get(filePath) ?? Promise.resolve();
+
+  const current = previous
+    .catch(() => undefined)
+    .then(async () => {
+      try {
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+
+        await fs.promises.appendFile(filePath, `${line}\n`, 'utf-8');
+      } catch (error) {
+        throw new Error(`写入审计日志失败：${error instanceof Error ? error.message : String(error)}`);
+      }
+    });
+
+  appendQueueByFile.set(filePath, current);
 
   try {
-    // 确保目录存在
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
+    await current;
+  } finally {
+    if (appendQueueByFile.get(filePath) === current) {
+      appendQueueByFile.delete(filePath);
     }
-
-    // 读取现有内容（如果存在）
-    let existingContent = '';
-    if (fs.existsSync(filePath)) {
-      existingContent = await fs.promises.readFile(filePath, 'utf-8');
-    }
-
-    // 拼接新内容
-    const newContent = existingContent ? `${existingContent}${line}\n` : `${line}\n`;
-
-    // 原子写入（先写 tmp 再 rename）
-    await atomicWriteFile(filePath, newContent);
-  } catch (error) {
-    throw new Error(`写入审计日志失败：${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

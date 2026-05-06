@@ -49,7 +49,7 @@
 | `GROUP_REQUIRE_MENTION` | 否 | `false` | 为 `true` 时，群聊仅在明确 @ 机器人时响应 |
 | `OPENCODE_HOST` | 否 | `localhost` | OpenCode 服务器地址 |
 | `OPENCODE_PORT` | 否 | `4096` | OpenCode 服务器端口 |
-| `OPENCODE_AUTO_START` | 否 | `false` | 设置为 `true` 时，Bridge 启动时自动启动 OpenCode |
+| `OPENCODE_AUTO_START` | 否 | `true` | 设置为 `true` 时，Bridge 启动时自动启动 OpenCode |
 | `OPENCODE_AUTO_START_CMD` | 否 | `opencode serve` | 自定义 OpenCode 启动命令 |
 
 ### Discord 配置

@@ -242,14 +242,14 @@
               <el-input v-model="form.ALLOWED_DIRECTORIES" type="textarea" :rows="2"
                 placeholder="/home/user/projects,/opt/repos" />
               <div class="field-tip">
-                逗号分隔的绝对路径列表。<strong>未配置时禁止用户自定义路径</strong>，也无法使用 /send 发送任意路径文件
+                逗号分隔的绝对路径列表。<strong>仅约束平台接入</strong>（Telegram/Discord/QQ/企业微信/微信/WhatsApp/钉钉/飞书 等外部消息入口以及 /send 文件下发）；<strong>AI 工作区不受此限制</strong>，可浏览服务进程可访问的任意目录。未配置时禁止平台侧用户自定义路径
               </div>
             </el-form-item>
           </el-col>
           <el-col :span="12">
             <el-form-item label="默认工作目录（DEFAULT_WORK_DIRECTORY）">
               <el-input v-model="form.DEFAULT_WORK_DIRECTORY" placeholder="/home/user/projects/main" />
-              <div class="field-tip">最低优先级兜底目录，未配置则跟随 OpenCode 服务端默认目录</div>
+              <div class="field-tip">平台接入的最低优先级兜底目录，未配置则跟随 OpenCode 服务端默认目录。AI 工作区不使用该兜底</div>
             </el-form-item>
           </el-col>
         </el-row>
@@ -327,6 +327,7 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { BridgeSettings } from '../api'
 import { useConfigStore } from '../stores/config'
 import ConfigActionBar from '../components/ConfigActionBar.vue'
 
@@ -427,7 +428,7 @@ async function handleSave() {
   }
 }
 
-function handleImportConfig(config: typeof form) {
+function handleImportConfig(config: BridgeSettings) {
   Object.assign(form, config)
   // 同步开关状态
   enableManualBind.value = form.ENABLE_MANUAL_SESSION_BIND !== 'false'

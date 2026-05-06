@@ -167,8 +167,19 @@ export const opencodeConfig = {
   get port() { return parseInt(process.env.OPENCODE_PORT || '4096', 10); },
   get serverUsername() { return process.env.OPENCODE_SERVER_USERNAME?.trim() || 'opencode'; },
   get serverPassword() { return process.env.OPENCODE_SERVER_PASSWORD?.trim() || undefined; },
-  get autoStart() { return parseBooleanEnv(process.env.OPENCODE_AUTO_START, false); },
+  get autoStart() { return parseBooleanEnv(process.env.OPENCODE_AUTO_START, true); },
+  /** @deprecated 不再使用，保留仅供旧配置读取迁移 */
   get autoStartCmd() { return process.env.OPENCODE_AUTO_START_CMD?.trim() || 'opencode serve'; },
+  /**
+   * 后台启动成功后是否同时弹出前台 attach 窗口（Windows 专用）
+   * Windows 默认开启：后台 serve 就绪后会自动弹出一个 CMD 窗口运行 `opencode attach http://localhost:<port>`，
+   * 方便在独立窗口里与 opencode CLI 交互。设置 OPENCODE_AUTO_START_FOREGROUND=false 可关闭。
+   * 非 Windows 平台始终关闭（attach 窗口功能依赖 Windows cmd /start 弹窗机制）。
+   */
+  get autoStartForeground() {
+    const defaultValue = process.platform === 'win32';
+    return parseBooleanEnv(process.env.OPENCODE_AUTO_START_FOREGROUND, defaultValue);
+  },
   get baseUrl() {
     return `http://${this.host}:${this.port}`;
   },
@@ -197,6 +208,24 @@ export const modelConfig = {
     const provider = process.env.DEFAULT_PROVIDER?.trim();
     const model = process.env.DEFAULT_MODEL?.trim();
     return provider && model ? model : undefined;
+  },
+  get chatModelWhitelist(): string[] {
+    const raw = process.env.CHAT_MODEL_WHITELIST?.trim();
+    if (!raw) return [];
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed
+        .filter((item): item is string => typeof item === 'string')
+        .map(item => item.trim())
+        .filter(Boolean);
+    } catch {
+      return raw
+        .split(/[\r\n,;]+/)
+        .map(item => item.trim())
+        .filter(Boolean);
+    }
   },
 };
 
@@ -282,6 +311,39 @@ export const outputConfig = {
 
 export const attachmentConfig = {
   get maxSize() { return parseInt(process.env.ATTACHMENT_MAX_SIZE || String(50 * 1024 * 1024), 10); },
+};
+
+/**
+ * 默认 OCR 提示词（仅当用户未配置 VISION_OCR_PROMPT 时使用）
+ */
+export const DEFAULT_VISION_OCR_PROMPT =
+  '请详细描述这张图片的内容，包括所有可见的文字、表格、结构、人物和关键视觉信息。输出中文描述。';
+
+/**
+ * 非多模态模型图片预处理配置
+ *
+ * 当主模型不支持 image 输入时，bridge 借用 opencode 内已配置的多模态 model
+ * 做 OCR / 图片描述，把结果注入为 text part 后再转发给主模型。
+ *
+ * 这三个字段都通过 SQLite + Web UI 维护，不走 .env。
+ */
+export const visionPreprocessConfig = {
+  /** 功能总开关 */
+  get enabled() { return parseBooleanEnv(process.env.IMAGE_VISION_PREPROCESS, false); },
+  /** 存储格式："providerID/modelID"，空串代表未配置 */
+  get modelRef() { return process.env.VISION_OCR_MODEL?.trim() || ''; },
+  /** 解析后的 provider/model 对，未配置返回 undefined */
+  get model(): { providerID: string; modelID: string } | undefined {
+    const raw = this.modelRef;
+    if (!raw) return undefined;
+    const slash = raw.indexOf('/');
+    if (slash <= 0 || slash === raw.length - 1) return undefined;
+    const providerID = raw.slice(0, slash).trim();
+    const modelID = raw.slice(slash + 1).trim();
+    if (!providerID || !modelID) return undefined;
+    return { providerID, modelID };
+  },
+  get prompt() { return process.env.VISION_OCR_PROMPT?.trim() || DEFAULT_VISION_OCR_PROMPT; },
 };
 
 function parseProjectAliases(value: string | undefined): Record<string, string> {

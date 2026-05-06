@@ -28,6 +28,7 @@ export class BridgeManager {
   private statusCallbacks: Set<BridgeStatusCallback> = new Set();
   private autoRestart: boolean = true;
   private restarting: boolean = false;
+  private restartPromise: Promise<{ success: boolean; pid?: number; error?: string }> | null = null;
 
   // 内嵌模式状态
   private embeddedMode: boolean = true;
@@ -238,21 +239,34 @@ export class BridgeManager {
    * 重启 Bridge
    */
   async restart(): Promise<{ success: boolean; pid?: number; error?: string }> {
-    console.log('[BridgeManager] 开始重启 Bridge...');
-    this.restarting = true;
-    this.autoRestart = false; // 重启过程中禁用自动重启
+    if (this.restartPromise) {
+      console.log('[BridgeManager] 重启已在进行中，复用当前重启流程');
+      return this.restartPromise;
+    }
 
-    await this.stop();
+    this.restartPromise = (async () => {
+      console.log('[BridgeManager] 开始重启 Bridge...');
+      this.restarting = true;
+      this.autoRestart = false; // 重启过程中禁用自动重启
 
-    // 等待 1 秒
-    await new Promise(resolve => setTimeout(resolve, 1000));
+      try {
+        const stopResult = await this.stop();
+        if (!stopResult.success) {
+          return { success: false, error: stopResult.error ?? '停止 Bridge 失败' };
+        }
 
-    const result = await this.start();
+        // 等待 1 秒，确保旧实例释放资源
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
-    this.restarting = false;
-    this.autoRestart = true;
+        return await this.start();
+      } finally {
+        this.restarting = false;
+        this.autoRestart = true;
+        this.restartPromise = null;
+      }
+    })();
 
-    return result;
+    return this.restartPromise;
   }
 
   /**

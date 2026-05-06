@@ -660,6 +660,8 @@ export class WhatsAppAdapter implements PlatformAdapter {
     this.qrCodeDataUrl = null;
     this.connectionStatus = 'disconnected';
     this.messageConversationMap.clear();
+    this.messageCallbacks.length = 0;
+    this.actionCallbacks.length = 0;
     console.log('[WhatsApp] 适配器已停止');
   }
 

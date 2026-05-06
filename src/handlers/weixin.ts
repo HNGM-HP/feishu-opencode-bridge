@@ -10,6 +10,7 @@ import { decodeWeixinChatId } from '../platform/adapters/weixin/weixin-ids.js';
 import { configStore } from '../store/config-store.js';
 import { modelConfig, attachmentConfig } from '../config.js';
 import { opencodeClient } from '../opencode/client.js';
+import { preprocessVisionParts, type VisionPart } from '../services/vision-ocr.js';
 import { outputBuffer } from '../opencode/output-buffer.js';
 import { chatSessionStore } from '../store/chat-session.js';
 import { parseCommand, type ParsedCommand } from '../commands/parser.js';
@@ -21,6 +22,12 @@ import { normalizeEffortLevel, KNOWN_EFFORT_LEVELS } from '../commands/effort.js
 import { permissionHandler } from '../permissions/handler.js';
 import { questionHandler, type PendingQuestion } from '../opencode/question-handler.js';
 import { parseQuestionAnswerText } from '../opencode/question-parser.js';
+import {
+  collectAllowedChatModels,
+  findAllowedChatModel,
+  isChatModelAllowed,
+  parseChatModelReference,
+} from '../utils/chat-model-whitelist.js';
 
 const WEIXIN_MESSAGE_LIMIT = 1800;
 const WEIXIN_HELP_TEXT = `📖 **微信 × OpenCode 机器人指南**
@@ -710,8 +717,27 @@ export class WeixinHandler {
       }
 
       const normalizedModelName = modelName.trim();
-      chatSessionStore.updateConfigByConversation('weixin', conversationId, { preferredModel: normalizedModelName });
-      await sender?.sendText(conversationId, `✅ 已设置模型: ${normalizedModelName}`);
+      const matchedModel = findAllowedChatModel(providers, normalizedModelName);
+      if (matchedModel) {
+        const preferredModel = `${matchedModel.providerId}:${matchedModel.modelId}`;
+        chatSessionStore.updateConfigByConversation('weixin', conversationId, { preferredModel });
+        await sender?.sendText(conversationId, `✅ 已设置模型: ${preferredModel}`);
+        return;
+      }
+
+      const parsedModel = parseChatModelReference(normalizedModelName);
+      if (!parsedModel) {
+        await sender?.sendText(conversationId, `❌ 未找到模型: ${normalizedModelName}`);
+        return;
+      }
+      if (!isChatModelAllowed(parsedModel.providerId, parsedModel.modelId)) {
+        await sender?.sendText(conversationId, `❌ 模型 "${normalizedModelName}" 不在当前允许列表中`);
+        return;
+      }
+
+      const preferredModel = `${parsedModel.providerId}:${parsedModel.modelId}`;
+      chatSessionStore.updateConfigByConversation('weixin', conversationId, { preferredModel });
+      await sender?.sendText(conversationId, `✅ 已设置模型: ${preferredModel}`);
     } catch (error) {
       console.error('[Weixin] 设置模型失败:', error);
       await sender?.sendText(conversationId, '❌ 设置模型失败');
@@ -778,49 +804,29 @@ export class WeixinHandler {
       const lines: string[] = ['📋 **可用模型列表**\n'];
       let totalCount = 0;
 
-      for (const provider of providers) {
-        const providerId = (provider as Record<string, unknown>).id as string | undefined;
-        const providerName = (provider as Record<string, unknown>).name || providerId || 'Unknown';
-        const rawModels = (provider as Record<string, unknown>).models;
+      const models = collectAllowedChatModels(providers);
+      const providerGroups = new Map<string, { providerName: string; models: Array<{ id: string; name: string }> }>();
 
-        // models 可能是数组，也可能是对象（Map）
-        const models: Array<{ id: string; name?: string }> = [];
-        if (Array.isArray(rawModels)) {
-          for (const m of rawModels) {
-            if (m && typeof m === 'object') {
-              const mr = m as Record<string, unknown>;
-              models.push({
-                id: (mr.id as string) || '',
-                name: mr.name as string | undefined,
-              });
-            }
-          }
-        } else if (rawModels && typeof rawModels === 'object') {
-          // SDK 返回的是对象 Map<string, Model>
-          const modelMap = rawModels as Record<string, unknown>;
-          for (const [modelId, modelInfo] of Object.entries(modelMap)) {
-            if (modelInfo && typeof modelInfo === 'object') {
-              const mi = modelInfo as Record<string, unknown>;
-              models.push({
-                id: modelId,
-                name: (mi.name as string) || modelId,
-              });
-            }
-          }
+      for (const model of models) {
+        if (!providerGroups.has(model.providerId)) {
+          providerGroups.set(model.providerId, { providerName: model.providerName, models: [] });
         }
+        providerGroups.get(model.providerId)!.models.push({ id: model.modelId, name: model.modelName });
+      }
 
-        if (models.length === 0) continue;
-        lines.push(`**${providerName}**`);
+      for (const [providerId, group] of providerGroups.entries()) {
+        if (group.models.length === 0) continue;
+        lines.push(`**${group.providerName}**`);
 
-        for (const model of models.slice(0, 15)) {
+        for (const model of group.models.slice(0, 15)) {
           const modelDisplay = model.name || model.id;
           const modelKey = `${providerId}:${model.id}`;
           lines.push(`  • ${modelDisplay} (\`${modelKey}\`)`);
           totalCount++;
         }
 
-        if (models.length > 15) {
-          lines.push(`  _... 共 ${models.length} 个模型_`);
+        if (group.models.length > 15) {
+          lines.push(`  _... 共 ${group.models.length} 个模型_`);
         }
         lines.push('');
       }
@@ -1164,13 +1170,72 @@ export class WeixinHandler {
         }
       }
 
-      const effectiveEffort = promptEffort || config?.preferredEffort;
+      let effectiveEffort = promptEffort || config?.preferredEffort;
+
+      // 验证 variant 是否与当前模型兼容
+      if (effectiveEffort && providerId && modelId) {
+        try {
+          const providersPayload = await opencodeClient.getProviders();
+          const providers = Array.isArray(providersPayload.providers) ? providersPayload.providers : [];
+          const providerLower = providerId.toLowerCase();
+          const modelLower = modelId.toLowerCase();
+
+          for (const provider of providers) {
+            if (!provider || typeof provider !== 'object') continue;
+            const providerRecord = provider as Record<string, unknown>;
+            const providerIdRaw = typeof providerRecord.id === 'string' ? providerRecord.id.trim() : '';
+            if (!providerIdRaw || providerIdRaw.toLowerCase() !== providerLower) continue;
+
+            const modelsRaw = providerRecord.models;
+            const modelList = Array.isArray(modelsRaw)
+              ? modelsRaw
+              : (modelsRaw && typeof modelsRaw === 'object' ? Object.values(modelsRaw) : []);
+
+            for (const modelItem of modelList) {
+              if (!modelItem || typeof modelItem !== 'object') continue;
+              const modelRecord = modelItem as Record<string, unknown>;
+              const modelIdRaw = typeof modelRecord.id === 'string'
+                ? modelRecord.id.trim()
+                : (typeof modelRecord.modelID === 'string' ? modelRecord.modelID.trim() : '');
+              if (!modelIdRaw || modelIdRaw.toLowerCase() !== modelLower) continue;
+
+              // 解析模型支持的 variants
+              const variants = modelRecord.variants;
+              if (variants && typeof variants === 'object' && !Array.isArray(variants)) {
+                const supportedVariants: EffortLevel[] = [];
+                for (const key of Object.keys(variants as Record<string, unknown>)) {
+                  const normalized = normalizeEffortLevel(key);
+                  if (normalized && normalized !== 'none' && !supportedVariants.includes(normalized)) {
+                    supportedVariants.push(normalized);
+                  }
+                }
+                // 如果当前 variant 不在支持列表中，清除它
+                if (supportedVariants.length > 0 && !supportedVariants.includes(effectiveEffort)) {
+                  effectiveEffort = undefined;
+                }
+              }
+              break;
+            }
+            break;
+          }
+        } catch (error) {
+          console.debug('[Weixin] 获取模型支持的 variants 失败，跳过验证:', error instanceof Error ? error.message : String(error));
+        }
+      }
+
       const sessionData = chatSessionStore.getSessionByConversation('weixin', chatId);
       const directory = sessionData?.resolvedDirectory;
 
+      // ── 非多模态主模型图片回退 ──
+      const dispatchParts = await preprocessVisionParts(
+        parts as VisionPart[],
+        { providerId, modelId, directory },
+        'Weixin',
+      ) as OpencodePartInput[];
+
       await opencodeClient.sendMessagePartsAsync(
         sessionId,
-        parts,
+        dispatchParts,
         {
           providerId,
           modelId,
