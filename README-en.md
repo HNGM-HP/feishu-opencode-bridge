@@ -46,7 +46,7 @@ Unlike simple message forwarding, OpenCode Bridge provides a complete OpenCode e
 | Feature | Feishu | Discord | WeCom | Telegram | QQ | WhatsApp | WeChat | DingTalk |
 |---------|:------:|:-------:|:-----:|:--------:|:--:|:--------:|:------:|:--------:|
 | Text Message | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Rich Media/Card | ✅ | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Rich Media/Card | ✅ | ✅ | ❌ | ✅ | ✅ | ❌ | ❌ | ✅ |
 | Streaming Output | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Permission Interaction | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | File Transfer | ✅ | ✅ | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ |
